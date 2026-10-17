@@ -18,7 +18,7 @@ sidebar:
 
 **Atajos**
 - `Taskfile.yml` con tareas de preparación (`setup`, `install`, `credential`, `env`, `vcsim`), reportes con `ENV` o `FROM`, `host-check`, `audit`, `trend`, `demo`, pruebas y documentación. Página [Atajos con Task](/vcenter/uso/taskfile/).
-- `task credential` se cancela si se ejecuta dentro de Claude Code.
+- `task credential`, `task credential:list` y `task credential:remove` (con confirmación) se cancelan si se ejecutan dentro de Claude Code. `Set-GovcCredential.ps1 -List` muestra destino y usuario de cada credencial, sin contraseñas.
 - Sin tareas que escriban en vCenter: los cambios y la provisión siguen el flujo con validación y aprobación.
 
 **Seguridad y control**

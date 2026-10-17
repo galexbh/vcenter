@@ -47,7 +47,7 @@ Tras cambiar un script de reportes, una plantilla o un módulo: `./scripts/Test-
 | `scripts/Test-Reports.ps1` | Pruebas de regresión de reportes, CSV, hosts, auditoría y tendencias (datos demo) |
 | `scripts/New-DemoData.ps1` | Entorno ficticio `demo` para ver o probar reportes sin vCenter (`-EdgeCases` para pruebas) |
 | `scripts/Install-Govc.ps1` | Instala la versión estable más alta de govc (o `-Version`) con verificación SHA256 (`-WithVcsim` para simulador) |
-| `scripts/Set-GovcCredential.ps1` | Registra la credencial en Credential Manager; lo ejecuta una persona en su terminal (`task credential`) |
+| `scripts/Set-GovcCredential.ps1` | Registra, lista o elimina credenciales en Credential Manager; lo ejecuta una persona en su terminal (`task credential`, `credential:list`, `credential:remove`) |
 | `scripts/lib/` | Módulos compartidos (clasificación, Credential Manager, JSON, lotes, render de reportes). Protegido |
 | `Taskfile.yml` | Atajos de Task para personas (sin escrituras en vCenter: reportes, pruebas, instalación y docs) |
 | `config/` | Perfiles de entorno; solo se versiona el ejemplo. Editar `environments.json` pide aprobación |

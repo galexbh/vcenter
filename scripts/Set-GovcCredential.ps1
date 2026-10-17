@@ -1,20 +1,27 @@
 <#
 .SYNOPSIS
-  Guarda (o reemplaza) la credencial de un entorno en Windows Credential Manager.
+  Guarda, reemplaza, lista o elimina la credencial de un entorno en Windows Credential Manager.
 
 .DESCRIPTION
   Lo ejecuta una PERSONA en su terminal (no Claude). Usa cmdkey con /pass sin valor,
   de modo que la contraseña se pide por consola y nunca queda en el historial ni en argumentos.
   Target: el 'credentialTarget' del perfil, o govc:<env> por defecto.
+  -List muestra, por perfil, el destino, si está registrada y el usuario (nunca la contraseña),
+  más las entradas govc:* que no corresponden a ningún perfil.
 
 .EXAMPLE
   ./scripts/Set-GovcCredential.ps1 -Env lab
   ./scripts/Set-GovcCredential.ps1 -Env prod -UserName 'svc-govc-ro@vsphere.local'
+  ./scripts/Set-GovcCredential.ps1 -List
+  ./scripts/Set-GovcCredential.ps1 -Env lab -Remove
 #>
+[CmdletBinding(DefaultParameterSetName = 'Set')]
 param(
-    [Parameter(Mandatory)][string]$Env,
-    [string]$UserName,
-    [switch]$Remove
+    [Parameter(Mandatory, ParameterSetName = 'Set')]
+    [Parameter(Mandatory, ParameterSetName = 'Remove')][string]$Env,
+    [Parameter(ParameterSetName = 'Set')][string]$UserName,
+    [Parameter(Mandatory, ParameterSetName = 'Remove')][switch]$Remove,
+    [Parameter(Mandatory, ParameterSetName = 'List')][switch]$List
 )
 
 Set-StrictMode -Version Latest
@@ -25,14 +32,37 @@ if ($env:CLAUDECODE) {
 }
 
 $root = Split-Path -Parent $PSScriptRoot
-$Env = $Env.ToLowerInvariant()
-$target = "govc:$Env"
 $cfgPath = Join-Path $root 'config/environments.json'
-if (Test-Path $cfgPath) {
-    $cfg = Get-Content $cfgPath -Raw | ConvertFrom-Json
-    $prop = $cfg.PSObject.Properties[$Env]
-    if ($prop -and $prop.Value.PSObject.Properties['credentialTarget']) { $target = $prop.Value.credentialTarget }
+$cfg = if (Test-Path $cfgPath) { Get-Content $cfgPath -Raw | ConvertFrom-Json } else { $null }
+
+function Get-Target([string]$name) {
+    $prop = if ($cfg) { $cfg.PSObject.Properties[$name] } else { $null }
+    if ($prop -and $prop.Value.PSObject.Properties['credentialTarget']) { return $prop.Value.credentialTarget }
+    return "govc:$name"
 }
+
+if ($List) {
+    # cmdkey imprime una línea "...target=<destino>" por entrada en cualquier idioma de Windows.
+    $targets = [ordered]@{}
+    if ($cfg) { foreach ($p in $cfg.PSObject.Properties) { $targets[(Get-Target $p.Name)] = $p.Name } }
+    foreach ($m in [regex]::Matches((cmdkey /list:govc:* | Out-String), 'target=(\S+)')) {
+        if (-not $targets.Contains($m.Groups[1].Value)) { $targets[$m.Groups[1].Value] = '(sin perfil)' }
+    }
+    if (-not $targets.Count) { Write-Host 'No hay perfiles en config/environments.json ni credenciales govc:* registradas.'; return }
+    @(foreach ($t in $targets.Keys) {
+            $out = cmdkey "/list:$t" | Out-String
+            [pscustomobject]@{
+                Entorno    = $targets[$t]
+                Destino    = $t
+                Registrada = $(if ($out -match 'target=') { 'Sí' } else { 'No' })
+                Usuario    = [regex]::Match($out, '(?m)^\s*(Usuario|User)\s*:\s*(.+?)\s*$').Groups[2].Value
+            }
+        }) | Format-Table -AutoSize
+    return
+}
+
+$Env = $Env.ToLowerInvariant()
+$target = Get-Target $Env
 
 if ($Remove) {
     cmdkey /delete:$target

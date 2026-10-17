@@ -9,7 +9,7 @@ sidebar:
 
 - La contraseña reside **únicamente** en Windows Credential Manager, como credencial genérica `govc:<entorno>`.
 - En el modo lote, la sesión es **efímera**: se guarda en una carpeta temporal con permisos exclusivos del usuario, se cierra con `session.logout` al finalizar y la carpeta se elimina. Claude no puede leer, crear ni referenciar esa carpeta.
-- La registra una persona con `Set-GovcCredential.ps1`, que solicita la contraseña por consola; no queda en argumentos ni en el historial.
+- La registra una persona con `task credential` (`Set-GovcCredential.ps1`), que solicita la contraseña por consola; no queda en argumentos ni en el historial.
 - El wrapper la obtiene en cada invocación mediante la API nativa de Windows, sin módulos de terceros (`scripts/lib/CredMan.psm1`).
 - La variable de contraseña de govc existe solo en el proceso y durante la ejecución, y se restablece al finalizar.
 - Por defecto no se conservan cookies de sesión en `~/.govmomi/sessions` (`persistSession: false`).
@@ -25,6 +25,7 @@ sidebar:
 | **Escribir un script** que acceda a la bóveda y ejecutarlo | Hook de archivos (Write/Edit) |
 | Ejecutar comandos codificados (`-EncodedCommand`, Base64 + `Invoke-Expression`) | Hook de comandos |
 | Ejecutar `Set-GovcCredential.ps1` | Hook, permisos y el propio script |
+| Ejecutar `task credential`, `credential:list` o `credential:remove` | Precondición de cada tarea y el propio script |
 | `govc env`, `-debug`, `vm.console` | Hook y wrapper (clase `secret`) |
 | Leer `~/.govmomi/**` | Permisos y hook |
 | Leer o manipular la sesión efímera del modo lote | Hook (comandos, archivos y lecturas) |
@@ -39,3 +40,18 @@ Durante la ejecución, el wrapper mantiene la contraseña en memoria, como cualq
 1. Rotar la contraseña en vCenter / SSO.
 2. En una terminal propia, fuera de Claude Code, ejecutar `task credential ENV=<entorno>` (o `./scripts/Set-GovcCredential.ps1 -Env <entorno>`) para reemplazarla.
 3. Verificar con `task env ENV=<entorno>` (equivale a `./scripts/govc.ps1 -Env <entorno> about`).
+
+## Consulta y eliminación
+
+Ambas operaciones las realiza una persona en una terminal propia, fuera de Claude Code.
+
+| Tarea | Resultado |
+|---|---|
+| `task credential:list` | Por cada perfil de `config/environments.json`: entorno, destino (`credentialTarget` o `govc:<entorno>`), si está registrada y usuario. Agrega las entradas `govc:*` sin perfil asociado. **No muestra contraseñas** |
+| `task credential:remove ENV=<entorno>` | Elimina la credencial del entorno tras solicitar confirmación |
+
+Equivalen a `./scripts/Set-GovcCredential.ps1 -List` y `./scripts/Set-GovcCredential.ps1 -Env <entorno> -Remove`. También pueden revisarse en **Panel de control → Administrador de credenciales → Credenciales de Windows → Credenciales genéricas**.
+
+La contraseña de una credencial genérica no puede consultarse. Si se olvida, se rota en vCenter / SSO y se registra de nuevo.
+
+Las entradas `govc:*` sin perfil suelen ser restos de entornos retirados o renombrados; conviene eliminarlas.

@@ -107,7 +107,7 @@ Después, abre Claude Code en la carpeta del proyecto y usa los comandos de la s
 
 | Tarea | Ejemplo |
 |---|---|
-| Registrar credencial | `task credential ENV=lab` |
+| Registrar, listar o eliminar credenciales | `task credential ENV=lab` · `task credential:list` · `task credential:remove ENV=lab` |
 | Probar conexión | `task env ENV=lab` |
 | Salud, inventario, capacidad, snapshots | `task health ENV=prod` · `task inventory ENV=prod` · `task capacity ENV=prod` · `task snapshots ENV=prod` |
 | Reporte a medida | `task report ENV=prod TYPE=all -- -Format csv` |

@@ -10,6 +10,9 @@ sidebar:
 **¿Claude conoce la contraseña de vCenter?**
 No. La contraseña se obtiene de Windows Credential Manager dentro del wrapper, en el momento de la ejecución, y no se muestra ni se escribe en archivos. Los controles impiden que Claude acceda a la bóveda o escriba código que lo haga.
 
+**¿Cómo se consultan las credenciales registradas?**
+Con `task credential:list`, en una terminal propia. Muestra, por entorno, el destino en Credential Manager, si está registrada y el usuario; la contraseña no se muestra en ningún caso. Si se olvidó la contraseña, no se recupera: se rota en vCenter / SSO y se registra de nuevo con `task credential ENV=<entorno>`. Ver [Gestión de credenciales](/vcenter/seguridad/credenciales/).
+
 **¿Puede Claude apagar o eliminar una VM en producción?**
 No. Las operaciones destructivas en entornos `confirm` y `readonly` están bloqueadas para Claude. Una persona puede ejecutarlas desde su terminal, con confirmación explícita.
 

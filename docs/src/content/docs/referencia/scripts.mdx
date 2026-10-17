@@ -103,9 +103,10 @@ Ver [Wrapper govc.ps1](/vcenter/uso/wrapper/).
 
 | Parámetro | Descripción |
 |---|---|
-| `-Env` | Entorno, obligatorio (utiliza su `credentialTarget` o `govc:<env>`) |
+| `-Env` | Entorno, obligatorio para registrar o eliminar (utiliza su `credentialTarget` o `govc:<env>`) |
 | `-UserName` | Opcional; si se omite, se solicita |
-| `-Remove` | Elimina la credencial |
+| `-Remove` | Elimina la credencial del entorno |
+| `-List` | Lista, por perfil, el destino, si está registrada y el usuario, más las entradas `govc:*` sin perfil. Nunca muestra contraseñas |
 
 Rechaza su ejecución cuando lo invoca Claude.
 

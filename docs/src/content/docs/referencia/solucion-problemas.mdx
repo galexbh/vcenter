@@ -9,7 +9,7 @@ sidebar:
 |---|---|---|
 | `No existe config/environments.json` | Perfil no creado | Ejecutar `task setup` (o copiar `environments.example.json`) y completarlo |
 | `Entorno 'x' no definido` | Nombre incorrecto o perfil ausente | Revisar las claves del archivo (en minúsculas) |
-| `No hay credencial 'govc:x'` | Credencial no registrada | Ejecutar `task credential ENV=x` (o `./scripts/Set-GovcCredential.ps1 -Env x`) en una terminal propia, fuera de Claude Code |
+| `No hay credencial 'govc:x'` | Credencial no registrada, o registrada con otro destino | Comprobar con `task credential:list` y registrarla con `task credential ENV=x` (o `./scripts/Set-GovcCredential.ps1 -Env x`) en una terminal propia, fuera de Claude Code |
 | `NotAuthenticated` / `InvalidLogin` | Contraseña vencida o rotada | Registrar nuevamente la credencial |
 | `x509: certificate signed by unknown authority` | Falta la autoridad certificadora interna | Configurar `caCerts`; no habilitar `insecure` en producción |
 | `NoPermission` | La cuenta de servicio carece del privilegio | Solicitar el privilegio específico; no utilizar otra cuenta |
@@ -30,6 +30,8 @@ sidebar:
 | `Indica ENV=<entorno> o FROM=<carpeta en reports/>` | Tarea de reporte, revisión de hosts o auditoría sin origen de datos | Indicar `ENV=` o `FROM=` |
 | `SCOPE admite full, security o capacity` | Valor de `SCOPE` no válido en `task audit` | Corregir el valor u omitirlo |
 | `La credencial la registra una persona en su propia terminal, no Claude.` | `task credential` se ejecutó dentro de Claude Code (incluido el prefijo `!`) | Ejecutarla en una terminal propia, fuera de Claude Code |
+| `Las credenciales las consulta una persona en su propia terminal, no Claude.` / `La credencial la elimina una persona en su propia terminal, no Claude.` | `task credential:list` o `task credential:remove` se ejecutó dentro de Claude Code | Ejecutarla en una terminal propia, fuera de Claude Code |
+| `task: Task "credential:remove" cancelled by user` | Se respondió que no a la confirmación | Comportamiento esperado; la credencial no se modificó |
 | `vcsim no está instalado: task install -- -WithVcsim` | `task vcsim` sin el simulador en `tools/` | `task install -- -WithVcsim` |
 
 ## Pruebas con el simulador

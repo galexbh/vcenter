@@ -80,13 +80,22 @@ task credential ENV=prod   # reemplaza la credencial existente
 ```
 
 </TabItem>
-<TabItem label="Eliminación">
-
-`task credential` no admite la eliminación; se usa el script directamente:
+<TabItem label="Consulta">
 
 ```powershell
-./scripts/Set-GovcCredential.ps1 -Env prod -Remove
+task credential:list   # entorno, destino, si está registrada y usuario; nunca la contraseña
 ```
+
+Equivale a `./scripts/Set-GovcCredential.ps1 -List`. Incluye las entradas `govc:*` que no corresponden a ningún perfil.
+
+</TabItem>
+<TabItem label="Eliminación">
+
+```powershell
+task credential:remove ENV=prod   # solicita confirmación
+```
+
+Equivale a `./scripts/Set-GovcCredential.ps1 -Env prod -Remove`.
 
 </TabItem>
 <TabItem label="Desde una sesión de Claude">
