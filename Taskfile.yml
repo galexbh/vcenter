@@ -47,6 +47,18 @@ tasks:
     cmds:
       - pwsh -NoProfile -File scripts/govc.ps1 -Env '{{.ENV}}' about
 
+  # La contraseña la pide cmdkey por consola: nunca pasa por argumentos ni por el Taskfile.
+  # Sin -Remove ni parámetros libres; para borrar una credencial se usa el script directamente.
+  credential:
+    desc: Registra o reemplaza la credencial de un entorno en Credential Manager (ENV=lab, ACCOUNT=<usuario> opcional)
+    interactive: true
+    requires: { vars: [ENV] }
+    preconditions:
+      - sh: '[ -z "$CLAUDECODE" ]'
+        msg: 'La credencial la registra una persona en su propia terminal, no Claude.'
+    cmds:
+      - pwsh -NoProfile -File scripts/Set-GovcCredential.ps1 -Env '{{.ENV}}' {{if .ACCOUNT}}-UserName '{{.ACCOUNT}}'{{end}}
+
   vcsim:
     desc: Inicia el simulador de vCenter en https://127.0.0.1:8989/sdk (instalar con task install -- -WithVcsim)
     preconditions:

@@ -19,6 +19,7 @@ winget install Task.Task
 |---|---|---|
 | `task setup` | — | Activa el control `pre-commit` y crea `config/environments.json` desde el ejemplo si no existe |
 | `task install` | — | `Install-Govc.ps1` |
+| `task credential` | `ENV`, `ACCOUNT` (opcional) | `Set-GovcCredential.ps1` (no se ejecuta dentro de Claude Code) |
 | `task env` | `ENV` | `govc.ps1 -Env <ENV> about` |
 | `task vcsim` | — | Simulador en `https://127.0.0.1:8989/sdk` |
 | `task report` | `ENV` o `FROM`, `TYPE` (`all` por defecto) | `New-Report.ps1` |
@@ -33,7 +34,7 @@ winget install Task.Task
 
 Las variables se indican como `NOMBRE=valor`. Los reportes requieren `ENV` (consulta el entorno) o `FROM` (vuelve a analizar una carpeta ya recolectada en `reports/`, sin consultar vCenter); sin ninguna de las dos, la tarea se cancela. `TYPE` y `SCOPE` solo admiten los valores del script; un valor distinto cancela la tarea antes de ejecutar nada.
 
-El registro de credenciales no tiene tarea: lo ejecuta una persona con `Set-GovcCredential.ps1`, como se indica en [Configuración](/vcenter/inicio/configuracion/).
+`task credential` registra o reemplaza la credencial de un entorno. La contraseña la solicita `cmdkey` por consola y nunca pasa por argumentos. La tarea no expone `-Remove` ni parámetros libres; para eliminar una credencial se utiliza el script directamente, como se indica en [Configuración](/vcenter/inicio/configuracion/). Dentro de Claude Code, la tarea se cancela antes de ejecutar el script.
 
 ## Ejemplos
 

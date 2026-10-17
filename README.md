@@ -71,16 +71,16 @@ task setup
 # 3. Instalar la versión estable más reciente de govc en tools/
 task install
 
-# 4. Registrar las credenciales (las ingresa la persona por consola)
-./scripts/Set-GovcCredential.ps1 -Env lab
-./scripts/Set-GovcCredential.ps1 -Env prod
+# 4. Registrar las credenciales en Windows Credential Manager (pide usuario y contraseña por consola)
+task credential ENV=lab
+task credential ENV=prod ACCOUNT=svc-govc-ro@vsphere.local
 
 # 5. Verificar guardas y conectividad
 task test:guards
 task env ENV=lab
 ```
 
-El registro de credenciales no tiene tarea a propósito: lo ejecuta una persona en su terminal, y Claude Code tiene prohibido invocarlo.
+La contraseña la pide `cmdkey` por consola: no queda en el historial ni en argumentos. La tarea se niega a ejecutarse dentro de Claude Code, porque la credencial siempre la registra una persona.
 
 Después, abre Claude Code en la carpeta del proyecto y usa los comandos de la sección siguiente, o los atajos de Task desde una terminal.
 
@@ -105,6 +105,7 @@ Después, abre Claude Code en la carpeta del proyecto y usa los comandos de la s
 
 | Tarea | Ejemplo |
 |---|---|
+| Registrar credencial | `task credential ENV=lab` |
 | Probar conexión | `task env ENV=lab` |
 | Salud, inventario, capacidad, snapshots | `task health ENV=prod` · `task inventory` · `task capacity` · `task snapshots` |
 | Reporte a medida | `task report ENV=prod TYPE=all -- -Format csv` |
@@ -156,7 +157,7 @@ task test:log      # integridad de la bitácora
   task vcsim                                 # credenciales por defecto del simulador: user / pass
   ```
 
-  Agrega un perfil `vcsim` (`url: https://127.0.0.1:8989/sdk`, `insecure: true`, `mode: lab`) y registra su credencial con `./scripts/Set-GovcCredential.ps1 -Env vcsim`.
+  Agrega un perfil `vcsim` (`url: https://127.0.0.1:8989/sdk`, `insecure: true`, `mode: lab`) y registra su credencial con `task credential ENV=vcsim ACCOUNT=user`.
 
 ## Estructura del proyecto
 
