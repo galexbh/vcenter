@@ -1,0 +1,100 @@
+---
+title: Configuración de entornos
+description: Perfiles por entorno en config/environments.json y registro de credenciales en Windows Credential Manager.
+sidebar:
+  order: 2
+---
+
+import { Steps, Tabs, TabItem } from '@astrojs/starlight/components';
+
+## Perfiles de entorno
+
+Cada entorno se define en `config/environments.json`. Este archivo contiene nombres de servidores internos y **no se versiona**; se parte de la plantilla incluida:
+
+```powershell
+Copy-Item config/environments.example.json config/environments.json
+```
+
+```json title="config/environments.json"
+{
+  "prod": {
+    "url": "https://vcenter-prod.example.local/sdk",
+    "credentialTarget": "govc:prod",
+    "mode": "confirm",
+    "datacenter": "DC-PROD",
+    "cluster": "CL-PROD-01",
+    "datastore": "DS-PROD-01",
+    "network": "PG-Servidores",
+    "folder": "/DC-PROD/vm/Servidores",
+    "resourcePool": "/DC-PROD/host/CL-PROD-01/Resources",
+    "insecure": false,
+    "caCerts": "C:/certs/vcenter-ca.pem",
+    "persistSession": false
+  }
+}
+```
+
+| Campo | Obligatorio | Descripción |
+|---|---|---|
+| `url` | Sí | URL del SDK de vCenter, sin usuario ni contraseña |
+| `mode` | Sí | `readonly`, `confirm` o `lab` (ver [modos de entorno](/seguridad/modelo/#modos-de-entorno)). Si se omite, se aplica `readonly` |
+| `credentialTarget` | No | Nombre de la credencial en Credential Manager. Por defecto, `govc:<entorno>` |
+| `datacenter`, `datastore`, `network`, `folder`, `resourcePool` | No | Valores por defecto que evitan ambigüedades en las operaciones |
+| `cluster` | No | Clúster de referencia para comandos y skills |
+| `caCerts` | Recomendado | Certificado de la autoridad interna para validar TLS |
+| `insecure` | No | `true` omite la validación TLS. **No utilizar en producción ni en contingencia** |
+| `persistSession` | No | `true` conserva la sesión en `~/.govmomi`. Por defecto, `false` |
+
+**Configuración recomendada:** `dr` en `readonly`, `prod` en `confirm` y `lab` en `lab`.
+
+## Registro de credenciales
+
+<Steps>
+
+1. Abrir una **terminal propia** (no a través de Claude) y ejecutar:
+
+   ```powershell
+   ./scripts/Set-GovcCredential.ps1 -Env prod
+   ```
+
+2. Ingresar el usuario y, cuando `cmdkey` lo solicite, la contraseña. La contraseña no se muestra ni queda en el historial.
+
+3. Verificar la conexión:
+
+   ```powershell
+   ./scripts/govc.ps1 -Env prod about
+   ```
+
+</Steps>
+
+<Tabs>
+<TabItem label="Rotación">
+
+```powershell
+./scripts/Set-GovcCredential.ps1 -Env prod   # reemplaza la credencial existente
+```
+
+</TabItem>
+<TabItem label="Eliminación">
+
+```powershell
+./scripts/Set-GovcCredential.ps1 -Env prod -Remove
+```
+
+</TabItem>
+<TabItem label="Desde una sesión de Claude">
+
+Si falta la credencial, Claude solicita ejecutar el script con el prefijo `!`, que lo ejecuta la persona:
+
+```text
+! ./scripts/Set-GovcCredential.ps1 -Env prod
+```
+
+El script rechaza su ejecución cuando lo invoca Claude.
+
+</TabItem>
+</Tabs>
+
+:::caution[Cuentas de servicio]
+Se recomienda separar una cuenta de **solo lectura** para reportes y auditorías, y otra con privilegios de **provisión** acotados a carpetas y pools definidos. Para ello, crear dos perfiles (por ejemplo, `prod-ro` en modo `readonly` y `prod-rw` en modo `confirm`) con `credentialTarget` distintos. Los roles deben validarse con el área que administra vCenter.
+:::

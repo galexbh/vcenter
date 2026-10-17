@@ -1,0 +1,41 @@
+---
+title: Gestión de credenciales
+description: Almacenamiento, uso y protección de las credenciales de vCenter.
+sidebar:
+  order: 2
+---
+
+## Principios
+
+- La contraseña reside **únicamente** en Windows Credential Manager, como credencial genérica `govc:<entorno>`.
+- En el modo lote, la sesión es **efímera**: se guarda en una carpeta temporal con permisos exclusivos del usuario, se cierra con `session.logout` al finalizar y la carpeta se elimina. Claude no puede leer, crear ni referenciar esa carpeta.
+- La registra una persona con `Set-GovcCredential.ps1`, que solicita la contraseña por consola; no queda en argumentos ni en el historial.
+- El wrapper la obtiene en cada invocación mediante la API nativa de Windows, sin módulos de terceros (`scripts/lib/CredMan.psm1`).
+- La variable de contraseña de govc existe solo en el proceso y durante la ejecución, y se restablece al finalizar.
+- Por defecto no se conservan cookies de sesión en `~/.govmomi/sessions` (`persistSession: false`).
+
+## Controles sobre Claude
+
+| Intento | Control que lo impide |
+|---|---|
+| Leer o definir la variable de contraseña de govc | Hook de comandos y de archivos |
+| Usar `GOVC_URL` con usuario y contraseña embebidos | Hook y `pre-commit` |
+| Pasar contraseñas como argumento (`-password`, `cmdkey` con `/pass`) | Hook y `pre-commit` |
+| Invocar directamente el módulo de credenciales o la API de la bóveda | Hook de comandos |
+| **Escribir un script** que acceda a la bóveda y ejecutarlo | Hook de archivos (Write/Edit) |
+| Ejecutar comandos codificados (`-EncodedCommand`, Base64 + `Invoke-Expression`) | Hook de comandos |
+| Ejecutar `Set-GovcCredential.ps1` | Hook, permisos y el propio script |
+| `govc env`, `-debug`, `vm.console` | Hook y wrapper (clase `secret`) |
+| Leer `~/.govmomi/**` | Permisos y hook |
+| Leer o manipular la sesión efímera del modo lote | Hook (comandos, archivos y lecturas) |
+| Modificar el módulo de credenciales o el wrapper | Permisos (bloqueo y aprobación, respectivamente) |
+
+:::caution[Límite del modelo]
+Durante la ejecución, el wrapper mantiene la contraseña en memoria, como cualquier cliente. Los controles impiden que Claude la exponga, pero no sustituyen la protección del equipo, las cuentas con rol mínimo ni la rotación periódica.
+:::
+
+## Rotación
+
+1. Rotar la contraseña en vCenter / SSO.
+2. Ejecutar `./scripts/Set-GovcCredential.ps1 -Env <entorno>` para reemplazarla.
+3. Verificar con `./scripts/govc.ps1 -Env <entorno> about`.

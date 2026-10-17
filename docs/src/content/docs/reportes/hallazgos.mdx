@@ -1,0 +1,84 @@
+---
+title: Hallazgos y umbrales
+description: Reglas de evaluación, severidades, umbrales configurables y su justificación.
+sidebar:
+  order: 2
+---
+
+import { Badge } from '@astrojs/starlight/components';
+
+Cada hallazgo incluye **severidad**, **categoría**, **objeto**, **evidencia**, **sugerencia**, un **comando de verificación** (solo lectura, no se ejecuta) y un **código de regla** que permite seguirlo entre corridas.
+
+**Severidades:** <Badge text="Crítico" variant="danger" /> requiere atención inmediata · <Badge text="Advertencia" variant="caution" /> debe planificarse · <Badge text="Info" variant="note" /> oportunidad de mejora.
+
+## Reglas del reporte de salud
+
+| Categoría | Condición | Severidad | Justificación |
+|---|---|---|---|
+| Almacenamiento | Datastore no accesible | Crítico | VMs sin acceso a disco |
+| Almacenamiento | Uso ≥ 90 % | Crítico | Al completarse el espacio, vSphere pausa las VMs |
+| Almacenamiento | Uso ≥ 80 % | Advertencia | Margen insuficiente para crecimiento y snapshots |
+| Almacenamiento | Aprovisionamiento thin > 150 % | Advertencia | Riesgo de agotamiento si los discos crecen |
+| Snapshots | Antigüedad ≥ 30 días | Crítico | Crecimiento del delta, degradación de I/O y consolidaciones prolongadas |
+| Snapshots | Antigüedad ≥ 7 días | Advertencia | Un snapshot no constituye un respaldo |
+| Configuración VM | Consolidación de discos pendiente | Advertencia | Discos delta sin consolidar; consumo y degradación |
+| Configuración VM | Límite de CPU o memoria configurado | Advertencia | Contención artificial aunque el host disponga de recursos |
+| Configuración VM | CD/DVD conectado a una ISO de datastore | Info | Impide vMotion y el balanceo de DRS |
+| Configuración VM | Versión de hardware inferior a la mínima | Info | Sin acceso a funcionalidades y correcciones recientes |
+| Clúster | HA deshabilitado | Crítico | Las VMs no se reinician automáticamente ante la falla de un host |
+| Clúster | DRS deshabilitado o en modo manual | Advertencia | Sin balanceo automático de carga |
+| Hosts | Sin conexión | Crítico | VMs sin gestión ni protección de HA efectiva |
+| Hosts | En modo mantenimiento | Info | Capacidad reducida si no existe una ventana activa |
+| Capacidad | RAM de host ≥ 85 % | Advertencia | *Ballooning* y *swap* |
+| Capacidad | vCPU:pCore ≥ 6 | Crítico | CPU Ready elevado y latencia |
+| Capacidad | vCPU:pCore ≥ 4 | Advertencia | Requiere seguimiento de CPU Ready |
+| Capacidad | RAM asignada / física > 1,0 | Advertencia | Sobrecompromiso; holgura insuficiente para HA |
+| VMware Tools | No instalado o no en ejecución | Advertencia | Sin apagado ordenado, *quiesce* ni métricas del invitado |
+| VMware Tools | Desactualizado | Info | Actualizar en ventana de mantenimiento |
+| Certificados | Certificado de vCenter vencido | Crítico | Interrupción de conexiones y alertas de confianza |
+| Certificados | Vence en ≤ 60 días | Advertencia | Planificar la renovación |
+| Licencias | Vence en ≤ 60 días | Advertencia | Pérdida de funcionalidades al vencer |
+| Alarmas | Roja / amarilla | Crítico / Advertencia | Según el procedimiento de la alarma |
+| Higiene | VMs apagadas | Info | Consumo de almacenamiento y licencias |
+
+Los hallazgos de VMware Tools, VMs apagadas, versión de hardware e ISO conectada se **agrupan** en una sola fila por condición.
+
+## Reglas de la revisión de hosts
+
+| Categoría | Condición | Severidad |
+|---|---|---|
+| Storage | Path inactivo | Crítico |
+| Storage | Dispositivo compartido con un único path | Advertencia |
+| Drift VIBs/drivers | Versiones distintas o VIB ausente en el clúster | Advertencia |
+| Red física | NIC sin enlace; velocidad o MTU distintas entre hosts | Advertencia |
+| Tiempo | NTP deshabilitado o fuentes distintas | Advertencia |
+| Logs | Sin syslog remoto | Advertencia |
+| Seguridad | SSH o ESXi Shell en ejecución | Advertencia |
+| Certificados | Certificado de host vencido / próximo a vencer | Crítico / Advertencia |
+| Diagnóstico | Sin coredump por red | Info |
+| Plataforma | Modelos distintos en el clúster | Info |
+
+Detalle en [Diagnóstico de hosts con esxcli](/uso/esxcli/#revisión-por-clúster-host-check).
+
+## Parámetros
+
+| Parámetro | Valor por defecto |
+|---|---|
+| `-SnapshotWarnDays` / `-SnapshotCritDays` | 7 / 30 |
+| `-DatastoreWarnPct` / `-DatastoreCritPct` | 80 / 90 |
+| `-VcpuRatioWarn` / `-VcpuRatioCrit` | 4 / 6 |
+| `-MemRatioWarn` | 1,0 |
+| `-HostMemWarnPct` | 85 |
+| `-MinHwVersion` | 14 |
+| `-CertWarnDays` / `-LicenseWarnDays` | 60 / 60 |
+| `-MdMaxRows` | 200 |
+
+:::note[Práctica habitual, no norma]
+Los umbrales de sobresuscripción y antigüedad son referencias habituales de la industria. Cuando exista una política interna de capacidad, los parámetros deben ajustarse a ella.
+:::
+
+## Del hallazgo a la acción
+
+1. Ejecutar el comando de verificación para confirmar el hallazgo.
+2. Solicitar a Claude el plan de cambio (`/health` lo ofrece al finalizar).
+3. Las acciones destructivas en producción (eliminación de snapshots, apagado de VMs, mantenimiento de hosts) las ejecuta una persona con cambio aprobado y confirmación del responsable.

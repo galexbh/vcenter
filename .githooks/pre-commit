@@ -1,0 +1,22 @@
+#!/bin/sh
+# Rechaza commits que incluyan reportes, auditoría, configuración real o posibles secretos.
+# Activar con: git config core.hooksPath .githooks
+
+staged=$(git diff --cached --name-only --diff-filter=ACMR)
+[ -z "$staged" ] && exit 0
+
+bad=$(printf '%s\n' "$staged" | grep -E '^(reports|logs|tools)/|^config/environments\.json$|(^|/)reporte-[^/]*\.(html|md)$|\.raw\.json$|\.(env|pem|pfx|key)$|^specs/.*\.ya?ml$')
+if [ -n "$bad" ]; then
+  echo "pre-commit: archivos que no deben versionarse:" >&2
+  printf '  %s\n' $bad >&2
+  echo "Quítalos con: git restore --staged <archivo>" >&2
+  exit 1
+fi
+
+# Contraseñas o URLs con credenciales en el contenido agregado
+# (se excluyen las pruebas de guardas, el hook de Claude y este hook, que contienen patrones de ejemplo)
+if git diff --cached -U0 -- . ':(exclude)scripts/Test-Guards.ps1' ':(exclude).claude/hooks/govc-guard.ps1' ':(exclude).githooks/*' | grep -E '^\+' | grep -Eiq "(GOVC_PASSWORD[[:space:]]*=[[:space:]]*['\"]?[^\$[:space:]'\"]|://[^/@[:space:]]+:[^/@[:space:]]+@|-password=[^\$[:space:]]|/pass:[^\$[:space:]])"; then
+  echo "pre-commit: el diff parece contener credenciales. Revísalo antes de confirmar." >&2
+  exit 1
+fi
+exit 0

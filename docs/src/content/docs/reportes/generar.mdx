@@ -1,0 +1,101 @@
+---
+title: Generación de reportes
+description: Tipos de reporte, formatos, recolección, estructura de salida y recálculo sin consultar vCenter.
+sidebar:
+  order: 1
+---
+
+import { FileTree } from '@astrojs/starlight/components';
+
+## Uso
+
+```powershell
+./scripts/New-Report.ps1 -Env <entorno> [-Type all|inventory|snapshots|capacity|health] [-Format html,md,csv]
+```
+
+Desde Claude: `/report prod health` o `/report prod inventory csv`.
+
+| Formato | Resultado | Uso recomendado |
+|---|---|---|
+| `html` (por defecto) | Documento autocontenido con selector de tema claro/oscuro (botón superior; recuerda la elección en el navegador). Al imprimir se usa siempre el tema claro | Lectura y distribución interna |
+| `md` (por defecto) | Markdown con tablas (máximo `-MdMaxRows` filas por tabla) | Resumen por Claude, wikis internas |
+| `csv` | Un archivo por tabla | Filtrado, cruces y tablas dinámicas en Excel |
+
+| Tipo | Secciones |
+|---|---|
+| `health` | Hallazgos y sugerencias |
+| `capacity` | Capacidad por clúster, datastores y hosts |
+| `snapshots` | Snapshots con antigüedad |
+| `inventory` | Máquinas virtuales |
+| `all` (por defecto) | Todas las anteriores |
+
+Todos los reportes incluyen indicadores: VMs, encendidas, apagadas, plantillas, hosts, clústeres, datastores, snapshots, hallazgos críticos y advertencias.
+
+## Recolección
+
+El número de consultas es fijo e independiente del tamaño del inventario. Todas son de solo lectura:
+
+| # | Consulta | Datos |
+|---|---|---|
+| 1 | `object.collect -type m` | VMs: estado, host, CPU, RAM, disco, sistema operativo, IP, VMware Tools, snapshots, versión de hardware, límites, consolidación pendiente, unidades de CD/DVD |
+| 2 | `object.collect -type h` | Hosts: cores, frecuencia, RAM, uso, conexión, mantenimiento, versión |
+| 3 | `object.collect -type r` | Recursos de cómputo |
+| 4 | `object.collect -type c` | Clústeres: estado de HA y DRS, comportamiento de DRS |
+| 5 | `object.collect -type s` | Datastores: capacidad, espacio libre, espacio sin comprometer, tipo, accesibilidad |
+| 6 | `object.collect / triggeredAlarmState` | Alarmas activas (más una lectura por alarma distinta para obtener su nombre) |
+| 7 | `about.cert`, `license.ls` | Certificado de vCenter y licencias |
+
+## Estructura de salida
+
+<FileTree>
+- reports/ (excluido de git)
+  - prod/
+    - 20261017-080000/
+      - reporte-all.html autocontenido, tema claro y oscuro
+      - reporte-all.md
+      - reporte-all-maquinas-virtuales.csv con -Format csv (un archivo por tabla)
+      - raw/
+        - meta.json entorno, fecha y usuario
+        - summary.json indicadores
+        - findings.json hallazgos (entrada para auditoría y tendencias)
+        - vms.json
+        - hosts.json
+        - compute.json
+        - clusters.json
+        - datastores.json
+        - alarms.json
+        - vcenter.json certificado y licencias
+</FileTree>
+
+## Exportación a CSV
+
+Con `-Format csv` se genera un archivo por tabla del reporte: `reporte-<tipo>-resumen.csv`, `reporte-<tipo>-hallazgos-y-sugerencias.csv`, `reporte-<tipo>-maquinas-virtuales.csv`, `reporte-<tipo>-datastores.csv`, y así sucesivamente.
+
+| Característica | Detalle |
+|---|---|
+| Encabezados | En español, iguales a los del reporte HTML |
+| Codificación | UTF-8 con BOM, para que Excel muestre correctamente los acentos |
+| Separador y decimales | Los de la configuración regional de Windows (por ejemplo, `;` y `,` en español). `-CsvDelimiter` permite forzar otro separador |
+| Filas | Todas las filas, sin el límite del Markdown |
+| Protección | Los textos que comienzan con `=`, `+`, `-` o `@` se prefijan con `'` para impedir la ejecución de fórmulas al abrir el archivo |
+
+```powershell
+./scripts/New-Report.ps1 -Env prod -Type inventory -Format csv
+./scripts/New-Report.ps1 -FromRaw reports/prod/20261017-080000 -Format csv -CsvDelimiter ','
+```
+
+Para abrirlo, hacer doble clic sobre el archivo o, en Excel, **Datos → Desde texto/CSV**.
+
+## Recálculo sin consultar vCenter
+
+Es posible modificar umbrales, tipo o formato sobre una corrida existente:
+
+```powershell
+./scripts/New-Report.ps1 -FromRaw reports/prod/20261017-080000 -Type health -SnapshotWarnDays 3
+```
+
+## Confidencialidad
+
+:::danger[No versionar ni publicar]
+Los reportes contienen inventario de infraestructura (nombres, direcciones IP, versiones). Están excluidos de git, el hook bloquea su incorporación y el control `pre-commit` rechaza el commit. Deben compartirse únicamente con personal autorizado; su publicación en otros sistemas (Confluence, Jira, correo) requiere la validación de Seguridad de la Información.
+:::

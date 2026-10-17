@@ -1,0 +1,59 @@
+---
+title: Visión general
+description: Propósito, alcance, audiencia y principios de diseño de la solución.
+sidebar:
+  order: 1
+---
+
+## Propósito
+
+Esta solución permite operar, analizar y auditar plataformas VMware vSphere mediante el cliente de línea de comandos **govc**, asistido por **Claude Code**. Su objetivo es que las tareas habituales de consulta, reporte, auditoría y provisión se realicen:
+
+- **de forma segura**: sin exponer credenciales y con controles que impiden cambios no autorizados;
+- **de forma eficiente**: con consultas en bloque y datos reutilizables;
+- **de forma trazable**: con bitácora de auditoría y reportes reproducibles.
+
+## Alcance
+
+| Incluido | Excluido |
+|---|---|
+| Consulta de inventario, capacidad, configuración y alarmas de vCenter | Sistemas operativos invitados y aplicaciones |
+| Diagnóstico de configuración de hosts ESXi a través de vCenter | Acceso directo a hosts por SSH |
+| Reportes de salud, capacidad, snapshots y tendencias | Monitoreo en tiempo real (función de la herramienta de monitoreo) |
+| Auditoría técnica con informe formal | Certificación de cumplimiento normativo |
+| Provisión controlada de VMs y recursos de inventario | Cambios destructivos en producción ejecutados por el asistente |
+
+## Audiencia
+
+| Rol | Uso principal |
+|---|---|
+| Operación de infraestructura | Consultas diarias, reportes de salud, diagnóstico de incidentes, provisión |
+| Arquitectura y capacidad | Análisis de capacidad, tendencias y proyecciones |
+| Seguridad de la información y auditoría | Auditorías técnicas, revisión de configuración de hosts y controles de acceso |
+| Jefaturas | Resúmenes ejecutivos y evidencia para comités |
+
+## Principios de diseño
+
+1. **Mínimo privilegio y mínima exposición.** La credencial se lee solo cuando se necesita, desde la bóveda del sistema operativo, y nunca se muestra ni se almacena en archivos.
+2. **Lectura por defecto.** Las consultas se ejecutan sin fricción; toda modificación requiere aprobación, y las destructivas en producción quedan reservadas a personas.
+3. **Defensa en profundidad.** El clasificador de operaciones, el hook de Claude Code, el wrapper y los controles de git verifican de forma independiente.
+4. **Falla segura.** Una operación no reconocida se trata como modificación.
+5. **Trazabilidad.** Cada invocación queda registrada en una bitácora encadenada por hashes.
+6. **Reproducibilidad.** Los datos crudos de cada corrida se conservan; los reportes pueden recalcularse sin volver a consultar vCenter.
+7. **Información interna protegida.** Reportes, bitácoras y configuración real nunca se versionan.
+
+## Componentes
+
+| Componente | Función |
+|---|---|
+| `scripts/govc.ps1` | Punto único de acceso a vCenter |
+| `.claude/hooks/govc-guard.ps1` | Control previo de cada comando y archivo que propone Claude |
+| `scripts/New-Report.ps1` | Reportes de inventario, capacidad, snapshots y salud |
+| `scripts/Invoke-HostCheck.ps1` | Revisión de configuración de hosts ESXi |
+| `scripts/Invoke-Audit.ps1` | Auditoría técnica completa |
+| `scripts/Compare-Report.ps1` | Tendencias entre corridas |
+| Skills y comandos de Claude | Procedimientos y criterios que el asistente aplica |
+
+:::note
+La solución apoya el juicio técnico y no lo sustituye. Las decisiones de cambio, inversión o aceptación de riesgo corresponden a las áreas responsables.
+:::

@@ -1,0 +1,225 @@
+---
+title: Ejemplos y casos de uso
+description: Escenarios de operación, análisis y auditoría con la solicitud, el procedimiento que aplica Claude, los comandos utilizados y los controles que intervienen.
+sidebar:
+  order: 2
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Cada caso describe la **solicitud**, el **procedimiento** que aplica Claude, los **comandos** utilizados y los **controles** que intervienen. Los nombres de objetos (`CL-PROD-01`, `app-erp01`, `esx01`) y las cifras son ilustrativos.
+
+## Consultas rápidas
+
+| Solicitud | Comando utilizado |
+|---|---|
+| Versión del vCenter de producción | `about` |
+| VMs apagadas | `find / -type m -runtime.powerState poweredOff` |
+| VM con una dirección IP determinada | `find / -type m -guest.ipAddress 10.10.20.15` |
+| Detalle de una o varias VMs | `vm.info -json -r app01 app02` |
+| Snapshots de una VM | `snapshot.tree -vm app01 -D -i -s` |
+| Eventos recientes de una VM | `events -n 50 /DC-PROD/vm/app01` |
+| vCPU encendidas por clúster | `object.collect -json -type m / name runtime.powerState runtime.host summary.config.numCpu` y agregación local |
+| Datastores por encima del 80 % | `object.collect -json -type s / name summary.capacity summary.freeSpace` |
+| Estado de enlace de las NIC de un host | `host.esxcli -json -host esx01 network nic list` |
+| Hosts con SSH en ejecución | `host.service.ls -host <h>` por host, o `/host-check prod` |
+
+Todas son operaciones de lectura y se aprueban automáticamente en cualquier entorno.
+
+## 1. Revisión diaria de salud
+
+**Solicitud:** estado de producción antes de la reunión operativa.
+
+**Procedimiento**
+1. Ejecuta `/health prod`, que invoca `New-Report.ps1 -Env prod -Type health`.
+2. Confirma cada hallazgo crítico con una lectura puntual.
+3. Presenta el resultado en tres bloques (*Atender ya*, *Planificar*, *Mejoras*) con las rutas del reporte HTML y Markdown.
+
+```text
+Salud de PROD — 2026-10-17
+Resumen: 2 críticos, 5 advertencias. DS-PROD-03 al 93 % y un snapshot de 41 días en app-erp01.
+
+Atender ya
+1. DS-PROD-03 — Uso 93 % (libre 210 GB). Riesgo: pausa de VMs si se completa el espacio.
+   Verificación: ./scripts/govc.ps1 -Env prod datastore.info 'DS-PROD-03'
+```
+
+:::tip
+Si existe una corrida del mismo día, Claude ofrece reutilizarla (`-FromRaw`) en lugar de consultar nuevamente vCenter.
+:::
+
+## 2. Auditoría de snapshots
+
+**Solicitud:** snapshots de producción con más de 3 días y propuesta de limpieza.
+
+**Procedimiento**
+1. Ejecuta `/snapshot-audit prod 3`.
+2. Identifica patrones: snapshots de respaldo huérfanos, cadenas profundas y snapshots sin descripción.
+3. Elabora una tabla con VM, snapshot, justificación y el comando `snapshot.remove` **como propuesta**.
+
+<Tabs>
+<TabItem label="Solicitud de eliminación a Claude">
+
+```text
+Comando propuesto: ./scripts/govc.ps1 -Env prod snapshot.remove -vm app-erp01 pre-update
+Control:           deny — prod/confirm → snapshot.remove (destructive): destructivo fuera de lab.
+```
+
+Claude explica el bloqueo y entrega el comando para su ejecución por una persona.
+
+</TabItem>
+<TabItem label="Ejecución por una persona">
+
+En una terminal propia, con cambio aprobado y confirmación del responsable de la VM:
+
+```powershell
+./scripts/govc.ps1 -Env prod snapshot.remove -vm app-erp01 pre-update
+# ATENCIÓN: operación DESTRUCTIVA en PROD …
+# Escribe el nombre del entorno (prod) para confirmar: prod
+```
+
+La operación queda registrada en la bitácora de auditoría.
+
+</TabItem>
+</Tabs>
+
+## 3. Evaluación de capacidad para un proyecto
+
+**Solicitud:** viabilidad de 20 VMs de 4 vCPU y 16 GB en `CL-PROD-01`.
+
+**Procedimiento**
+1. Ejecuta `/capacity prod CL-PROD-01`.
+2. Suma la demanda del proyecto (80 vCPU, 320 GB) a la asignación vigente.
+3. Calcula la relación vCPU:pCore, la relación de RAM asignada/física y la holgura N+1 resultantes.
+
+| Métrica | Actual | Con el proyecto | Umbral |
+|---|---|---|---|
+| vCPU:pCore | 3,1:1 | 4,4:1 | 4:1 |
+| RAM asignada / física | 0,72 | 0,95 | 1,0 |
+| Holgura N+1 (RAM) | Sí | No | — |
+
+:::caution
+La decisión de ampliar capacidad corresponde a Infraestructura y Arquitectura. El análisis es un insumo para esa decisión.
+:::
+
+## 4. Preparación de un ciclo de parcheo
+
+**Solicitud:** verificar la homogeneidad de los hosts de `CL-PROD-01` antes de parchear.
+
+**Procedimiento**
+1. Ejecuta `/host-check prod CL-PROD-01`.
+2. Reporta las diferencias entre hosts: VIBs y drivers, velocidad y MTU de NIC, redundancia de paths y fuentes NTP.
+3. Propone el orden de parcheo y un snapshot previo para las VMs críticas:
+
+```powershell
+./scripts/govc.ps1 -Env prod snapshot.create -vm app-erp01 -d "CHG-1234 previo a parche" pre-CHG-1234
+```
+
+**Controles:** `snapshot.create` es una escritura y requiere aprobación. `host.maintenance.enter` es destructiva y la ejecuta una persona.
+
+## 5. Incidente: degradación de rendimiento de una VM
+
+**Solicitud:** usuarios reportan lentitud en `app01` desde las 10:00.
+
+| Paso | Comando | Objetivo |
+|---|---|---|
+| 1 | `vm.info -json -r app01` | Host, recursos asignados y estado de VMware Tools |
+| 2 | `events -n 50 /DC-PROD/vm/app01` | vMotion, reinicios o alarmas recientes |
+| 3 | `metric.sample -n 12 -json /DC-PROD/vm/app01 cpu.ready.summation cpu.usage.average mem.usage.average` | Contención de CPU o memoria |
+| 4 | `snapshot.tree -vm app01 -D -i -s` | Snapshots que degraden el I/O |
+| 5 | `host.esxcli -json -host <host> network nic list` | Estado de las NIC del host |
+| 6 | `host.esxcli -json -host <host> storage core path list` | Paths de almacenamiento inactivos |
+
+**Resultado:** hipótesis ordenadas por probabilidad, con su evidencia y la acción sugerida.
+
+## 6. Incidente: host sin respuesta
+
+**Solicitud:** `esx05` aparece como *no responde* en vCenter.
+
+**Procedimiento**
+1. Consulta estado, modo de mantenimiento y eventos del host (`host.info`, `events -n 30`).
+2. Identifica las VMs afectadas con `object.collect -json -type m / name runtime.host runtime.powerState`.
+3. Recomienda escalar a Infraestructura con la evidencia recopilada.
+
+:::note
+Un host sin conexión con vCenter tampoco responde a esxcli. En `/host-check` se registra como hallazgo de **Cobertura**.
+:::
+
+## 7. Provisión de una VM en laboratorio
+
+**Solicitud:** crear `lab-test01` desde `tpl-rhel9` con 2 vCPU, 4 GB y la red *VM Network*.
+
+**Procedimiento**
+1. Elabora `specs/lab-test01.yaml` y lo presenta.
+2. Valida con lecturas: disponibilidad del nombre, existencia de la plantilla, espacio en el datastore, red y pool.
+3. Presenta el plan:
+
+```text
+1. vm.clone -vm tpl-rhel9 -ds DS-LAB-01 -pool /DC-LAB/host/CL-LAB-01/Resources -folder /DC-LAB/vm/Pruebas -on=false lab-test01   (write)
+2. vm.change -vm lab-test01 -c 2 -m 4096                                                                                   (write)
+3. vm.network.change -vm lab-test01 -net "VM Network" ethernet-0                                                           (write)
+Consumo: 2 vCPU · 4 GB RAM · ~40 GB en DS-LAB-01
+```
+
+4. Tras la confirmación, ejecuta cada paso con aprobación individual y verifica con `vm.info -json -r lab-test01`.
+
+## 8. Provisión de una VM en producción
+
+**Solicitud:** crear `app-pagos03` con la misma configuración que `app-pagos02`.
+
+Diferencias respecto del laboratorio:
+- Se exige un número de cambio (`change: CHG-…`) antes de planificar.
+- Se toma `app-pagos02` como referencia (`vm.info -json -r`) y se presentan las diferencias.
+- Cada escritura requiere aprobación; la provisión no incluye pasos destructivos.
+- Si intervienen red o almacenamiento compartidos, se recomienda la validación de Redes o Infraestructura.
+
+En **dr** (modo `readonly`) la provisión no está permitida y no se ejecuta ningún comando.
+
+## 9. Auditoría técnica completa
+
+**Solicitud:** auditoría de producción para el comité de riesgo tecnológico.
+
+**Procedimiento**
+1. Ejecuta `/audit prod`, que orquesta inventario, revisión de hosts y controles de acceso.
+2. Consolida los hallazgos con identificador (`AUD-001`…), dominio, riesgo, recomendación y referencia.
+3. Entrega el informe `auditoria.html`, preparado para imprimir o guardar como PDF, junto con el resumen ejecutivo.
+
+Ver [Auditoría técnica](/auditoria/ejecutar/).
+
+## 10. Seguimiento de tendencias
+
+**Solicitud:** evolución del entorno desde la corrida anterior.
+
+```powershell
+./scripts/Compare-Report.ps1 -Env prod
+```
+
+El resultado incluye VMs nuevas y eliminadas, crecimiento de datastores con días estimados hasta el 90 %, snapshots nuevos y hallazgos nuevos o resueltos. Ver [Tendencias](/reportes/tendencias/).
+
+## 11. Recalcular un reporte con otra política
+
+**Solicitud:** efecto de usar umbrales de 3 días para snapshots y de 75 % para datastores.
+
+```powershell
+./scripts/New-Report.ps1 -FromRaw reports/prod/20261017-080000 -Type health -SnapshotWarnDays 3 -DatastoreWarnPct 75
+```
+
+El cálculo se realiza sobre los datos crudos, sin consultar vCenter.
+
+## 12. Comparación entre producción y contingencia
+
+**Solicitud:** confirmar que DR tiene las mismas versiones de ESXi y una estructura de clústeres equivalente a producción.
+
+**Procedimiento:** ejecuta `about` y `object.collect -json -type h / name summary.config.product.fullName parent` en ambos entornos, y presenta una tabla comparativa con las diferencias relevantes para una conmutación.
+
+## Solicitudes que no se atienden
+
+| Solicitud | Respuesta |
+|---|---|
+| Ejecutar govc directamente | Bloqueado: el acceso es siempre mediante `scripts/govc.ps1` |
+| Leer o probar la contraseña | No se manipulan credenciales; se indica ejecutar `Set-GovcCredential.ps1` |
+| Apagar una VM en producción | Bloqueado (destructiva); se entrega el comando para una persona |
+| Instalar un VIB en un host | Bloqueado en producción; en laboratorio requiere aprobación |
+| Habilitar SSH para revisar un host | No se propone: esxcli vía vCenter cubre las lecturas |
+| Versionar un reporte | Bloqueado por el hook y por el control de git |
+| Operar sin indicar el entorno | Se solicita el entorno; nunca se asume producción |

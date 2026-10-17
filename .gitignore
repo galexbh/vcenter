@@ -1,0 +1,23 @@
+# --- Nunca versionar: reportes, auditoría, configuración real, binarios ---
+reports/
+logs/
+config/environments.json
+tools/
+specs/*.yaml
+!specs/.gitkeep
+
+# Secretos y sesiones
+*.env
+.env*
+*.pem
+*.pfx
+*.key
+.govmomi/
+
+# Claude Code local
+.claude/settings.local.json
+
+# Cualquier reporte generado fuera de reports/
+reporte-*.html
+reporte-*.md
+*.raw.json

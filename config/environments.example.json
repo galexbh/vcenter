@@ -1,0 +1,40 @@
+{
+  "lab": {
+    "url": "https://vcenter-lab.example.local/sdk",
+    "credentialTarget": "govc:lab",
+    "mode": "lab",
+    "datacenter": "DC-LAB",
+    "cluster": "CL-LAB-01",
+    "datastore": "DS-LAB-01",
+    "network": "VM Network",
+    "folder": "/DC-LAB/vm/Pruebas",
+    "resourcePool": "/DC-LAB/host/CL-LAB-01/Resources",
+    "insecure": false,
+    "caCerts": "",
+    "persistSession": false
+  },
+  "dr": {
+    "url": "https://vcenter-dr.example.local/sdk",
+    "credentialTarget": "govc:dr",
+    "mode": "readonly",
+    "datacenter": "DC-DR",
+    "cluster": "CL-DR-01",
+    "insecure": false,
+    "caCerts": "C:/certs/vcenter-ca.pem",
+    "persistSession": false
+  },
+  "prod": {
+    "url": "https://vcenter-prod.example.local/sdk",
+    "credentialTarget": "govc:prod",
+    "mode": "confirm",
+    "datacenter": "DC-PROD",
+    "cluster": "CL-PROD-01",
+    "datastore": "DS-PROD-01",
+    "network": "PG-Servidores",
+    "folder": "/DC-PROD/vm/Servidores",
+    "resourcePool": "/DC-PROD/host/CL-PROD-01/Resources",
+    "insecure": false,
+    "caCerts": "C:/certs/vcenter-ca.pem",
+    "persistSession": false
+  }
+}

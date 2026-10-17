@@ -1,0 +1,186 @@
+<#
+.SYNOPSIS
+  Pruebas de las guardas: clasificación de subcomandos y decisiones del hook PreToolUse.
+  Usa config/environments.example.json (lab=lab, dr=readonly, prod=confirm). No contacta vCenter.
+
+  Las cadenas sensibles de los casos se arman por partes para que este archivo no contenga
+  los literales que la guarda de archivos bloquea.
+
+.PARAMETER HookPath
+  Hook alternativo a probar (p. ej. una versión preparada para revisión antes de instalarla).
+
+.EXAMPLE
+  ./scripts/Test-Guards.ps1
+  ./scripts/Test-Guards.ps1 -HookPath <ruta>\.claude\hooks\govc-guard.ps1
+#>
+param([string]$HookPath)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+$root = Split-Path -Parent $PSScriptRoot
+Import-Module (Join-Path $PSScriptRoot 'lib/Classify.psm1') -Force
+$hook = if ($HookPath) { (Resolve-Path $HookPath).Path } else { Join-Path $root '.claude/hooks/govc-guard.ps1' }
+$pw = 'GOVC_' + 'PASSWORD'
+$vaultCall = 'Get-Govc' + 'Credential'
+$vaultMod = 'Cred' + 'Man.psm1'
+$vaultApi = 'Cred' + 'Read'
+$fail = 0; $pass = 0
+
+function Check($name, $expected, $actual) {
+    if ($expected -eq $actual) { $script:pass++ }
+    else { $script:fail++; Write-Host "FALLA  $name → esperado '$expected', obtenido '$actual'" -ForegroundColor Red }
+}
+
+# --- Clasificación ---------------------------------------------------------------
+$classCases = @(
+    @('about', 'read'), @('ls /DC0/vm', 'read'), @('vm.info -json app01', 'read'), @('object.collect -json -type m / name', 'read'),
+    @('find / -type m', 'read'), @('find / -p -type m', 'read'), @('snapshot.tree -vm app01', 'read'), @('datastore.ls -ds DS1', 'read'), @('events -n 10 app01', 'read'),
+    @('vm.clone -vm tpl app02', 'write'), @('vm.change -vm app01 -c 4', 'write'), @('vm.power -on app01', 'write'),
+    @('snapshot.create -vm app01 pre', 'write'), @('tags.attach Lab app01', 'write'), @('nuevo.comando', 'write'),
+    @('vm.power -off app01', 'destructive'), @('vm.power -s app01', 'destructive'), @('vm.power -r app01', 'destructive'),
+    @('vm.power -on -off app01', 'destructive'), @('vm.destroy app01', 'destructive'), @('snapshot.remove -vm app01 *', 'destructive'),
+    @('snapshot.revert -vm app01 pre', 'destructive'), @('datastore.rm -ds DS1 iso/x.iso', 'destructive'),
+    @('host.maintenance.enter esx01', 'destructive'), @('object.destroy /DC0/vm/f', 'destructive'), @('tags.rm Lab', 'destructive'),
+    @('vm.unregister app01', 'destructive'),
+    # host.esxcli: el técnico del piso — list/get son lectura, el resto modifica el host
+    @('host.esxcli -host h network nic list', 'read'), @('host.esxcli -host h -json storage core path list', 'read'),
+    @('host.esxcli -host h system ntp get', 'read'), @('host.esxcli -json -host=h software vib list', 'read'),
+    @('host.esxcli -host h storage core path list -p vmhba0:C0:T0:L0', 'read'), @('host.esxcli -host h system account list', 'read'),
+    @('host.esxcli -host h software vib install -d depot.zip', 'destructive'), @('host.esxcli -host h system maintenanceMode set -e true', 'destructive'),
+    @('host.esxcli -host h network firewall set --enabled false', 'destructive'), @('host.esxcli -host h', 'destructive'),
+    @('host.esxcli -host h list', 'destructive'),
+    @('host.esxcli -host h system settings encryption recovery list', 'secret'), @('host.esxcli -host h system account add -i u -p x', 'secret'),
+    @('host.esxcli -debug -host h network nic list', 'secret'), @('host.service.ls -host h', 'read'),
+    @('env', 'secret'), @('about -debug', 'secret'), @('vm.info -password=x app', 'secret'), @('vm.console app01', 'secret')
+)
+foreach ($c in $classCases) { Check "class: $($c[0])" $c[1] (Get-GovcOpClass ($c[0] -split ' ')) }
+
+# --- Hook ------------------------------------------------------------------------
+function Invoke-Hook([string]$tool, $command) {
+    # $command: texto del comando, o hashtable con el tool_input completo (Write/Edit).
+    $ti = if ($command -is [hashtable]) { $command } else { @{ command = $command } }
+    $payload = @{ tool_name = $tool; tool_input = $ti } | ConvertTo-Json -Compress -Depth 5
+    $env:GOVC_GUARD_CONFIG = Join-Path $root 'config/environments.example.json'
+    try { $out = $payload | pwsh -NoProfile -NonInteractive -File $hook } finally { Remove-Item Env:GOVC_GUARD_CONFIG }
+    if (-not $out) { return 'none' }
+    return (($out | Out-String) | ConvertFrom-Json).hookSpecificOutput.permissionDecision
+}
+
+$W = './scripts/govc.ps1'
+$hookCases = @(
+    # lecturas
+    @('PowerShell', "$W -Env prod about", 'allow'),
+    @('PowerShell', "$W -Env prod object.collect -json -type m / name | ConvertFrom-Json | Select-Object -First 5", 'allow'),
+    @('PowerShell', "$W -Env:dr ls /", 'allow'),
+    @('PowerShell', "$W -Env prod about; Remove-Item x", 'none'),
+    @('PowerShell', "$W -Env prod about > out.txt", 'none'),
+    @('Bash', "pwsh -File $W -Env prod about", 'none'),
+    @('PowerShell', "Get-ChildItem", 'none'),
+    # escrituras
+    @('PowerShell', "$W -Env prod vm.clone -vm tpl app02", 'ask'),
+    @('PowerShell', "$W -Env lab vm.power -on app01", 'ask'),
+    @('PowerShell', "$W -Env dr vm.clone -vm tpl app02", 'deny'),
+    @('PowerShell', "$W -Env `$e about", 'ask'),
+    @('PowerShell', "$W -Env prod `$sub", 'ask'),
+    # destructivos
+    @('PowerShell', "$W -Env prod vm.destroy app01", 'deny'),
+    @('PowerShell', "$W -Env dr vm.power -off app01", 'deny'),
+    @('PowerShell', "$W -Env lab vm.destroy app01", 'ask'),
+    @('PowerShell', "$W -Env lab about; $W -Env prod snapshot.remove -vm a x", 'deny'),
+    @('Bash', "pwsh -File $W -Env prod vm.destroy app01", 'deny'),
+    # esxcli vía govc
+    @('PowerShell', "$W -Env prod host.esxcli -host esx01 -json network nic list", 'allow'),
+    @('PowerShell', "$W -Env dr host.esxcli -host esx01 system syslog config get", 'allow'),
+    @('PowerShell', "$W -Env prod host.esxcli -host esx01 software vib install -d x.zip", 'deny'),
+    @('PowerShell', "$W -Env lab host.esxcli -host esx01 software vib install -d x.zip", 'ask'),
+    @('PowerShell', "$W -Env prod host.esxcli -host esx01 system settings encryption recovery list", 'deny'),
+    # entorno desconocido / govc directo / secretos
+    @('PowerShell', "$W -Env qa about", 'deny'),
+    @('PowerShell', "govc ls /", 'deny'),
+    @('PowerShell', "& ./tools/govc.exe about", 'deny'),
+    @('Bash', "./tools/govc.exe about", 'deny'),
+    @('PowerShell', "`$env:$pw = 'x'", 'deny'),
+    @('Bash', "GOVC_URL=https://u:p@vc/sdk govc about", 'deny'),
+    @('PowerShell', "$W -Env lab env", 'deny'),
+    @('PowerShell', "$W -Env lab about -debug", 'deny'),
+    @('PowerShell', "cmdkey /generic:govc:prod /user:a /pass:secreto", 'deny'),
+    @('PowerShell', "Import-Module ./scripts/lib/$vaultMod; $vaultCall govc:prod", 'deny'),
+    @('PowerShell', "Get-Content ~/.govmomi/sessions/abc", 'deny'),
+    # git
+    @('Bash', "git add -f reports/prod/x.html", 'deny'),
+    @('PowerShell', "git add reports/prod/x.md", 'deny'),
+    @('Bash', "git add logs/audit.jsonl", 'deny'),
+    @('Bash', "git add config/environments.json", 'deny'),
+    @('Bash', "git add scripts/New-Report.ps1", 'none')
+)
+foreach ($c in $hookCases) { Check "hook[$($c[0])]: $($c[1])" $c[2] (Invoke-Hook $c[0] $c[1]) }
+
+# --- Hook v1.2: archivos, bitácora y comandos codificados ----------------------------
+# Se detectan por capacidad: con un hook anterior estos casos se omiten (no fallan).
+$hookText = Get-Content $hook -Raw
+if ($hookText -match "'Write', 'Edit'") {
+    $fileCases = @(
+        @('Write', @{ file_path = 'x.ps1'; content = "[X]::$vaultApi('govc:prod')" }, 'deny'),
+        @('Edit', @{ file_path = 'scripts/a.ps1'; old_string = 'a'; new_string = "$vaultCall -Target govc:prod" }, 'deny'),
+        @('MultiEdit', @{ file_path = 'scripts/a.ps1'; edits = @(@{ old_string = 'a'; new_string = "`$env:$pw = 'x'" }) }, 'deny'),
+        @('Write', @{ file_path = 'notes.md'; content = 'Reporte de capacidad de prod' }, 'none'),
+        @('Edit', @{ file_path = 'scripts/New-Report.ps1'; old_string = 'a'; new_string = 'b' }, 'none'),
+        @('PowerShell', 'Remove-Item logs/audit-20261017.jsonl', 'deny'),
+        @('PowerShell', "'x' | Out-File logs\a.jsonl", 'deny'),
+        @('PowerShell', 'Clear-Content .\logs\audit-20261017.jsonl', 'deny'),
+        @('Bash', 'rm -rf logs', 'deny'),
+        @('Bash', 'echo x >> logs/audit-20261017.jsonl', 'deny'),
+        @('PowerShell', 'Get-Content logs/audit-20261017.jsonl -Tail 5', 'none'),
+        @('PowerShell', "$W -Env prod logs", 'allow'),
+        @('PowerShell', 'pwsh -EncodedCommand SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQA', 'deny'),
+        @('PowerShell', "iex ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('ZWNobyBo')))", 'deny')
+    )
+    if ($hookText -match 'sessionPattern') {
+        $gh = 'GOVMOMI' + '_HOME'; $gr = 'govc-run' + '-abc123'; $gp = 'GOVC_PERSIST' + '_SESSION'
+        $fileCases += @(
+            @('PowerShell', "$W -Env prod -Batch lote.json", 'ask'),
+            @('PowerShell', "$W -Env dr -Batch lote.json", 'ask'),
+            @('PowerShell', "`$env:$gh = 'C:\x'", 'deny'),
+            @('PowerShell', "Get-ChildItem `$env:TEMP\$gr\sessions", 'deny'),
+            @('Bash', "cat /tmp/$gr/sessions/x", 'deny'),
+            @('Write', @{ file_path = 'x.ps1'; content = "`$env:$gp = 'true'" }, 'deny'),
+            @('Edit', @{ file_path = 'x.ps1'; old_string = 'a'; new_string = "`$env:$gh = 'C:\s'" }, 'deny'),
+            @('Read', @{ file_path = "C:\Users\u\AppData\Local\Temp\$gr\sessions\abc" }, 'deny'),
+            @('Glob', @{ pattern = "**/$gr/**" }, 'deny'),
+            @('Read', @{ file_path = 'C:\Users\u\Documents\Github\vcenter\README.md' }, 'none')
+        )
+    }
+    foreach ($c in $fileCases) {
+        $label = if ($c[1] -is [hashtable]) { "$($c[0]) $($c[1]['file_path'] ?? $c[1]['pattern'])" } else { $c[1] }
+        Check "hook[$($c[0])]: $label" $c[2] (Invoke-Hook $c[0] $c[1])
+    }
+} else {
+    Write-Host 'Aviso: el hook instalado no incluye los controles v1.2 (archivos, bitácora); casos omitidos.' -ForegroundColor Yellow
+}
+
+# --- Guarda rápida de lecturas (read-guard.sh) -----------------------------------------
+$readGuard = Join-Path (Split-Path -Parent $hook) 'read-guard.sh'
+$sh = Get-Command sh -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1 | ForEach-Object { $_.Source }
+if (-not $sh -and (Test-Path 'C:\Program Files\Git\bin\sh.exe')) { $sh = 'C:\Program Files\Git\bin\sh.exe' }
+if ((Test-Path $readGuard) -and $sh) {
+    $rr = 'govc' + '-run-abc'; $gm = '.govmomi'; $se = 'sessions'
+    $readCases = @(
+        @(@{ tool_name = 'Read'; tool_input = @{ file_path = 'C:\Users\u\Documents\Github\vcenter\README.md' } }, 'none'),
+        @(@{ tool_name = 'Read'; tool_input = @{ file_path = "C:\Users\u\AppData\Local\Temp\$rr\x" } }, 'deny'),
+        @(@{ tool_name = 'Glob'; tool_input = @{ pattern = "**/$($rr.ToUpper())/**" } }, 'deny'),
+        @(@{ tool_name = 'Read'; tool_input = @{ file_path = "C:\Users\u\$gm\$se\abc" } }, 'deny'),
+        @(@{ tool_name = 'Grep'; tool_input = @{ pattern = 'x'; path = "/c/Users/u/$gm/$se" } }, 'deny')
+    )
+    foreach ($c in $readCases) {
+        $out = ($c[0] | ConvertTo-Json -Compress -Depth 4) | & $sh $readGuard
+        $d = if ("$out" -match '"permissionDecision":"deny"') { 'deny' } else { 'none' }
+        Check "read-guard[$($c[0].tool_name)]: $($c[0].tool_input.Values | Select-Object -First 1)" $c[1] $d
+    }
+} else {
+    Write-Host 'Aviso: read-guard.sh o sh no disponibles; casos de lectura rápida omitidos.' -ForegroundColor Yellow
+}
+
+$color = if ($fail) { 'Red' } else { 'Green' }
+Write-Host "`n$pass correctas, $fail fallidas" -ForegroundColor $color
+exit $fail

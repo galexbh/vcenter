@@ -1,0 +1,60 @@
+---
+title: Interpretación de resultados
+description: Dominios, indicador, severidades, referencias y límites de las conclusiones de la auditoría.
+sidebar:
+  order: 2
+---
+
+## Dominios
+
+| Dominio | Categorías incluidas |
+|---|---|
+| Disponibilidad | Hosts, Alarmas, Storage (paths), Red física, Clúster (HA/DRS) |
+| Capacidad | Almacenamiento, Capacidad |
+| Configuración | VMware Tools, Drift de VIBs/drivers, Tiempo, Diagnóstico, Plataforma, Configuración de VMs, Licencias |
+| Seguridad | Servicios de acceso (SSH/Shell), Logs, Certificados, Permisos |
+| Higiene | Snapshots, VMs apagadas |
+
+Los hallazgos de **Cobertura** (hosts o controles que no pudieron evaluarse) no se puntúan: se informan como limitaciones en la sección de metodología.
+
+## Indicador por dominio
+
+```text
+Indicador = 100 − (15 × críticos + 5 × advertencias + 1 × informativos), con mínimo 0
+```
+
+| Rango | Lectura |
+|---|---|
+| 85 – 100 | Situación controlada; mantener seguimiento |
+| 60 – 84 | Requiere un plan de atención |
+| 0 – 59 | Requiere atención prioritaria |
+
+:::caution[Uso del indicador]
+El indicador es una herramienta interna de **priorización**. No es una calificación de cumplimiento ni es comparable entre entornos de distinto tamaño, ya que no se normaliza por cantidad de objetos.
+:::
+
+## Severidades
+
+| Severidad | Criterio | Plazo orientativo |
+|---|---|---|
+| Crítico | Riesgo actual de indisponibilidad, pérdida de protección o exposición | Inmediato |
+| Advertencia | Riesgo que puede materializarse o degradar el servicio | Próximo ciclo de mantenimiento |
+| Info | Oportunidad de mejora o desviación de buenas prácticas | Planificación regular |
+
+Los plazos son orientativos; cada área responsable define los compromisos en el plan de remediación.
+
+## Referencias
+
+Los hallazgos de seguridad incluyen una referencia **temática** a:
+
+- *VMware vSphere Security Configuration Guide* (Broadcom/VMware).
+- *CIS Benchmark* para VMware ESXi (Center for Internet Security).
+
+Las referencias indican el tema de la guía (por ejemplo, «registro remoto (syslog)»), sin identificadores de control, porque estos varían entre versiones. La correspondencia exacta debe establecerse contra la versión vigente adoptada por la organización.
+
+## Límites de las conclusiones
+
+- La evaluación refleja el estado **en el momento de la recolección**.
+- Se evalúa la configuración declarada y el estado reportado por vCenter, no el consumo histórico ni el comportamiento bajo carga.
+- La ausencia de hallazgos en un dominio no implica ausencia de riesgo fuera del alcance evaluado.
+- Las recomendaciones requieren la validación del área dueña antes de ejecutarse.

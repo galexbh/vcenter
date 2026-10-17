@@ -1,0 +1,45 @@
+---
+title: Tendencias entre corridas
+description: Comparación de dos corridas para identificar cambios de inventario, crecimiento de almacenamiento y evolución de hallazgos.
+sidebar:
+  order: 3
+---
+
+## Propósito
+
+Un reporte describe el estado del entorno en un momento dado. La comparación entre dos corridas permite identificar **qué cambió**, **a qué ritmo crece el consumo** y **qué hallazgos aparecieron o se resolvieron**. El análisis se realiza sobre los datos crudos de cada corrida, sin consultar vCenter.
+
+## Uso
+
+```powershell
+# Dos corridas más recientes del entorno
+./scripts/Compare-Report.ps1 -Env prod
+
+# Corridas específicas (también acepta carpetas de auditoría)
+./scripts/Compare-Report.ps1 -Base reports/prod/20261001-080000 -Current reports/prod/20261017-080000
+```
+
+Desde Claude: `/trend prod`.
+
+## Contenido del reporte
+
+| Sección | Contenido |
+|---|---|
+| Alertas de tendencia | Datastores que alcanzarían el 90 % en 30 días o menos (Advertencia) o en 7 días o menos (Crítico) |
+| Crecimiento de datastores | Uso base y actual, GB por día, días estimados hasta el 90 % y el 100 % |
+| Asignación por clúster | vCPU y RAM de VMs encendidas, con su variación |
+| Cambios en VMs | VMs nuevas, eliminadas, renombradas, con cambio de estado o de recursos |
+| Snapshots | Snapshots nuevos y eliminados |
+| Evolución de hallazgos | Hallazgos nuevos, resueltos y con cambio de severidad |
+
+Las VMs se identifican por su identificador interno de vCenter (`moref`), por lo que un cambio de nombre se reporta como *Renombrada* y no como alta y baja. Los hallazgos se identifican por su **regla y objeto**: una variación en la evidencia (por ejemplo, de 91 % a 93 %) no genera un hallazgo nuevo.
+
+## Interpretación de las proyecciones
+
+:::caution[Estimación lineal]
+La proyección se calcula con dos puntos y supone un ritmo de crecimiento constante. Con menos de 7 días entre corridas, el resultado es poco confiable. Para decisiones de capacidad se recomienda contar con corridas periódicas (por ejemplo, semanales) y validar el resultado con el equipo de almacenamiento.
+:::
+
+## Programación periódica
+
+Para disponer de tendencias consistentes, se recomienda programar `New-Report.ps1` con el Programador de tareas de Windows (por ejemplo, semanalmente) en el equipo de operación, con una cuenta que tenga acceso a la credencial del entorno. Cada ejecución genera una carpeta nueva en `reports/<entorno>/`, que `Compare-Report.ps1 -Env` utiliza automáticamente.

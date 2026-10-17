@@ -1,0 +1,39 @@
+# Especificación declarativa de VM para /vm-create.
+# Copia este archivo (p. ej. specs/app01.yaml) y ajústalo. Claude lo valida contra vCenter
+# antes de proponer comandos. Los campos vacíos toman el valor por defecto del perfil del entorno.
+
+env: lab                       # lab | dr | prod (debe existir en config/environments.json)
+name: lab-app01                # nombre de la VM (debe NO existir)
+change: ""                     # número de cambio / ticket (obligatorio en prod)
+owner: "Equipo Aplicaciones"   # dueño funcional (se guarda como anotación)
+
+source:
+  template: tpl-rhel9          # plantilla o VM origen para clonar
+  # library: "Plantillas/tpl-rhel9"   # alternativa: ítem de Content Library
+
+placement:
+  cluster: ""                  # vacío = perfil
+  resourcePool: ""
+  datastore: ""
+  folder: ""
+
+hardware:
+  cpu: 2
+  memoryMB: 4096
+  disks:                       # discos adicionales al de la plantilla
+    - sizeGB: 50
+      thin: true
+
+network:
+  portgroup: ""                # vacío = perfil
+  # Personalización de guest (requiere customization spec existente o parámetros):
+  customizationSpec: ""        # nombre en vCenter; vacío = sin personalización
+  ip: ""                       # p. ej. 10.10.20.15 (si no hay spec)
+  netmask: ""
+  gateway: ""
+  dns: []
+
+tags:                          # categoría: tag (deben existir)
+  - { category: "Ambiente", tag: "Lab" }
+
+powerOn: false                 # encender al terminar (write; requiere aprobación)

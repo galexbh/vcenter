@@ -1,0 +1,44 @@
+---
+title: Solución de problemas
+description: Mensajes frecuentes, causas probables y acciones recomendadas.
+sidebar:
+  order: 3
+---
+
+| Síntoma | Causa probable | Acción |
+|---|---|---|
+| `No existe config/environments.json` | Perfil no creado | Copiar `environments.example.json` y completarlo |
+| `Entorno 'x' no definido` | Nombre incorrecto o perfil ausente | Revisar las claves del archivo (en minúsculas) |
+| `No hay credencial 'govc:x'` | Credencial no registrada | Ejecutar `./scripts/Set-GovcCredential.ps1 -Env x` en una terminal propia |
+| `NotAuthenticated` / `InvalidLogin` | Contraseña vencida o rotada | Registrar nuevamente la credencial |
+| `x509: certificate signed by unknown authority` | Falta la autoridad certificadora interna | Configurar `caCerts`; no habilitar `insecure` en producción |
+| `NoPermission` | La cuenta de servicio carece del privilegio | Solicitar el privilegio específico; no utilizar otra cuenta |
+| `resolves to multiple instances, please specify` | Existen varios pools, datastores u hosts posibles | Indicar `-pool`, `-ds` o `-host`, o definirlos en el perfil |
+| `InvalidPowerState` al convertir en plantilla | La VM está encendida | El apagado es destructivo: en producción lo ejecuta una persona |
+| `find` sin resultados | Otro datacenter o ruta relativa | Utilizar una ruta absoluta o `-dc` |
+| `[govc-guard] … destructivo fuera de lab` | Política del entorno | Ejecutar en una terminal propia con cambio aprobado |
+| `[govc-guard] No ejecutes govc directamente` | Invocación de `govc` o `tools/govc.exe` | Utilizar `./scripts/govc.ps1 -Env …` |
+| `[govc-guard] El contenido accede a Credential Manager` | Claude intentó escribir código que accede a la bóveda | Comportamiento esperado; cualquier cambio en ese ámbito lo revisa una persona |
+| `[govc-guard] logs/ es la bitácora de auditoría` | Intento de modificar o eliminar la bitácora | Comportamiento esperado; la gestión de la bitácora corresponde a una persona |
+| Claude solicita aprobación para una lectura | El comando combina otros cmdlets, redirecciones o variables | Comportamiento esperado; aprobar o simplificar el comando |
+| `Test-AuditLog.ps1` informa una ruptura | Registro editado, eliminado o insertado | Preservar la evidencia e informar a Seguridad de la Información |
+| `govc no encontrado` | govc no instalado | Ejecutar `./scripts/Install-Govc.ps1` |
+| `pre-commit: archivos que no deben versionarse` | Se incorporó un reporte o una bitácora | `git restore --staged <archivo>` |
+
+## Pruebas con el simulador
+
+```powershell
+./scripts/Install-Govc.ps1 -WithVcsim
+./tools/vcsim.exe -l 127.0.0.1:8989
+```
+
+Agregar un perfil de prueba y su credencial (usuario `user`, contraseña `pass` del simulador):
+
+```json
+"vcsim": { "url": "https://127.0.0.1:8989/sdk", "mode": "lab", "datacenter": "DC0", "insecure": true }
+```
+
+```powershell
+./scripts/Set-GovcCredential.ps1 -Env vcsim -UserName user
+./scripts/New-Report.ps1 -Env vcsim
+```

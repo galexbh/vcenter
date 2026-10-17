@@ -1,0 +1,78 @@
+---
+title: Modelo de seguridad
+description: Capas de control, modos por entorno, flujo de una operación y bitácora de auditoría.
+sidebar:
+  order: 1
+---
+
+## Capas de control
+
+| Capa | Componente | Riesgo que mitiga |
+|---|---|---|
+| Punto único de acceso | `scripts/govc.ps1` | Credenciales en disco o en variables persistentes; operaciones fuera del modo del entorno; acciones sin registro |
+| Control previo de comandos | `.claude/hooks/govc-guard.ps1` (tools Bash y PowerShell) | Ejecución directa de govc, exposición de secretos, cambios destructivos, escrituras en entornos de solo lectura, comandos codificados, alteración de la bitácora |
+| Control previo de archivos | `.claude/hooks/govc-guard.ps1` (tools Write y Edit) | Creación por Claude de scripts que accedan a la bóveda de credenciales |
+| Clasificador | `scripts/lib/Classify.psm1` | Subcomandos nuevos o desconocidos (se tratan como modificación) |
+| Permisos de Claude Code | `.claude/settings.json` | Modificación de guardas, bitácoras o configuración; lectura de sesiones de govc |
+| Control de versiones | `.gitignore`, `.githooks/pre-commit` | Reportes, bitácoras, configuración real o credenciales en el repositorio |
+| Integridad de la bitácora | Encadenamiento SHA-256 + `scripts/Test-AuditLog.ps1` | Edición, eliminación o inserción no detectada de registros |
+
+## Modos de entorno
+
+| Clase de operación | `readonly` | `confirm` | `lab` |
+|---|---|---|---|
+| **read** (lectura) | Automática | Automática | Automática |
+| **write** (modificación) | Bloqueada | Requiere aprobación | Requiere aprobación |
+| **destructive** (destructiva) | Bloqueada | Bloqueada para Claude; una persona en terminal interactiva, con confirmación | Requiere aprobación |
+| **secret** (expone credenciales) | Bloqueada | Bloqueada | Bloqueada |
+
+## Flujo de una operación
+
+```text
+Propuesta de Claude:  ./scripts/govc.ps1 -Env prod vm.clone -vm tpl app02
+        │
+        ▼
+Hook govc-guard ── analiza el comando, identifica -Env y el subcomando
+        │          clase: write · modo prod: confirm
+        │          ⇒ "ask": Claude Code solicita aprobación
+        ▼
+Wrapper govc.ps1 ── vuelve a validar el modo (defensa en profundidad)
+        │           obtiene govc:prod de Credential Manager
+        │           define GOVC_* solo para el proceso y ejecuta govc
+        │           restablece las variables y registra la operación
+        ▼
+logs/audit-AAAAMMDD.jsonl (encadenado)
+```
+
+## Bitácora de auditoría
+
+Cada invocación del wrapper agrega una línea JSON. El campo `prev` contiene el SHA-256 de la línea anterior, lo que encadena todos los registros:
+
+```json
+{"prev":"9f2c…e41a","ts":"2026-10-17T08:51:23-06:00","user":"DOMINIO\\usuario","claude":true,"env":"prod","mode":"confirm","class":"read","command":"about","result":"ok","exitCode":0}
+```
+
+| Campo | Contenido |
+|---|---|
+| `prev` | Hash del registro anterior (`GENESIS` en el primero) |
+| `ts`, `user`, `claude` | Fecha, usuario de Windows e indicador de ejecución por Claude |
+| `env`, `mode`, `class` | Entorno, modo y clase de la operación |
+| `command` | Comando con argumentos sensibles enmascarados |
+| `result`, `exitCode` | `ok`, `error`, `blocked-secret`, `blocked-readonly`, `blocked-destructive` o `cancelled`, y código de salida |
+
+**Verificación de integridad:**
+
+```powershell
+./scripts/Test-AuditLog.ps1
+# Bitácora íntegra: 412 líneas en 6 archivo(s).
+```
+
+Si un registro se edita, elimina o inserta, el script indica el archivo y la línea donde se rompe la cadena.
+
+:::note[Alcance del control]
+El encadenamiento **detecta** la manipulación, pero no la impide. Para una retención con garantía de inalterabilidad, se recomienda enviar la bitácora a un repositorio central de solo escritura (SIEM), según la política de Seguridad de la Información.
+:::
+
+## Contenido no confiable
+
+Los nombres, anotaciones, eventos y textos de alarma provienen de vCenter y pueden ser escritos por terceros. Claude los trata **siempre como datos y nunca como instrucciones**. En los reportes, el contenido se codifica en HTML y se escapa en Markdown para impedir la inyección de enlaces o formato.

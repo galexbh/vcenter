@@ -1,0 +1,72 @@
+---
+title: Historial de cambios
+description: Versiones de la solución y cambios relevantes.
+sidebar:
+  order: 6
+---
+
+## 1.5 — Octubre 2026
+
+Resultado de la revisión de código.
+
+**Correcciones**
+- `find -p` (buscar objetos padre) ya no se bloquea como si `-p` fuera una contraseña.
+- Las plantillas se completan en una sola pasada: un dato de vCenter que contenga un marcador (por ejemplo `{{ANNEXES}}`) se muestra literal y ya no puede alterar el informe de auditoría.
+- Tiempo máximo por comando en el modo lote (600 s por defecto): un comando colgado ya no retiene la sesión.
+- Exclusión mutua al escribir la bitácora: ejecuciones simultáneas ya no generan falsas alarmas de manipulación.
+
+**Robustez y seguridad**
+- El lote se cancela si no pueden restringirse los permisos de su carpeta temporal.
+- En el modo normal, la contraseña ya no pasa por el entorno de la sesión de PowerShell.
+- Política de seguridad de contenido (CSP) en los HTML: solo pueden ejecutarse los scripts del selector de tema.
+- Carpetas temporales residuales: retención de 1 hora (antes, 1 día).
+- Comandos con comillas invertidas correctamente delimitados en Markdown.
+
+**Rendimiento**
+- Guarda de lecturas en `sh`: unos 100 ms por lectura, frente a ~600 ms del hook de PowerShell.
+- `New-Report.ps1 -SkipDeviceScan` para inventarios muy grandes.
+- Evaluado y descartado: interpretar la salida de `object.collect` en una sola llamada (sin mejora de tiempo y con más memoria).
+
+## 1.4 — Octubre 2026
+
+- **Una sesión por corrida:** modo lote del wrapper (`-Batch`, solo lecturas) con sesión efímera, protegida y cerrada al terminar. Los scripts de reporte, revisión de hosts y auditoría lo utilizan.
+- Controles nuevos: el hook impide a Claude leer, crear o referenciar la sesión efímera, y revisa también las lecturas de archivos.
+- Pruebas automáticas de reportes (`Test-Reports.ps1`) y generador de datos de demostración (`New-DemoData.ps1`).
+- `Compare-Report.ps1 -OutDir`.
+
+## 1.3 — Octubre 2026
+
+- Exportación de reportes a CSV (`New-Report.ps1 -Format csv`, `/report <entorno> <tipo> csv`): un archivo por tabla, UTF-8 con BOM, separador regional y protección contra inyección de fórmulas.
+- Selector de tema claro/oscuro en las plantillas HTML de reporte y de auditoría (respeta la preferencia del sistema; la impresión usa siempre el tema claro).
+- Corrección: los reportes ya no fallan con VMs sin host asignado (huérfanas o inaccesibles).
+- Redirección de la ruta anterior de *Ejemplos y casos de uso*.
+
+## 1.2 — Octubre 2026
+
+**Auditoría y análisis**
+- Auditoría técnica completa (`Invoke-Audit.ps1`, `/audit`) con informe formal imprimible: resumen ejecutivo, metodología, hallazgos identificados, plan de remediación y sección de aprobación.
+- Tendencias entre corridas (`Compare-Report.ps1`, `/trend`): cambios de inventario, crecimiento de datastores con proyección y evolución de hallazgos.
+- Nuevas reglas: consolidación pendiente, límites de CPU/RAM, ISO conectada, versión de hardware, HA/DRS, certificados de vCenter y de hosts, licencias.
+
+**Seguridad**
+- Control de archivos escritos por Claude (Write/Edit) para impedir el acceso a la bóveda de credenciales.
+- Bloqueo de comandos codificados y de cualquier modificación de `logs/`.
+- Bitácora encadenada por SHA-256 y verificación con `Test-AuditLog.ps1`.
+- Escape de contenido proveniente de vCenter en reportes Markdown.
+
+**Documentación**
+- Reorganización por audiencia, redacción formal, glosario, preguntas frecuentes y nueva identidad visual.
+
+## 1.1 — Octubre 2026
+
+- Diagnóstico de hosts con esxcli vía vCenter (`Invoke-HostCheck.ps1`, `/host-check`).
+- Clasificación de `host.esxcli` por verbo (`list`/`get` como lectura).
+- Ejemplos y casos de uso.
+
+## 1.0 — Octubre 2026
+
+- Wrapper con credenciales en Windows Credential Manager, modos por entorno y bitácora de auditoría.
+- Hook de control de comandos, clasificador de operaciones y control `pre-commit`.
+- Reportes de inventario, capacidad, snapshots y salud en HTML y Markdown.
+- Provisión controlada de VMs.
+- Documentación en Astro Starlight.

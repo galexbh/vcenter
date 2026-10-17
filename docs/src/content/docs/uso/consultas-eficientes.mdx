@@ -1,0 +1,52 @@
+---
+title: Consultas eficientes
+description: Patrones para consultar vCenter con pocas llamadas y salida estructurada.
+sidebar:
+  order: 4
+---
+
+## Criterios
+
+1. Utilizar siempre `-json` y `ConvertFrom-Json`; no interpretar salida de texto.
+2. Solicitar propiedades en bloque con `object.collect` en lugar de recorrer objetos uno a uno.
+3. Filtrar del lado del servidor con `find` y pares `-propiedad valor`.
+4. Conservar los datos crudos y recalcular sin volver a consultar.
+
+## Patrones recomendados
+
+| Necesidad | Patrón recomendado | Patrón a evitar |
+|---|---|---|
+| Propiedades de todas las VMs | `object.collect -json -type m / name runtime.powerState summary.config.numCpu` | Bucle de `vm.info` |
+| VMs apagadas | `find / -type m -runtime.powerState poweredOff` | Obtener todo y filtrar localmente |
+| Datastores vSAN | `find / -type s -summary.type vsan` | — |
+| Detalle de varias VMs | `vm.info -json -r vm1 vm2 vm3` | Una llamada por VM |
+| Eventos | `events -n 50 <ruta>` | `tasks` sin límite |
+| Métricas | `metric.sample -n 12 -json <ruta> cpu.usage.average` | Intervalos extensos |
+
+Alias de `-type`: `m` VM · `h` host · `s` datastore · `c` clúster · `r` recurso de cómputo · `n` red · `g` portgroup distribuido · `w` switch distribuido · `p` resource pool · `f` carpeta · `d` datacenter · `a` vApp.
+
+## Interpretación de `object.collect`
+
+Con `-type`, govc emite **varios documentos JSON concatenados** (uno por objeto), y los arreglos se representan como `{"_value": [...]}`. La función `ConvertFrom-GovcCollect` normaliza ambos casos:
+
+```powershell
+Import-Module ./scripts/lib/GovcJson.psm1
+$vms = ./scripts/govc.ps1 -Env prod object.collect -json -type m / name runtime.powerState summary.config.numCpu |
+    ConvertFrom-GovcCollect
+
+$vms | Where-Object { $_.'runtime.powerState' -eq 'poweredOn' } |
+    Measure-Object -Property 'summary.config.numCpu' -Sum
+```
+
+Cada objeto incluye `_type`, `_moref` y una propiedad por cada ruta solicitada. Dado que los nombres contienen puntos, se accede a ellos entre comillas: `$_.'runtime.powerState'`.
+
+## Rutas de inventario
+
+```text
+/<DC>/vm/<carpeta>/<vm>          VMs y plantillas
+/<DC>/host/<clúster>/<host>      hosts
+/<DC>/host/<clúster>/Resources   resource pool raíz
+/<DC>/datastore/<ds>             datastores
+/<DC>/network/<portgroup>        redes
+Tipo:moid                        referencia directa (VirtualMachine:vm-123, Alarm:alarm-7)
+```

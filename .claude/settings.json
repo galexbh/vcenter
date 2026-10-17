@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "PowerShell(./scripts/New-Report.ps1 *)",
+      "PowerShell(.\\scripts\\New-Report.ps1 *)",
+      "PowerShell(./scripts/Invoke-HostCheck.ps1 *)",
+      "PowerShell(./scripts/Compare-Report.ps1 *)",
+      "PowerShell(./scripts/Invoke-Audit.ps1 *)",
+      "PowerShell(./scripts/Test-Guards.ps1)",
+      "PowerShell(.\\scripts\\Test-Guards.ps1)",
+      "PowerShell(./scripts/Test-AuditLog.ps1*)",
+      "PowerShell(./scripts/Test-Reports.ps1*)",
+      "PowerShell(./scripts/New-DemoData.ps1*)"
+    ],
+    "ask": [
+      "Edit(./scripts/govc.ps1)",
+      "Write(./scripts/govc.ps1)"
+    ],
+    "deny": [
+      "Read(~/.govmomi/**)",
+      "Edit(./logs/**)",
+      "Write(./logs/**)",
+      "Edit(./scripts/lib/**)",
+      "Write(./scripts/lib/**)",
+      "Edit(./.claude/hooks/**)",
+      "Write(./.claude/hooks/**)",
+      "Edit(./.claude/settings.json)",
+      "Write(./.claude/settings.json)",
+      "PowerShell(cmdkey /generic*)",
+      "PowerShell(Set-GovcCredential*)",
+      "PowerShell(./scripts/Set-GovcCredential.ps1*)",
+      "Bash(git add -f*)",
+      "Bash(git add --force*)",
+      "PowerShell(git add -f*)",
+      "PowerShell(git add --force*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell|Write|Edit|MultiEdit|NotebookEdit|Read|Glob|Grep",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"$CLAUDE_PROJECT_DIR/.claude/hooks/govc-guard.ps1\"",
+            "timeout": 20
+          }
+        ]
+      }
+    ]
+  }
+}

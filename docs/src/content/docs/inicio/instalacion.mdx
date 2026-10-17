@@ -1,0 +1,58 @@
+---
+title: Instalación
+description: Requisitos e instalación de govc con versión fijada y verificación de integridad.
+sidebar:
+  order: 1
+---
+
+import { Steps } from '@astrojs/starlight/components';
+
+## Requisitos
+
+| Requisito | Detalle |
+|---|---|
+| Windows 10/11 | Windows Credential Manager actúa como bóveda de credenciales |
+| PowerShell 7.5 o superior (`pwsh`) | Necesario para `ConvertFrom-Json -DateKind` y para el analizador de comandos del hook |
+| Git for Windows | Ejecuta el control `pre-commit` |
+| Claude Code | CLI, aplicación de escritorio o extensión de IDE |
+| Node.js 20 o superior | Solo para compilar esta documentación |
+| Cuenta de servicio de vCenter | Una por entorno, con el **rol mínimo** necesario |
+
+## Procedimiento
+
+<Steps>
+
+1. **Instalar govc** en `tools/` (excluido de git):
+
+   ```powershell
+   ./scripts/Install-Govc.ps1
+   ```
+
+   El script descarga `govc_Windows_x86_64.zip` de la versión fijada (`v0.56.0`) desde las publicaciones oficiales de [vmware/govmomi](https://github.com/vmware/govmomi/releases), verifica su SHA-256 contra el archivo `checksums.txt` de la misma publicación y copia `govc.exe` a `tools/`.
+
+2. **Opcional: instalar el simulador** para pruebas sin un vCenter real:
+
+   ```powershell
+   ./scripts/Install-Govc.ps1 -WithVcsim
+   ```
+
+3. **Activar el control de git** que impide versionar reportes, bitácoras y credenciales:
+
+   ```powershell
+   git init
+   git config core.hooksPath .githooks
+   ```
+
+4. **Verificar las guardas:**
+
+   ```powershell
+   ./scripts/Test-Guards.ps1
+   ```
+
+   Todas las pruebas deben finalizar sin fallas.
+
+</Steps>
+
+:::tip[Actualización de govc]
+Para actualizar, modificar el valor por defecto de `-Version` en `scripts/Install-Govc.ps1` tras revisar las notas de la versión. Se recomienda utilizar versiones con al menos dos semanas de publicadas.
+:::

@@ -1,0 +1,109 @@
+---
+title: Diagnóstico de hosts con esxcli
+description: Consulta de la configuración interna de hosts ESXi a través de vCenter, sin acceso SSH.
+sidebar:
+  order: 5
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+## Modelo conceptual
+
+<CardGrid>
+	<Card title="govc: administración del edificio" icon="seti:folder">
+		Dispone de la visión completa: todos los pisos, la ocupación de cada oficina y la capacidad de trasladar personas entre pisos (inventario, vMotion, DRS).
+	</Card>
+	<Card title="esxcli: técnico de cada piso" icon="setting">
+		Conoce en detalle un único piso: el cableado (NIC), las tuberías (paths de almacenamiento) y cada conexión (VIBs, drivers). No tiene visibilidad de los demás pisos.
+	</Card>
+</CardGrid>
+
+Cuando la administración requiere un dato específico de un piso, consulta al técnico correspondiente. Ese es el papel de `govc host.esxcli -host <host>`.
+
+:::tip[Acceso a través de vCenter]
+`host.esxcli` opera mediante la sesión y los permisos de vCenter. **No requiere habilitar SSH ni disponer de la contraseña de root de cada host**, por lo que es el mecanismo de diagnóstico recomendado.
+:::
+
+## Criterio de uso: primero vCenter, después el host
+
+Cuando vCenter ya dispone del dato, govc lo obtiene en una sola consulta para todos los hosts y sin cargar a cada uno.
+
+| Necesidad | govc nativo | esxcli para el detalle |
+|---|---|---|
+| Servicios (SSH, ESXi Shell, NTP) | `host.service.ls -host h` | — |
+| Hora y NTP | `host.date.info -host h` | `system ntp get` |
+| Interfaces VMkernel y portgroups | `host.vnic.info`, `host.portgroup.info` | `network ip interface ipv4 get` |
+| Opciones avanzadas | `host.option.ls -host h <clave>` | — |
+| Almacenamiento | `host.storage.info -host h` | `storage core path list`, `storage nmp device list` |
+| Certificado | `host.cert.info -host h` | — |
+| VIBs, drivers y firmware | — | `software vib list`, `network nic get -n vmnic0` |
+| NIC físicas | — | `network nic list` |
+| Syslog y coredump | — | `system syslog config get`, `system coredump network get` |
+| Plataforma | — | `hardware platform get` |
+
+## Sintaxis
+
+```powershell
+./scripts/govc.ps1 -Env prod host.esxcli -json -host esx01.local network nic list
+./scripts/govc.ps1 -Env prod host.esxcli -host esx01.local storage core path list -d naa.600…
+```
+
+Los flags de govc (`-json`, `-host`) preceden al comando esxcli; las opciones de esxcli (`-n`, `-d`) lo siguen.
+
+## Clasificación
+
+| Verbo esxcli | Clase | Producción / contingencia | Laboratorio |
+|---|---|---|---|
+| `list`, `get` | read | Automática | Automática |
+| Cualquier otro (`set`, `add`, `remove`, `install`, `enable`…) | destructive | Bloqueada: la ejecuta una persona con cambio aprobado | Requiere aprobación |
+| `system settings encryption …`, `system account` (excepto `list`) | secret | Bloqueada | Bloqueada |
+| Sin verbo identificable | destructive | Bloqueada | Requiere aprobación |
+
+## Consultas de lectura por área
+
+| Área | Comandos |
+|---|---|
+| Red | `network nic list` · `network nic get -n vmnic0` · `network nic stats get -n vmnic0` · `network vswitch standard list` · `network ip interface list` · `network firewall ruleset list` |
+| Almacenamiento | `storage core path list` · `storage core device list` · `storage nmp device list` · `storage core adapter list` · `storage vmfs extent list` |
+| Software | `software vib list` · `software vib get -n <vib>` · `software profile get` · `system version get` |
+| Sistema | `system ntp get` · `system time get` · `system syslog config get` · `system coredump partition get` · `system maintenanceMode get` · `system account list` |
+| Hardware | `hardware platform get` · `hardware cpu global get` · `hardware memory get` · `hardware pci list` |
+| vSAN | `vsan cluster get` · `vsan network list` · `vsan storage list` |
+
+## Revisión por clúster: `/host-check`
+
+Formula la misma consulta a cada host de un clúster y compara las respuestas.
+
+```text
+/host-check prod CL-PROD-01
+```
+
+```powershell
+./scripts/Invoke-HostCheck.ps1 -Env prod -Cluster CL-PROD-01
+./scripts/Invoke-HostCheck.ps1 -Env prod -Hosts esx01.local, esx02.local -Checks nics, paths
+./scripts/Invoke-HostCheck.ps1 -FromRaw reports/prod/20261016-100000
+```
+
+| Chequeo | Fuente | Hallazgo | Severidad |
+|---|---|---|---|
+| `vibs` | `software vib list` | Versiones distintas o VIB ausente en algún host del clúster | Advertencia |
+| `nics` | `network nic list` | NIC habilitada sin enlace · velocidad o MTU distintas entre hosts | Advertencia |
+| `paths` | `storage core path list` | Path inactivo (*dead*) | Crítico |
+| `paths` | | Dispositivo compartido (FC, iSCSI, FCoE, NVMe-oF) con un único path | Advertencia |
+| `ntp` | `system ntp get` | NTP deshabilitado · servidores distintos en el clúster | Advertencia |
+| `syslog` | `system syslog config get` | Sin syslog remoto | Advertencia |
+| `coredump` | `system coredump network get` | Sin coredump por red | Info |
+| `platform` | `hardware platform get` | Modelos distintos en el clúster | Info |
+| `services` | `host.service.ls` | SSH o ESXi Shell en ejecución | Advertencia |
+| `certs` | `host.cert.info` | Certificado vencido o próximo a vencer | Crítico / Advertencia |
+| — | — | Host desconectado o sin permisos para un chequeo | Info (Cobertura) |
+
+La revisión se ejecuta en secuencia, con una consulta por host y chequeo; en clústeres grandes se recomienda filtrar por clúster. El resultado se guarda en `reports/<env>/<marca>/hosts-check.{html,md}` y en `raw/esxcli-*.json`.
+
+:::caution[Permisos]
+La lectura de la configuración de hosts mediante esxcli puede requerir privilegios adicionales para la cuenta de reportes. Si un chequeo devuelve `NoPermission`, se registra como hallazgo de **Cobertura**; los privilegios deben validarse con el área que administra los roles de vCenter.
+:::
+
+:::note[Cambios en hosts]
+La instalación de VIBs, los cambios en firewall, NTP o syslog y el ingreso en modo mantenimiento son operaciones **destructivas**. Claude las presenta como propuesta, con impacto y reversión, y las ejecuta una persona con cambio aprobado. Los hallazgos de syslog, SSH y firewall deben revisarse con Seguridad de la Información.
+:::

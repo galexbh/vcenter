@@ -1,0 +1,63 @@
+---
+title: Plataforma vSphere · govc
+description: Guía de operación, auditoría y gobierno de VMware vCenter con govc y Claude Code.
+template: splash
+hero:
+  title: Operación y auditoría de vCenter con govc
+  tagline: Consultas controladas, reportes con hallazgos priorizados, auditorías formales y provisión con aprobación. Credenciales protegidas en Windows Credential Manager y guardas de seguridad por entorno.
+  image:
+    alt: Plataforma vSphere · govc
+    dark: ../../assets/logo-dark.svg
+    light: ../../assets/logo-light.svg
+  actions:
+    - text: Visión general
+      link: /introduccion/vision-general/
+      icon: right-arrow
+    - text: Puesta en marcha
+      link: /inicio/instalacion/
+      icon: setting
+      variant: minimal
+---
+
+import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
+
+## Capacidades
+
+<CardGrid stagger>
+	<Card title="Seguridad por diseño" icon="seti:lock">
+		Un único punto de acceso lee la credencial en cada operación, la expone solo durante la ejecución y registra cada acción en una bitácora con integridad verificable.
+	</Card>
+	<Card title="Consulta eficiente" icon="rocket">
+		El inventario completo se obtiene con un número fijo de consultas en bloque, independiente del tamaño del entorno.
+	</Card>
+	<Card title="Auditoría formal" icon="document">
+		Informe imprimible con resumen ejecutivo, metodología, hallazgos identificados, plan de remediación y sección de aprobación.
+	</Card>
+	<Card title="Cambios controlados" icon="approve-check">
+		Toda modificación se valida, se planifica y requiere aprobación explícita. Las operaciones destructivas en producción quedan reservadas a personas.
+	</Card>
+</CardGrid>
+
+## Por dónde empezar
+
+<CardGrid>
+	<LinkCard title="Operación" description="Instalación, configuración, comandos diarios, consultas eficientes y diagnóstico de hosts." href="/inicio/instalacion/" />
+	<LinkCard title="Arquitectura y capacidad" description="Reportes de capacidad, tendencias entre corridas y proyecciones de crecimiento." href="/reportes/tendencias/" />
+	<LinkCard title="Auditoría y seguridad" description="Modelo de seguridad, auditoría técnica completa e interpretación de resultados." href="/auditoria/ejecutar/" />
+	<LinkCard title="Ejemplos y casos de uso" description="Escenarios reales: chequeo matutino, incidentes, parcheo, provisión y auditoría." href="/introduccion/casos-de-uso/" />
+</CardGrid>
+
+## Comandos principales
+
+| Comando | Propósito |
+|---|---|
+| `/env prod` | Verificar perfiles y conectividad |
+| `/inventory prod` | Resumen de inventario en pantalla |
+| `/health prod` | Hallazgos priorizados con acciones sugeridas |
+| `/capacity prod` | Capacidad por clúster y holgura ante falla de un host |
+| `/host-check prod CL-PROD-01` | Revisión de configuración de hosts y detección de diferencias |
+| `/audit prod` | Auditoría técnica completa con informe formal |
+| `/trend prod` | Tendencias entre las dos últimas corridas |
+| `/vm-create specs/app01.yaml` | Provisión de una VM con validación y aprobación |
+
+<LinkCard title="Referencia completa de comandos" href="/uso/comandos/" />

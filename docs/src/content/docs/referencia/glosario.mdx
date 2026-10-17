@@ -1,0 +1,34 @@
+---
+title: Glosario
+description: Términos utilizados en la documentación, los reportes y los informes de auditoría.
+sidebar:
+  order: 4
+---
+
+| Término | Definición |
+|---|---|
+| **Alcance** (auditoría) | Conjunto de dominios evaluados: `full`, `security` o `capacity` |
+| **Bitácora de auditoría** | Registro en `logs/` de cada invocación del wrapper, encadenado por hashes SHA-256 |
+| **Clase de operación** | Clasificación de una invocación: `read`, `write`, `destructive` o `secret` |
+| **Cobertura** | Elementos que no pudieron evaluarse (host desconectado, falta de permisos); se informan como limitación y no se puntúan |
+| **Corrida** | Ejecución de un script de reporte; genera una carpeta en `reports/<entorno>/<marca>` con sus datos crudos |
+| **Datos crudos** (`raw/`) | Resultado normalizado de las consultas, que permite recalcular sin consultar vCenter |
+| **Dominio** | Agrupación temática de hallazgos en la auditoría: Disponibilidad, Capacidad, Configuración, Seguridad, Higiene |
+| **Drift** | Diferencia de configuración entre hosts que deberían ser homogéneos (versiones de VIB, MTU, NTP) |
+| **Entorno** | vCenter definido en `config/environments.json` (por ejemplo, `prod`, `dr`, `lab`) |
+| **esxcli** | Interfaz de administración de un host ESXi; en este proyecto se utiliza a través de vCenter con `host.esxcli` |
+| **govc** | Cliente de línea de comandos de vSphere del proyecto govmomi |
+| **Guarda** | Control que permite, solicita aprobación o bloquea una acción (clasificador, hook, wrapper, permisos, control de git) |
+| **Hallazgo** | Condición identificada con severidad, evidencia, sugerencia y comando de verificación |
+| **Holgura N+1** | Capacidad para absorber la carga si falla el host de mayor tamaño del clúster |
+| **Hook** | Script que Claude Code ejecuta antes de cada comando o escritura de archivo (`govc-guard.ps1`) |
+| **Indicador por dominio** | Valor de 0 a 100 para priorizar la atención; no es una calificación de cumplimiento |
+| **Modo de entorno** | Política de un entorno: `readonly`, `confirm` o `lab` |
+| **moref** | Identificador interno de un objeto en vCenter (por ejemplo, `vm-123`) |
+| **Perfil** | Configuración de un entorno: URL, credencial, modo y valores por defecto |
+| **Regla** | Código estable de una condición evaluada (por ejemplo, `ds-used`), utilizado para seguir hallazgos entre corridas |
+| **Severidad** | Crítico, Advertencia o Info |
+| **Skill** | Conjunto de instrucciones y criterios que Claude aplica a un tipo de tarea |
+| **vCPU:pCore** | Relación entre vCPU asignadas a VMs encendidas y núcleos físicos del clúster |
+| **VIB** | *vSphere Installation Bundle*: paquete de software instalado en un host ESXi |
+| **Wrapper** | `scripts/govc.ps1`, punto único de acceso a vCenter |

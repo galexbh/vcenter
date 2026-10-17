@@ -1,0 +1,66 @@
+---
+title: Procedimiento de provisión
+description: Validación, planificación, aprobación, ejecución y verificación en la creación de recursos.
+sidebar:
+  order: 1
+---
+
+import { Steps } from '@astrojs/starlight/components';
+
+<Steps>
+
+1. **Especificación.** Partir de un archivo YAML en `specs/` basado en `templates/vm-spec.example.yaml`, o describir la VM en lenguaje natural para que Claude elabore la especificación.
+
+2. **Validación** (solo lecturas):
+   - El nombre no existe (`find / -type m -name <nombre>` sin resultados).
+   - El origen existe y es una plantilla (`config.template = true`) o un ítem de Content Library.
+   - Existen la carpeta, el datastore (con espacio suficiente), la red, el pool y las etiquetas.
+   - En producción, la especificación incluye el número de cambio (`change`).
+
+3. **Planificación.** Tabla de recursos a crear, consumo estimado (vCPU, RAM, GB) y lista exacta de comandos en orden, con su clase.
+
+4. **Aprobación.** Confirmación explícita del plan. El hook solicita, además, aprobación para **cada** escritura.
+
+5. **Ejecución.** Un comando por invocación, con verificación del resultado antes del siguiente paso. Ante una falla, el proceso se detiene y se propone la reversión.
+
+6. **Verificación.** `vm.info -json -r` (y `vm.ip -wait` si la VM se encendió), con un resumen del estado final frente a la especificación.
+
+</Steps>
+
+## Comandos de referencia
+
+```powershell
+# Clonación desde plantilla, sin encender
+./scripts/govc.ps1 -Env lab vm.clone -vm tpl-rhel9 -folder /DC-LAB/vm/Pruebas -ds DS-LAB-01 -pool /DC-LAB/host/CL-LAB-01/Resources -on=false lab-app01
+# Despliegue desde Content Library
+./scripts/govc.ps1 -Env lab library.deploy -folder /DC-LAB/vm/Pruebas -ds DS-LAB-01 /Plantillas/tpl-rhel9 lab-app01
+# Hardware y disco adicional
+./scripts/govc.ps1 -Env lab vm.change -vm lab-app01 -c 2 -m 4096
+./scripts/govc.ps1 -Env lab vm.disk.create -vm lab-app01 -ds DS-LAB-01 -name lab-app01/data1 -size 50G -thick=false
+# Red y dirección IP estática
+./scripts/govc.ps1 -Env lab vm.network.change -vm lab-app01 -net "VM Network" ethernet-0
+./scripts/govc.ps1 -Env lab vm.customize -vm lab-app01 -name lab-app01 -ip 10.10.20.15 -netmask 255.255.255.0 -gateway 10.10.20.1 -dns-server 10.10.0.10
+# Anotación y etiqueta
+./scripts/govc.ps1 -Env lab vm.change -vm lab-app01 -annotation "Responsable: Equipo Aplicaciones | Cambio: CHG-1234"
+./scripts/govc.ps1 -Env lab tags.attach -c Ambiente Lab /DC-LAB/vm/Pruebas/lab-app01
+# Encendido (solo si la especificación lo indica)
+./scripts/govc.ps1 -Env lab vm.power -on lab-app01
+```
+
+## Otros recursos
+
+| Recurso | Comando |
+|---|---|
+| Carpeta | `folder.create /<DC>/vm/<carpeta>` |
+| Resource pool | `pool.create -cpu.shares normal /<DC>/host/<clúster>/Resources/<pool>` |
+| Categoría y etiqueta | `tags.category.create -m=false <cat>` · `tags.create -c <cat> <tag>` |
+| Portgroup distribuido | `dvs.portgroup.add -dvs <dvs> -vlan <id> <pg>` (requiere validación de Redes) |
+| Conversión a plantilla | `vm.markastemplate <vm>` (requiere la VM apagada) |
+| Snapshot previo a un cambio | `snapshot.create -vm <vm> -d "CHG-1234 previo" pre-CHG-1234` |
+
+## Reglas
+
+- No se reutiliza un nombre existente ni se utiliza `-force`.
+- La provisión no incluye pasos destructivos.
+- La VM no se enciende si la especificación no lo indica.
+- Ante el mensaje `resolves to multiple instances, please specify`, indicar `-pool`, `-ds` o `-host` explícitamente.

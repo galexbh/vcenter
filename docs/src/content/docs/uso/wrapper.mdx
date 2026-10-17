@@ -1,0 +1,80 @@
+---
+title: Wrapper govc.ps1
+description: Sintaxis, comportamiento y consideraciones del punto único de acceso a vCenter.
+sidebar:
+  order: 1
+---
+
+## Sintaxis
+
+```powershell
+./scripts/govc.ps1 -Env <entorno> <subcomando govc> [flags] [argumentos]
+```
+
+- `-Env` debe ser **el primer argumento** y un valor literal (se acepta también `-Env:prod`).
+- El resto de los argumentos se transfiere sin cambios a govc.
+- Códigos de salida: el de govc, o bien `2` (uso o configuración), `3` (bloqueado por política) y `4` (cancelado).
+
+En ambos modos, las variables de conexión (incluida la contraseña) se entregan solo al proceso de govc; nunca se definen en el entorno de la sesión de PowerShell. La salida se emite línea a línea, por lo que puede encadenarse con `ConvertFrom-Json`.
+
+## Ejemplos
+
+```powershell
+./scripts/govc.ps1 -Env prod about
+./scripts/govc.ps1 -Env prod ls /DC-PROD/vm
+./scripts/govc.ps1 -Env prod find / -type m -runtime.powerState poweredOff
+./scripts/govc.ps1 -Env prod vm.info -json -r app01 app02 | ConvertFrom-Json
+./scripts/govc.ps1 -Env prod snapshot.tree -vm app01 -D -i -s
+```
+
+## Consideraciones de PowerShell
+
+| Caso | Comportamiento |
+|---|---|
+| Flags con punto, como `-runtime.powerState` | PowerShell los separa en dos argumentos; el wrapper los recompone. Pueden escribirse sin comillas |
+| Valores con coma, como `a,b` | PowerShell los convierte en arreglo. Deben ir entre comillas: `"a,b"` |
+| Valores con espacios | Entre comillas: `-net "VM Network"` |
+| Invocación desde otro script | Mediante *splatting* de un arreglo: `& ./scripts/govc.ps1 @argv`. No debe pasarse un arreglo como argumento único |
+
+## Ausencia de bloque `param()`
+
+Los flags de govc (`-json`, `-e`, `-vm`, entre otros) entrarían en conflicto con los parámetros de PowerShell; por ejemplo, `-e` se interpretaría como `-Env`. Por ese motivo el wrapper procesa `$args` directamente.
+
+## Modo lote: una sesión por corrida
+
+Los scripts de reporte (`New-Report.ps1`, `Invoke-HostCheck.ps1`, `Invoke-Audit.ps1`) agrupan sus consultas en lotes para autenticarse **una sola vez** por corrida, en lugar de una vez por consulta.
+
+```powershell
+./scripts/govc.ps1 -Env prod -Batch lote.json
+# lote.json: [["object.collect","-json","-type","m","/","name"], ["about"]]
+```
+
+Desde los scripts se utiliza `Invoke-GovcBatch` (`scripts/lib/GovcBatch.psm1`), que genera el archivo, invoca el wrapper y devuelve un resultado por comando (`exitCode`, `stdout`, `stderr`).
+
+| Aspecto | Comportamiento |
+|---|---|
+| Operaciones admitidas | **Solo lecturas.** Si algún comando no es de lectura, el lote completo se rechaza (código 3) antes de leer la credencial |
+| Sesión | Efímera: se guarda en una carpeta temporal privada con permisos exclusivos del usuario, se cierra con `session.logout` y la carpeta se elimina al terminar, incluso ante errores |
+| Variables de entorno | Solo en el entorno de cada proceso de govc, no en el del wrapper |
+| Carpetas residuales | Las de más de una hora (por ejemplo, tras una interrupción abrupta) se eliminan en la siguiente ejecución |
+| Tiempo máximo por comando | 600 s por defecto (`batchTimeoutSec` en el perfil). Al vencer, el comando se termina, su resultado es `exitCode = 124` y la sesión igualmente se cierra |
+| Permisos de la carpeta | Si no pueden restringirse al usuario actual, el lote se cancela antes de ejecutar comandos |
+| Bitácora | Una línea por comando, con el campo `batch` que identifica el lote |
+| Invocación por Claude | El hook solicita aprobación, porque el contenido está en un archivo; Claude no puede leer, crear ni referenciar la carpeta de sesión |
+
+| Operación | Logins sin lote | Logins con lote |
+|---|---|---|
+| `New-Report.ps1` | ~9 + 1 por alarma distinta | 1 (2 si hay alarmas) |
+| `Invoke-HostCheck.ps1` con 30 hosts | ~272 | 2 |
+| `Invoke-Audit.ps1` | suma de los anteriores + 2 | ~5 |
+
+## Uso por personas
+
+El wrapper puede utilizarse desde una terminal propia. En entornos `confirm`, las operaciones destructivas se habilitan tras escribir el nombre del entorno:
+
+```text
+ATENCIÓN: operación DESTRUCTIVA en PROD: govc snapshot.remove -vm app01 pre-CHG-1234
+Escribe el nombre del entorno (prod) para confirmar: prod
+```
+
+Si la sesión no es interactiva, o si la invoca Claude, la operación se rechaza.

@@ -1,0 +1,52 @@
+---
+title: Primeros pasos
+description: Primera sesión de trabajo con Claude Code sobre vCenter.
+sidebar:
+  order: 3
+---
+
+import { Steps } from '@astrojs/starlight/components';
+
+<Steps>
+
+1. Abrir Claude Code en la carpeta del proyecto. Se cargan automáticamente `CLAUDE.md`, las skills, los comandos y el hook de `.claude/`.
+
+2. Verificar los entornos configurados:
+
+   ```text
+   /env lab
+   ```
+
+3. Obtener un resumen de inventario (solo lectura, sin generar archivos):
+
+   ```text
+   /inventory prod
+   ```
+
+4. Generar un reporte de salud:
+
+   ```text
+   /report prod health
+   ```
+
+   Claude presenta un resumen y las rutas de `reports/prod/<marca>/reporte-health.html` y `.md`.
+
+5. Obtener recomendaciones priorizadas:
+
+   ```text
+   /health prod
+   ```
+
+</Steps>
+
+## Solicitudes en lenguaje natural
+
+El uso de comandos es opcional. Las solicitudes pueden formularse en lenguaje natural, por ejemplo:
+
+- «VMs de producción con snapshots de más de 15 días.»
+- «Capacidad del clúster CL-PROD-01 y tolerancia a la falla de un host.»
+- «Crear en laboratorio una VM desde tpl-rhel9 con 4 vCPU y 8 GB.»
+
+Claude utiliza siempre el wrapper con el entorno explícito. Si la solicitud no indica el entorno, lo pregunta; nunca asume producción.
+
+Para escenarios completos, ver [Ejemplos y casos de uso](/introduccion/casos-de-uso/).

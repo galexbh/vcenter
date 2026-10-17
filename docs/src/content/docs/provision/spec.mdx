@@ -1,0 +1,59 @@
+---
+title: Especificación de VM
+description: Campos del archivo vm-spec.yaml utilizado por /vm-create.
+sidebar:
+  order: 2
+---
+
+Copiar `templates/vm-spec.example.yaml` a `specs/<nombre>.yaml`. Los archivos de `specs/` no se versionan. Los campos vacíos toman el valor por defecto del perfil del entorno.
+
+```yaml title="specs/lab-app01.yaml"
+env: lab
+name: lab-app01
+change: ""                     # obligatorio en producción
+owner: "Equipo Aplicaciones"
+
+source:
+  template: tpl-rhel9
+  # library: "Plantillas/tpl-rhel9"
+
+placement:
+  cluster: ""
+  resourcePool: ""
+  datastore: ""
+  folder: ""
+
+hardware:
+  cpu: 2
+  memoryMB: 4096
+  disks:
+    - sizeGB: 50
+      thin: true
+
+network:
+  portgroup: ""
+  customizationSpec: ""
+  ip: ""
+  netmask: ""
+  gateway: ""
+  dns: []
+
+tags:
+  - { category: "Ambiente", tag: "Lab" }
+
+powerOn: false
+```
+
+| Campo | Obligatorio | Observaciones |
+|---|---|---|
+| `env` | Sí | Debe existir en `config/environments.json`. En modo `readonly` no se permite la provisión |
+| `name` | Sí | No debe existir en vCenter |
+| `change` | En producción | Número de cambio o ticket |
+| `owner` | Recomendado | Se registra como anotación de la VM |
+| `source.template` o `source.library` | Sí | Plantilla o ítem de Content Library |
+| `placement.*` | No | Obligatorios si el perfil no los define y existe ambigüedad |
+| `hardware.cpu`, `hardware.memoryMB` | No | Si se omiten, se conserva la configuración de la plantilla |
+| `hardware.disks` | No | Discos adicionales al de la plantilla |
+| `network.*` | No | Con IP estática y sin `customizationSpec`, se utiliza `vm.customize` con parámetros |
+| `tags` | No | La categoría y la etiqueta deben existir |
+| `powerOn` | No | `false` por defecto |

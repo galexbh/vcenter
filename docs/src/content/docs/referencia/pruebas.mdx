@@ -1,0 +1,48 @@
+---
+title: Pruebas
+description: Baterías de pruebas automáticas, qué verifican y cómo incorporar casos nuevos.
+sidebar:
+  order: 4
+---
+
+El proyecto incluye dos baterías de pruebas que se ejecutan sin contactar vCenter. Ambas devuelven como código de salida el número de verificaciones fallidas.
+
+| Batería | Comando | Verifica |
+|---|---|---|
+| Guardas | `./scripts/Test-Guards.ps1` | Clasificación de subcomandos y decisiones del hook para comandos, archivos y lecturas |
+| Reportes | `./scripts/Test-Reports.ps1` | Reportes, CSV, revisión de hosts, auditoría y tendencias sobre datos de demostración |
+
+:::tip[Cuándo ejecutarlas]
+Después de modificar cualquier script, plantilla o módulo. Cambios en guardas: `Test-Guards.ps1`. Cambios en reportes o plantillas: `Test-Reports.ps1`.
+:::
+
+## Test-Reports.ps1
+
+Genera un entorno ficticio con `New-DemoData.ps1 -EdgeCases` en una carpeta temporal, ejecuta todos los scripts con `-FromRaw` y elimina la carpeta al terminar (`-Keep` la conserva para inspección).
+
+| Área | Verificaciones |
+|---|---|
+| `New-Report.ps1` | Presencia y severidad de cada regla; código de regla en todos los hallazgos; indicadores; marcadores reemplazados; codificación de HTML; escape de Markdown; ausencia de filas vacías; VM sin host |
+| CSV | BOM UTF-8; separador regional; neutralización de fórmulas; comillas escapadas; lectura con `Import-Csv`; un archivo por tabla |
+| `Invoke-HostCheck.ps1` | Presencia y severidad de las reglas de hosts; exclusión de discos locales; cobertura agrupada por chequeo |
+| `Invoke-Audit.ps1` | Identificadores consecutivos; indicadores según la fórmula; dominio y riesgo en cada hallazgo; cobertura fuera del puntaje; secciones del informe; filtro por alcance |
+| `Compare-Report.ps1` | VM nueva, eliminada y renombrada; hallazgo resuelto; crecimiento de datastore; secciones vacías sin filas |
+| Wrapper | Un lote con un comando no lectura se rechaza (requiere `config/environments.json`) |
+
+Los casos límite incluidos (`-EdgeCases`) son: una VM sin host asignado, un nombre que empieza con `=`, textos con `|`, `[]`, `<script>` y saltos de línea, y un chequeo de host sin permisos en dos hosts.
+
+## Datos de demostración
+
+```powershell
+./scripts/New-DemoData.ps1                      # reports/demo/<marca>-auditoria
+./scripts/Invoke-Audit.ps1 -FromRaw reports/demo/<marca>-auditoria
+./scripts/New-Report.ps1 -FromRaw reports/demo/<marca>-auditoria/inventario -Format html,md,csv
+```
+
+El entorno `demo` es ficticio (2 clústeres, 7 hosts, ~40 VMs) y contiene hallazgos sembrados en todos los dominios. Es útil para capacitación y para revisar cambios de diseño en las plantillas.
+
+## Incorporar un caso
+
+1. Si el caso requiere datos nuevos, agregarlos en `New-DemoData.ps1` (preferentemente bajo `-EdgeCases`).
+2. Agregar la verificación en la sección correspondiente de `Test-Reports.ps1` con `Check '<descripción>' (<condición>)`.
+3. Confirmar que la prueba **falla** si se reintroduce el defecto y **pasa** con la corrección.

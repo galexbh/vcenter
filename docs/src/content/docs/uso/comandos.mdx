@@ -1,0 +1,40 @@
+---
+title: Comandos de Claude
+description: Comandos del proyecto, argumentos, tipo de operación y resultado.
+sidebar:
+  order: 2
+---
+
+import { Badge } from '@astrojs/starlight/components';
+
+Los comandos se definen en `.claude/commands/`. Todos requieren un entorno explícito; si no se indica, Claude lo solicita.
+
+| Comando | Argumentos | Operación | Resultado |
+|---|---|---|---|
+| `/env` | `[entorno]` | <Badge text="Lectura" variant="success" /> | Tabla de perfiles y prueba de conexión. Advierte si un entorno productivo está en modo `lab` o con `insecure` |
+| `/inventory` | `<entorno> [clúster\|carpeta]` | <Badge text="Lectura" variant="success" /> | Resumen de VMs, hosts, clústeres y datastores en pantalla |
+| `/report` | `<entorno> [tipo] [html\|md\|csv]` | <Badge text="Lectura" variant="success" /> | Reporte en `reports/` (HTML, Markdown o CSV para Excel) y resumen de hallazgos |
+| `/health` | `<entorno>` | <Badge text="Lectura" variant="success" /> | Hallazgos agrupados en *Atender ya*, *Planificar* y *Mejoras* |
+| `/capacity` | `<entorno> [clúster]` | <Badge text="Lectura" variant="success" /> | vCPU:pCore, RAM, holgura N+1 y principales datastores |
+| `/snapshot-audit` | `<entorno> [días]` | <Badge text="Lectura" variant="success" /> | Snapshots antiguos, patrones y plan de limpieza **propuesto** |
+| `/host-check` | `<entorno> [clúster\|host] [chequeos]` | <Badge text="Lectura" variant="success" /> | Revisión de hosts por esxcli y diferencias entre hosts |
+| `/trend` | `<entorno>` | <Badge text="Sin consulta" variant="note" /> | Tendencias entre las dos últimas corridas |
+| `/audit` | `<entorno> [clúster] [alcance]` | <Badge text="Lectura" variant="success" /> | Auditoría técnica completa con informe formal |
+| `/vm-create` | `<spec.yaml>` o descripción | <Badge text="Modificación con aprobación" variant="caution" /> | VM creada y verificada contra la especificación |
+
+## Ejemplos
+
+```text
+/report prod snapshots md
+/capacity prod CL-PROD-01
+/snapshot-audit prod 3
+/host-check prod CL-PROD-01
+/trend prod
+/audit prod CL-PROD-01 security
+/vm-create specs/app01.yaml
+/vm-create en lab, clon de tpl-rhel9, 2 vCPU, 4 GB, red "VM Network", nombre lab-test01
+```
+
+:::note
+Los comandos de análisis no ejecutan correcciones. Al finalizar, ofrecen elaborar el plan de cambio para los hallazgos seleccionados.
+:::

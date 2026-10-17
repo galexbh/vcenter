@@ -1,0 +1,51 @@
+---
+title: Preguntas frecuentes
+description: Respuestas a consultas habituales sobre seguridad, operación, reportes y auditoría.
+sidebar:
+  order: 5
+---
+
+## Seguridad
+
+**¿Claude conoce la contraseña de vCenter?**
+No. La contraseña se obtiene de Windows Credential Manager dentro del wrapper, en el momento de la ejecución, y no se muestra ni se escribe en archivos. Los controles impiden que Claude acceda a la bóveda o escriba código que lo haga.
+
+**¿Puede Claude apagar o eliminar una VM en producción?**
+No. Las operaciones destructivas en entornos `confirm` y `readonly` están bloqueadas para Claude. Una persona puede ejecutarlas desde su terminal, con confirmación explícita.
+
+**¿Qué sucede si alguien modifica la bitácora de auditoría?**
+`Test-AuditLog.ps1` detecta la ruptura de la cadena de hashes e indica la línea afectada. Para garantizar la inalterabilidad se recomienda enviar la bitácora a un SIEM.
+
+**¿Es necesario habilitar SSH en los hosts?**
+No. El diagnóstico de hosts se realiza mediante `host.esxcli`, que opera a través de vCenter.
+
+## Operación
+
+**¿Por qué algunas lecturas solicitan aprobación?**
+La aprobación automática se aplica cuando el comando consiste únicamente en el wrapper y cmdlets de transformación. Si incluye otros comandos, redirecciones o variables, se aplica el flujo normal de permisos.
+
+**¿Cuántas consultas y logins realiza un reporte?**
+Un número fijo de consultas (alrededor de diez), independiente del tamaño del inventario, agrupadas en lotes que usan **una sola sesión**: un reporte se autentica una o dos veces, y la revisión de 30 hosts, dos veces (en lugar de unas 270). Ver [modo lote](/uso/wrapper/#modo-lote-una-sesión-por-corrida).
+
+**¿Cuánto tarda la revisión de hosts en clústeres grandes?**
+La revisión ejecuta 9 consultas por host en secuencia (alrededor de 0,08 s cada una en laboratorio, más la latencia de vCenter). Con 100 hosts, se estiman entre 1,5 y 3 minutos. Para entornos grandes se recomienda ejecutarla por clúster (`-Cluster`). La ejecución en paralelo no se habilitó porque los procesos de govc compartirían el mismo archivo de sesión.
+
+**¿Qué hago con inventarios de miles de VMs?**
+Usar `-SkipDeviceScan` en `New-Report.ps1` o `Invoke-Audit.ps1`. Omite solo la detección de ISO conectada, que es la propiedad más pesada, y lo declara como limitación de cobertura.
+
+**¿Se puede utilizar sin Claude?**
+Sí. Todos los scripts pueden ejecutarse desde PowerShell. Claude aporta el análisis, la priorización y la elaboración de planes.
+
+## Reportes y auditoría
+
+**¿Dónde se guardan los reportes?**
+En `reports/<entorno>/<marca>/`. La carpeta está excluida de git y su incorporación está bloqueada.
+
+**¿El indicador de auditoría equivale a un nivel de cumplimiento?**
+No. Es una herramienta interna de priorización. Ver [Interpretación de resultados](/auditoria/interpretar/).
+
+**¿Cómo se convierte el informe de auditoría a PDF?**
+Abrir `auditoria.html` en el navegador y seleccionar **Imprimir → Guardar como PDF** con tamaño A4. La plantilla incluye saltos de página, encabezado de clasificación y numeración.
+
+**¿Se pueden ajustar los umbrales a la política interna?**
+Sí, mediante los parámetros de cada script. Para mantener un criterio común, se recomienda documentar los valores adoptados.

@@ -1,0 +1,106 @@
+/* Identidad sobria y neutra (sin marca corporativa). Starlight gestiona el tema claro/oscuro. */
+
+:root {
+	--sl-font: 'Inter Variable', 'Segoe UI', system-ui, sans-serif;
+	--sl-font-mono: 'JetBrains Mono Variable', Consolas, monospace;
+
+	/* Oscuro (por defecto en Starlight) */
+	--sl-color-accent-low: #0e2340;
+	--sl-color-accent: #4f95dc;
+	--sl-color-accent-high: #cfe1f6;
+	--sl-color-white: #f2f5f9;
+	--sl-color-gray-1: #dbe2ec;
+	--sl-color-gray-2: #b4c0d0;
+	--sl-color-gray-3: #8794a8;
+	--sl-color-gray-4: #556175;
+	--sl-color-gray-5: #333d4d;
+	--sl-color-gray-6: #1d2532;
+	--sl-color-black: #121821;
+
+	--doc-table-head: #1a2433;
+}
+
+:root[data-theme='light'] {
+	--sl-color-accent-low: #dce8f6;
+	--sl-color-accent: #1f5fa8;
+	--sl-color-accent-high: #13294b;
+	--sl-color-white: #121a26;
+	--sl-color-gray-1: #1d2735;
+	--sl-color-gray-2: #334052;
+	--sl-color-gray-3: #556175;
+	--sl-color-gray-4: #8794a8;
+	--sl-color-gray-5: #c5cedb;
+	--sl-color-gray-6: #eaeef4;
+	--sl-color-gray-7: #f5f7fa;
+	--sl-color-black: #ffffff;
+
+	--doc-table-head: #eef2f7;
+}
+
+/* Tipografía y ritmo */
+.sl-markdown-content {
+	line-height: 1.7;
+}
+.sl-markdown-content h2 {
+	font-weight: 650;
+	letter-spacing: -0.01em;
+	padding-bottom: 0.3rem;
+	border-bottom: 1px solid var(--sl-color-hairline);
+}
+.sl-markdown-content h3 {
+	font-weight: 620;
+}
+
+/* Tablas compactas con encabezado destacado */
+.sl-markdown-content table {
+	font-size: var(--sl-text-sm);
+	border-collapse: collapse;
+}
+.sl-markdown-content table th {
+	background: var(--doc-table-head);
+	font-weight: 600;
+	text-align: left;
+	white-space: nowrap;
+}
+.sl-markdown-content table th,
+.sl-markdown-content table td {
+	padding: 0.45rem 0.75rem;
+	border: 1px solid var(--sl-color-hairline);
+	vertical-align: top;
+}
+.sl-markdown-content table code {
+	white-space: nowrap;
+}
+
+/* Portada */
+.hero h1 {
+	letter-spacing: -0.02em;
+}
+.hero .tagline {
+	max-width: 46rem;
+}
+
+/* Bloques "Por rol" en la portada */
+.role-grid .card .title {
+	font-size: var(--sl-text-lg);
+}
+
+/* Impresión: ocultar navegación y conservar el contenido */
+@media print {
+	header.header,
+	nav.sidebar,
+	.right-sidebar-container,
+	.pagination-links,
+	starlight-theme-select,
+	.sl-hidden {
+		display: none !important;
+	}
+	.main-frame {
+		padding: 0 !important;
+	}
+	.sl-markdown-content table th {
+		background: #eef2f7 !important;
+		-webkit-print-color-adjust: exact;
+		print-color-adjust: exact;
+	}
+}

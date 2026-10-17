@@ -1,0 +1,70 @@
+---
+title: Guardas y clasificación
+description: Criterios con los que el clasificador y el hook deciden permitir, solicitar aprobación o bloquear.
+sidebar:
+  order: 3
+---
+
+## Clasificación de subcomandos
+
+`scripts/lib/Classify.psm1` asigna una clase a cada invocación. **Toda operación que no se reconoce como lectura se trata como modificación.**
+
+| Clase | Regla | Ejemplos |
+|---|---|---|
+| `read` | Lista explícita o sufijos `.info`, `.ls`, `.tree` | `about`, `ls`, `find`, `object.collect`, `events`, `tasks`, `metric.sample`, `vm.info`, `snapshot.tree` |
+| `write` | Cualquier otra | `vm.clone`, `vm.create`, `vm.change`, `vm.power -on`, `snapshot.create`, `tags.attach`, `folder.create` |
+| `destructive` | Lista explícita o verbo final `destroy`, `rm`, `remove`, `delete`, `unregister`, `shutdown`, `reboot`, `revert`, `disconnect`, `detach`, `erase`, `purge` | `vm.destroy`, `snapshot.remove`, `datastore.rm`, `host.maintenance.enter`, `vm.power -off/-s/-r/-reset/-suspend` |
+| `secret` | Expone credenciales o sesión | `env`, `vm.console`, `session.login`, flags `-debug`, `-password` |
+
+Reglas particulares:
+
+- `vm.power` es `write` únicamente con `-on`; cualquier otra combinación es `destructive`.
+- `host.esxcli` se clasifica por el verbo del comando esxcli: `list` y `get` son `read`; cualquier otro, `destructive`; `system settings encryption` es `secret`. Ver [esxcli vía govc](/uso/esxcli/).
+
+## Decisiones del hook
+
+Prevalece siempre la decisión más restrictiva.
+
+### Comandos (Bash y PowerShell)
+
+| Situación | Decisión |
+|---|---|
+| Secretos en el comando, govc directo, entorno no definido | `deny` |
+| `destructive` fuera de `lab` · `write` en `readonly` · `secret` | `deny` |
+| Comandos codificados o ejecución de código decodificado | `deny` |
+| Escritura, movimiento o eliminación en `logs/` | `deny` |
+| `git add -f`, o `git add` de `reports/`, `logs/` o `environments.json` | `deny` |
+| `write`, o `destructive` en `lab` | `ask` |
+| Entorno o subcomando en una variable | `ask` |
+| Solo lecturas con el wrapper y cmdlets de transformación, en PowerShell | `allow` |
+| Lectura combinada con otros comandos, redirecciones o llamadas a métodos | Flujo normal de permisos |
+
+Cmdlets de transformación admitidos para la aprobación automática: `ConvertFrom-Json`, `ConvertTo-Json`, `Select-Object`, `Where-Object`, `Sort-Object`, `Group-Object`, `Measure-Object`, `Format-Table`, `Format-List`, `Out-String`, `Select-String` y `ForEach-Object`. Los comandos contenidos en sus bloques también se validan.
+
+### Archivos (Write y Edit)
+
+El hook revisa el contenido que Claude escribe y bloquea cualquier archivo que acceda a la bóveda de credenciales o defina la contraseña de govc. Así se evita que el control de comandos se eluda mediante un script nuevo.
+
+### Lecturas (Read, Glob y Grep)
+
+Una guarda liviana en `sh` (`.claude/hooks/read-guard.sh`) bloquea la lectura de la carpeta de sesión efímera y de las sesiones guardadas de govmomi. Se separó del hook de PowerShell porque este agregaba unos 600 ms a cada lectura; la versión en `sh` tarda alrededor de 100 ms.
+
+### Limitación conocida: texto descriptivo
+
+Las reglas de archivos se aplican a **cualquier** contenido, incluida la documentación. Un texto que mencione literalmente la ruta de la carpeta de sesión o las variables de sesión de govc se bloquea aunque sea solo descriptivo. Se mantiene así a propósito: limitar la regla por extensión permitiría escribir código en un archivo de texto y ejecutarlo de otra forma. Al documentar, se describe la carpeta en palabras («carpeta temporal privada del lote») en lugar de su nombre literal.
+
+## Mantenimiento de las guardas
+
+Claude no puede modificar `scripts/lib/`, `.claude/hooks/` ni `.claude/settings.json`, y la edición de `scripts/govc.ps1` requiere aprobación. Los cambios a estas piezas se preparan para revisión y los aplica una persona.
+
+## Pruebas
+
+```powershell
+./scripts/Test-Guards.ps1
+```
+
+El script ejecuta los casos de clasificación y del hook contra `config/environments.example.json`, sin contactar vCenter. Debe agregarse un caso por cada regla nueva o modificada.
+
+:::tip
+Cuando una guarda bloquea una acción legítima, Claude explica el motivo y entrega el comando para que lo ejecute una persona. No intenta eludir el control.
+:::

@@ -1,0 +1,87 @@
+---
+title: Estructura del proyecto
+description: Contenido de cada carpeta y criterios de versionado.
+sidebar:
+  order: 1
+---
+
+import { FileTree } from '@astrojs/starlight/components';
+
+<FileTree>
+- CLAUDE.md reglas para Claude
+- README.md
+- .gitignore
+- .gitattributes
+- .githooks/
+  - pre-commit bloquea reportes, bitácoras y credenciales
+- .claude/
+  - settings.json permisos y registro del hook
+  - hooks/
+    - govc-guard.ps1 control de comandos y archivos
+  - skills/
+    - govc-core/SKILL.md
+    - govc-report/SKILL.md
+    - govc-health/SKILL.md
+    - govc-esxcli/SKILL.md
+    - govc-audit/SKILL.md
+    - govc-provision/SKILL.md
+  - commands/
+    - env.md
+    - inventory.md
+    - report.md
+    - health.md
+    - capacity.md
+    - snapshot-audit.md
+    - host-check.md
+    - trend.md
+    - audit.md
+    - vm-create.md
+- config/
+  - environments.example.json versionado
+  - **environments.json** no versionado
+- scripts/
+  - govc.ps1 punto único de acceso
+  - New-Report.ps1
+  - Invoke-HostCheck.ps1
+  - Invoke-Audit.ps1
+  - Compare-Report.ps1
+  - Test-Guards.ps1
+  - Test-AuditLog.ps1
+  - Install-Govc.ps1
+  - Set-GovcCredential.ps1
+  - lib/
+    - Classify.psm1
+    - CredMan.psm1
+    - GovcJson.psm1
+    - Render.psm1
+- templates/
+  - report.html
+  - report.md
+  - audit.html informe formal de auditoría
+  - audit.md
+  - vm-spec.example.yaml
+- specs/ no versionado (salvo .gitkeep)
+- docs/ este sitio (Astro Starlight)
+- **reports/** no versionado
+- **logs/** no versionado
+- **tools/** no versionado (govc.exe, vcsim.exe)
+</FileTree>
+
+## Elementos que no se versionan
+
+| Ruta o patrón | Motivo |
+|---|---|
+| `reports/`, `reporte-*.html`, `reporte-*.md`, `*.raw.json` | Inventario interno |
+| `logs/` | Bitácora de auditoría con usuarios y comandos |
+| `config/environments.json` | Nombres de servidores internos |
+| `specs/*.yaml` | Datos de provisión (direcciones IP, nombres) |
+| `tools/` | Binarios descargados |
+| `*.env`, `.env*`, `*.pem`, `*.pfx`, `*.key`, `.govmomi/` | Secretos y certificados |
+
+## Elementos protegidos frente a Claude
+
+| Ruta | Control |
+|---|---|
+| `scripts/lib/**`, `.claude/hooks/**`, `.claude/settings.json` | Modificación bloqueada |
+| `scripts/govc.ps1` | Modificación con aprobación |
+| `logs/**` | Escritura, movimiento y eliminación bloqueados |
