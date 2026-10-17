@@ -1,0 +1,53 @@
+---
+title: Atajos con Task
+description: Ejecución simplificada de reportes, auditorías, pruebas e instalación mediante Taskfile.yml.
+sidebar:
+  order: 6
+---
+
+`Taskfile.yml` reúne las tareas habituales en comandos cortos para ejecutarlos desde una terminal, fuera de Claude Code. Requiere [Task](https://taskfile.dev):
+
+```powershell
+winget install Task.Task
+```
+
+`task` sin argumentos muestra la lista de tareas.
+
+## Tareas disponibles
+
+| Tarea | Variables | Script |
+|---|---|---|
+| `task install` | — | `Install-Govc.ps1` |
+| `task env` | `ENV` | `govc.ps1 -Env <ENV> about` |
+| `task report` | `ENV`, `TYPE` (`all` por defecto) | `New-Report.ps1` |
+| `task inventory` · `health` · `capacity` · `snapshots` | `ENV` | `New-Report.ps1 -Type <tipo>` |
+| `task host-check` | `ENV`, `CLUSTER` (opcional) | `Invoke-HostCheck.ps1` |
+| `task audit` | `ENV`, `SCOPE` (`full` por defecto), `CLUSTER` (opcional) | `Invoke-Audit.ps1` |
+| `task trend` | `ENV` | `Compare-Report.ps1` |
+| `task demo` | — | `New-DemoData.ps1` |
+| `task test` | — | `Test-Guards.ps1` y `Test-Reports.ps1` |
+| `task test:guards` · `test:reports` · `test:log` | — | Prueba individual |
+| `task docs` · `docs:build` | — | Servidor local o compilación de esta documentación |
+
+Las variables se indican como `NOMBRE=valor`. `ENV` es obligatoria en las tareas que consultan vCenter. `TYPE` y `SCOPE` solo admiten los valores del script; un valor distinto cancela la tarea antes de ejecutar nada.
+
+## Ejemplos
+
+```powershell
+task health ENV=prod
+task report ENV=prod TYPE=inventory -- -Format csv
+task snapshots ENV=prod -- -SnapshotWarnDays 3
+task host-check ENV=prod CLUSTER=CL-PROD-01
+task audit ENV=prod SCOPE=security
+task install -- -WithVcsim
+```
+
+Los parámetros adicionales del script se escriben después de `--` y se pasan sin cambios. Para revisar el comando que se ejecutaría sin ejecutarlo: `task --dry <tarea> …`.
+
+## Alcance
+
+:::caution[Solo operaciones sin cambios en vCenter]
+El Taskfile no incluye tareas que modifiquen vCenter ni una tarea genérica que pase subcomandos al wrapper. En los entornos `confirm`, la aprobación de las escrituras depende del hook de Claude Code, que no ve lo que ejecuta una tarea. Los cambios y la provisión siguen el [flujo con validación y aprobación](/vcenter/provision/flujo/).
+:::
+
+Claude Code no utiliza estas tareas: invoca los scripts y el wrapper directamente, para que las guardas evalúen cada operación. Las ejecuciones hechas con Task pasan por `scripts/govc.ps1` igual que cualquier otra, de modo que aplican el modo del entorno y quedan registradas en la bitácora.

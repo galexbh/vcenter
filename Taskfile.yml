@@ -1,0 +1,152 @@
+# Atajos para personas (https://taskfile.dev): `task` lista las tareas.
+#
+# Solo cubre operaciones que no modifican vCenter: reportes, revisión de hosts, auditoría,
+# tendencias, pruebas, instalación y documentación. Las escrituras y la provisión no tienen
+# atajo a propósito: siguen el flujo con validación y aprobación (/vm-create en Claude Code).
+# Claude no usa estas tareas: invoca los scripts directamente para que las guardas vean cada operación.
+#
+# Variables: ENV (entorno, obligatoria donde aplica), TYPE, SCOPE, CLUSTER.
+# Parámetros adicionales del script, después de `--`:  task report ENV=prod -- -Format csv
+version: '3'
+
+vars:
+  PS: pwsh -NoProfile -NonInteractive -Command
+
+tasks:
+  default:
+    desc: Lista las tareas disponibles
+    silent: true
+    cmds:
+      - '{{.TASK_EXE}} --list'
+
+  # --- Instalación y conexión ---------------------------------------------------
+
+  install:
+    desc: Instala la versión estable más alta de govc en tools/ (-- -WithVcsim, -- -Version vX.Y.Z)
+    cmds:
+      - '{{.PS}} "./scripts/Install-Govc.ps1 {{.CLI_ARGS}}"'
+
+  env:
+    desc: Prueba la conexión a un entorno (ENV=lab)
+    requires:
+      vars: [ENV]
+    cmds:
+      - pwsh -NoProfile -File scripts/govc.ps1 -Env '{{.ENV}}' about
+
+  # --- Reportes y análisis (solo lectura) -----------------------------------------
+
+  report:
+    desc: Reporte HTML/Markdown en reports/ (ENV=prod TYPE=all|inventory|snapshots|capacity|health)
+    vars:
+      TYPE: '{{.TYPE | default "all"}}'
+    requires:
+      vars:
+        - ENV
+        - name: TYPE
+          enum: [all, inventory, snapshots, capacity, health]
+    cmds:
+      - '{{.PS}} "./scripts/New-Report.ps1 -Env ''{{.ENV}}'' -Type {{.TYPE}} {{.CLI_ARGS}}"'
+
+  inventory:
+    desc: Reporte de inventario (ENV=prod)
+    requires: { vars: [ENV] }
+    cmds:
+      - task: report
+        vars: { ENV: '{{.ENV}}', TYPE: inventory }
+
+  health:
+    desc: Chequeo de salud con hallazgos priorizados (ENV=prod)
+    requires: { vars: [ENV] }
+    cmds:
+      - task: report
+        vars: { ENV: '{{.ENV}}', TYPE: health }
+
+  capacity:
+    desc: Capacidad por clúster y datastores (ENV=prod)
+    requires: { vars: [ENV] }
+    cmds:
+      - task: report
+        vars: { ENV: '{{.ENV}}', TYPE: capacity }
+
+  snapshots:
+    desc: Snapshots por antigüedad (ENV=prod; umbral con -- -SnapshotWarnDays 3)
+    requires: { vars: [ENV] }
+    cmds:
+      - task: report
+        vars: { ENV: '{{.ENV}}', TYPE: snapshots }
+
+  host-check:
+    desc: Revisión esxcli por host y detección de diferencias (ENV=prod CLUSTER=CL-PROD-01)
+    requires: { vars: [ENV] }
+    cmds:
+      - '{{.PS}} "./scripts/Invoke-HostCheck.ps1 -Env ''{{.ENV}}'' {{if .CLUSTER}}-Cluster ''{{.CLUSTER}}''{{end}} {{.CLI_ARGS}}"'
+
+  audit:
+    desc: Auditoría técnica con informe formal (ENV=prod SCOPE=full|security|capacity CLUSTER=…)
+    vars:
+      SCOPE: '{{.SCOPE | default "full"}}'
+    requires:
+      vars:
+        - ENV
+        - name: SCOPE
+          enum: [full, security, capacity]
+    cmds:
+      - '{{.PS}} "./scripts/Invoke-Audit.ps1 -Env ''{{.ENV}}'' -Scope {{.SCOPE}} {{if .CLUSTER}}-Cluster ''{{.CLUSTER}}''{{end}} {{.CLI_ARGS}}"'
+
+  trend:
+    desc: Tendencias entre las dos corridas más recientes (ENV=prod)
+    requires: { vars: [ENV] }
+    cmds:
+      - '{{.PS}} "./scripts/Compare-Report.ps1 -Env ''{{.ENV}}'' {{.CLI_ARGS}}"'
+
+  demo:
+    desc: Genera el entorno ficticio demo en reports/demo/ (sin vCenter)
+    cmds:
+      - '{{.PS}} "./scripts/New-DemoData.ps1 {{.CLI_ARGS}}"'
+
+  # --- Pruebas ---------------------------------------------------------------------
+
+  test:
+    desc: Pruebas de guardas y de reportes
+    cmds:
+      - task: test:guards
+      - task: test:reports
+
+  test:guards:
+    desc: Pruebas de clasificación de operaciones y del hook
+    cmds:
+      - pwsh -NoProfile -File scripts/Test-Guards.ps1
+
+  test:reports:
+    desc: Pruebas de regresión de reportes, CSV, hosts, auditoría y tendencias
+    cmds:
+      - pwsh -NoProfile -File scripts/Test-Reports.ps1
+
+  test:log:
+    desc: Verifica la integridad de la bitácora de auditoría
+    cmds:
+      - pwsh -NoProfile -File scripts/Test-AuditLog.ps1
+
+  # --- Documentación ---------------------------------------------------------------
+
+  docs:install:
+    internal: true
+    dir: docs
+    status:
+      - test -d node_modules
+    cmds:
+      - npm ci
+
+  docs:
+    desc: Servidor local de la documentación (http://localhost:4321/vcenter/)
+    dir: docs
+    deps: [docs:install]
+    cmds:
+      - npm run dev
+
+  docs:build:
+    desc: Compila la documentación en docs/dist/
+    dir: docs
+    deps: [docs:install]
+    cmds:
+      - npm run build

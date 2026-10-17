@@ -17,6 +17,15 @@ Kit para operar, analizar y auditar VMware vCenter con [`govc`](https://github.c
 
 Las credenciales se guardan solo en Windows Credential Manager. Cada operación pasa por un wrapper que aplica la política del entorno y la registra en una bitácora con integridad verificable.
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset=".github/assets/vista-reporte-oscuro.png">
+    <img src=".github/assets/vista-reporte-claro.png" alt="Reporte de salud generado con datos de demostración: indicadores de inventario y hallazgos priorizados con el comando para revisarlos" width="860">
+  </picture>
+  <br>
+  <sub>Reporte generado con el entorno de demostración (<code>task demo</code>); los datos son ficticios.</sub>
+</p>
+
 ---
 
 ## Capacidades
@@ -34,7 +43,7 @@ Las credenciales se guardan solo en Windows Credential Manager. Cada operación 
 
 - Windows con PowerShell 7.5 o superior (`pwsh`) y Git for Windows.
 - Una cuenta de servicio de vCenter por entorno, con **rol mínimo**: de preferencia una de solo lectura para reportes y otra con privilegios de provisión limitados a carpetas y pools.
-- Node.js 24 (solo para compilar la documentación en local).
+- Opcional: [Task](https://taskfile.dev) para los atajos de `Taskfile.yml`, y Node.js 24 para compilar la documentación en local.
 
 ## Puesta en marcha
 
@@ -76,6 +85,24 @@ Después, abre Claude Code en la carpeta del proyecto y usa los comandos de la s
 | `/trend prod` | Tendencias entre las dos últimas corridas |
 | `/audit prod` | Auditoría técnica completa con informe formal |
 | `/vm-create specs/app01.yaml` | Provisión de una VM con validación y aprobación |
+
+## Atajos con Task
+
+Fuera de Claude Code, las tareas habituales se ejecutan con [Task](https://taskfile.dev) (`winget install Task.Task`). `task` sin argumentos lista todas.
+
+```powershell
+task install                          # govc estable más reciente (-- -WithVcsim para el simulador)
+task env ENV=lab                      # probar conexión
+task health ENV=prod                  # también: inventory, capacity, snapshots
+task report ENV=prod TYPE=all -- -Format csv
+task host-check ENV=prod CLUSTER=CL-PROD-01
+task audit ENV=prod SCOPE=security
+task trend ENV=prod
+task test                             # pruebas de guardas y de reportes
+task docs                             # documentación en http://localhost:4321/vcenter/
+```
+
+Los parámetros adicionales de cada script van después de `--`. Las tareas solo cubren operaciones que no modifican vCenter: los cambios y la provisión siguen el flujo con validación y aprobación (`/vm-create`).
 
 ## Modelo de seguridad
 
@@ -121,11 +148,13 @@ En `prod` y `dr`, las operaciones destructivas solo las ejecuta una persona en u
 ```text
 .claude/        Skills, comandos, hook de control y permisos de Claude Code
 .githooks/      Control pre-commit
+.github/        Workflow de publicación de la documentación
 config/         Perfiles de entorno (solo se versiona el ejemplo)
 docs/           Documentación (Astro Starlight), publicada en GitHub Pages
 scripts/        Wrapper, reportes, auditoría, pruebas y módulos (scripts/lib/)
 specs/          Especificaciones de VM propias (no versionadas)
 templates/      Plantillas de reporte, de auditoría y de especificación de VM
+Taskfile.yml    Atajos de Task para reportes, pruebas, instalación y documentación
 reports/ logs/  Salidas locales: reportes y bitácora (no versionadas)
 ```
 
@@ -133,14 +162,7 @@ reports/ logs/  Salidas locales: reportes y bitácora (no versionadas)
 
 El sitio se publica en https://galexbh.github.io/vcenter/. Cada cambio en `docs/` que llega a `main` lo compila y despliega el workflow `.github/workflows/docs.yml`.
 
-Para trabajar en local:
-
-```powershell
-cd docs
-npm ci
-npm run dev        # http://localhost:4321/vcenter/
-npm run build      # sitio estático en docs/dist/
-```
+Para trabajar en local: `task docs` (servidor en http://localhost:4321/vcenter/) o `task docs:build` (sitio estático en `docs/dist/`).
 
 ## Consideraciones
 

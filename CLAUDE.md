@@ -21,6 +21,7 @@ Las guardas (`.claude/hooks/govc-guard.ps1`, `scripts/lib/Classify.psm1`, permis
 
 ## Uso eficiente
 
+- `Taskfile.yml` es para personas. Tú invoca siempre los scripts o el wrapper directamente (no `task …`), para que las guardas vean cada operación. No agregues al Taskfile tareas que escriban en vCenter ni que pasen subcomandos arbitrarios al wrapper.
 - Usa `-json` y `ConvertFrom-Json`; no parsees texto.
 - Inventario masivo: `object.collect -json -type <m|h|s|r|c> / <propiedades…>` (una llamada) en vez de `vm.info` por VM. La salida es un flujo de objetos: usa `ConvertFrom-GovcCollect` de `scripts/lib/GovcJson.psm1`.
 - Filtra en el servidor: `find / -type m -runtime.powerState poweredOff`, `find / -type s -summary.type vsan`.
@@ -46,6 +47,7 @@ Tras cambiar un script de reportes, una plantilla o un módulo: `./scripts/Test-
 | `scripts/Test-Reports.ps1` | Pruebas de regresión de reportes, CSV, hosts, auditoría y tendencias (datos demo) |
 | `scripts/New-DemoData.ps1` | Entorno ficticio `demo` para ver o probar reportes sin vCenter (`-EdgeCases` para pruebas) |
 | `scripts/Install-Govc.ps1` | Instala la versión estable más alta de govc (o `-Version`) con verificación SHA256 (`-WithVcsim` para simulador) |
+| `Taskfile.yml` | Atajos de Task para personas (solo lecturas, reportes, pruebas, instalación y docs) |
 | `templates/` | Plantillas de reporte y de auditoría, y `vm-spec.example.yaml` |
 | `specs/` | Especificaciones de VM propias (gitignored) |
 | `.claude/skills/` | `govc-core`, `govc-report`, `govc-health`, `govc-esxcli`, `govc-audit`, `govc-provision` |
