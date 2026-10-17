@@ -45,7 +45,7 @@ Tras cambiar un script de reportes, una plantilla o un módulo: `./scripts/Test-
 | `scripts/Test-AuditLog.ps1` | Verificación de integridad de la bitácora |
 | `scripts/Test-Reports.ps1` | Pruebas de regresión de reportes, CSV, hosts, auditoría y tendencias (datos demo) |
 | `scripts/New-DemoData.ps1` | Entorno ficticio `demo` para ver o probar reportes sin vCenter (`-EdgeCases` para pruebas) |
-| `scripts/Install-Govc.ps1` | Instala govc fijado con verificación SHA256 (`-WithVcsim` para simulador) |
+| `scripts/Install-Govc.ps1` | Instala la versión estable más alta de govc (o `-Version`) con verificación SHA256 (`-WithVcsim` para simulador) |
 | `templates/` | Plantillas de reporte y de auditoría, y `vm-spec.example.yaml` |
 | `specs/` | Especificaciones de VM propias (gitignored) |
 | `.claude/skills/` | `govc-core`, `govc-report`, `govc-health`, `govc-esxcli`, `govc-audit`, `govc-provision` |

@@ -1,6 +1,6 @@
 ---
 title: Instalación
-description: Requisitos e instalación de govc con versión fijada y verificación de integridad.
+description: Requisitos e instalación de govc en su versión estable más reciente con verificación de integridad.
 sidebar:
   order: 1
 ---
@@ -28,7 +28,7 @@ import { Steps } from '@astrojs/starlight/components';
    ./scripts/Install-Govc.ps1
    ```
 
-   El script descarga `govc_Windows_x86_64.zip` de la versión fijada (`v0.56.0`) desde las publicaciones oficiales de [vmware/govmomi](https://github.com/vmware/govmomi/releases), verifica su SHA-256 contra el archivo `checksums.txt` de la misma publicación y copia `govc.exe` a `tools/`.
+   El script descarga `govc_Windows_x86_64.zip` de la versión estable más alta disponible desde las publicaciones oficiales de [vmware/govmomi](https://github.com/vmware/govmomi/releases), verifica su SHA-256 contra el archivo `checksums.txt` de la misma publicación y copia `govc.exe` a `tools/`. Para instalar una versión concreta: `-Version v0.56.0`.
 
 2. **Opcional: instalar el simulador** para pruebas sin un vCenter real:
 
@@ -54,5 +54,5 @@ import { Steps } from '@astrojs/starlight/components';
 </Steps>
 
 :::tip[Actualización de govc]
-Para actualizar, modificar el valor por defecto de `-Version` en `scripts/Install-Govc.ps1` tras revisar las notas de la versión. Se recomienda utilizar versiones con al menos dos semanas de publicadas.
+Para actualizar, volver a ejecutar `./scripts/Install-Govc.ps1`. Se elige la versión semántica más alta entre las publicaciones estables, no la marcada como *latest* en GitHub: govmomi publica parches de ramas anteriores (por ejemplo, `v0.55.2` después de `v0.56.0`) y esa marca apunta a la más reciente. Si una versión nueva presenta problemas, fijar la anterior con `-Version`.
 :::

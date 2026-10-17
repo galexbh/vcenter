@@ -44,8 +44,8 @@ git clone https://github.com/galexbh/vcenter.git
 cd vcenter
 git config core.hooksPath .githooks
 
-# 2. Instalar govc fijado (v0.56.0) con verificación SHA256 en tools/
-./scripts/Install-Govc.ps1                 # -WithVcsim agrega el simulador
+# 2. Instalar la versión estable más reciente de govc en tools/, con verificación SHA256
+./scripts/Install-Govc.ps1                 # -WithVcsim agrega el simulador; -Version vX.Y.Z fija una versión
 
 # 3. Definir los perfiles de entorno (archivo no versionado)
 Copy-Item config/environments.example.json config/environments.json
