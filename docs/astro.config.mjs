@@ -4,9 +4,12 @@ import starlight from '@astrojs/starlight';
 
 export default defineConfig({
 	telemetry: false,
+	// Publicado en GitHub Pages bajo /vcenter/: los enlaces internos absolutos llevan este prefijo.
+	site: 'https://galexbh.github.io',
+	base: '/vcenter',
 	// Rutas anteriores a la reorganización de la documentación (v1.2).
 	redirects: {
-		'/inicio/casos-de-uso': '/introduccion/casos-de-uso/',
+		'/inicio/casos-de-uso': '/vcenter/introduccion/casos-de-uso/',
 	},
 	integrations: [
 		starlight({

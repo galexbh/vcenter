@@ -25,7 +25,7 @@ No. El diagnóstico de hosts se realiza mediante `host.esxcli`, que opera a trav
 La aprobación automática se aplica cuando el comando consiste únicamente en el wrapper y cmdlets de transformación. Si incluye otros comandos, redirecciones o variables, se aplica el flujo normal de permisos.
 
 **¿Cuántas consultas y logins realiza un reporte?**
-Un número fijo de consultas (alrededor de diez), independiente del tamaño del inventario, agrupadas en lotes que usan **una sola sesión**: un reporte se autentica una o dos veces, y la revisión de 30 hosts, dos veces (en lugar de unas 270). Ver [modo lote](/uso/wrapper/#modo-lote-una-sesión-por-corrida).
+Un número fijo de consultas (alrededor de diez), independiente del tamaño del inventario, agrupadas en lotes que usan **una sola sesión**: un reporte se autentica una o dos veces, y la revisión de 30 hosts, dos veces (en lugar de unas 270). Ver [modo lote](/vcenter/uso/wrapper/#modo-lote-una-sesión-por-corrida).
 
 **¿Cuánto tarda la revisión de hosts en clústeres grandes?**
 La revisión ejecuta 9 consultas por host en secuencia (alrededor de 0,08 s cada una en laboratorio, más la latencia de vCenter). Con 100 hosts, se estiman entre 1,5 y 3 minutos. Para entornos grandes se recomienda ejecutarla por clúster (`-Cluster`). La ejecución en paralelo no se habilitó porque los procesos de govc compartirían el mismo archivo de sesión.
@@ -42,7 +42,7 @@ Sí. Todos los scripts pueden ejecutarse desde PowerShell. Claude aporta el aná
 En `reports/<entorno>/<marca>/`. La carpeta está excluida de git y su incorporación está bloqueada.
 
 **¿El indicador de auditoría equivale a un nivel de cumplimiento?**
-No. Es una herramienta interna de priorización. Ver [Interpretación de resultados](/auditoria/interpretar/).
+No. Es una herramienta interna de priorización. Ver [Interpretación de resultados](/vcenter/auditoria/interpretar/).
 
 **¿Cómo se convierte el informe de auditoría a PDF?**
 Abrir `auditoria.html` en el navegador y seleccionar **Imprimir → Guardar como PDF** con tamaño A4. La plantilla incluye saltos de página, encabezado de clasificación y numeración.

@@ -11,10 +11,10 @@ hero:
     light: ../../assets/logo-light.svg
   actions:
     - text: Visión general
-      link: /introduccion/vision-general/
+      link: /vcenter/introduccion/vision-general/
       icon: right-arrow
     - text: Puesta en marcha
-      link: /inicio/instalacion/
+      link: /vcenter/inicio/instalacion/
       icon: setting
       variant: minimal
 ---
@@ -41,10 +41,10 @@ import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
 ## Por dónde empezar
 
 <CardGrid>
-	<LinkCard title="Operación" description="Instalación, configuración, comandos diarios, consultas eficientes y diagnóstico de hosts." href="/inicio/instalacion/" />
-	<LinkCard title="Arquitectura y capacidad" description="Reportes de capacidad, tendencias entre corridas y proyecciones de crecimiento." href="/reportes/tendencias/" />
-	<LinkCard title="Auditoría y seguridad" description="Modelo de seguridad, auditoría técnica completa e interpretación de resultados." href="/auditoria/ejecutar/" />
-	<LinkCard title="Ejemplos y casos de uso" description="Escenarios reales: chequeo matutino, incidentes, parcheo, provisión y auditoría." href="/introduccion/casos-de-uso/" />
+	<LinkCard title="Operación" description="Instalación, configuración, comandos diarios, consultas eficientes y diagnóstico de hosts." href="/vcenter/inicio/instalacion/" />
+	<LinkCard title="Arquitectura y capacidad" description="Reportes de capacidad, tendencias entre corridas y proyecciones de crecimiento." href="/vcenter/reportes/tendencias/" />
+	<LinkCard title="Auditoría y seguridad" description="Modelo de seguridad, auditoría técnica completa e interpretación de resultados." href="/vcenter/auditoria/ejecutar/" />
+	<LinkCard title="Ejemplos y casos de uso" description="Escenarios reales: chequeo matutino, incidentes, parcheo, provisión y auditoría." href="/vcenter/introduccion/casos-de-uso/" />
 </CardGrid>
 
 ## Comandos principales
@@ -60,4 +60,4 @@ import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
 | `/trend prod` | Tendencias entre las dos últimas corridas |
 | `/vm-create specs/app01.yaml` | Provisión de una VM con validación y aprobación |
 
-<LinkCard title="Referencia completa de comandos" href="/uso/comandos/" />
+<LinkCard title="Referencia completa de comandos" href="/vcenter/uso/comandos/" />
