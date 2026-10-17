@@ -41,12 +41,66 @@ Copy-Item config/environments.example.json config/environments.json
 | `credentialTarget` | No | Nombre de la credencial en Credential Manager. Por defecto, `govc:<entorno>` |
 | `datacenter`, `datastore`, `network`, `folder`, `resourcePool` | No | Valores por defecto que evitan ambigüedades en las operaciones |
 | `cluster` | No | Clúster de referencia para comandos y skills |
-| `caCerts` | Recomendado | Certificado de la autoridad interna para validar TLS |
+| `caCerts` | Recomendado | Archivo PEM con la autoridad certificadora que firmó el certificado TLS de vCenter (ver [certificados de la CA](#certificados-de-la-ca-cacerts)) |
 | `insecure` | No | `true` omite la validación TLS. **No utilizar en producción ni en contingencia** |
 | `persistSession` | No | `true` conserva la sesión en `~/.govmomi`. Por defecto, `false` |
 | `batchTimeoutSec` | No | Tiempo máximo, en segundos, de cada comando en [modo lote](/vcenter/uso/wrapper/#modo-lote-una-sesión-por-corrida). Por defecto, `600` |
 
 **Configuración recomendada:** `dr` en `readonly`, `prod` en `confirm` y `lab` en `lab`.
+
+## Certificados de la CA (`caCerts`)
+
+`caCerts` no es un certificado que se genere en este proyecto. Es el certificado de la **autoridad certificadora (CA) que firmó el certificado TLS de vCenter**. govc lo utiliza para comprobar que la conexión se establece con el vCenter legítimo y no con un intermediario. Es información pública, no un secreto; el wrapper lo entrega a govc como `GOVC_TLS_CA_CERTS`.
+
+### Origen según el emisor
+
+| Emisor del certificado de vCenter | Quién dispone de la CA | Cómo obtenerla |
+|---|---|---|
+| **VMCA**, la CA interna de vCenter (configuración por defecto) | El propio vCenter | Descarga desde `https://<vcenter>/certs/download.zip` |
+| **CA corporativa** (certificado reemplazado por uno de la PKI de la organización, por ejemplo AD CS) | Equipo de PKI o Seguridad de la Información | Solicitar la raíz y las intermedias en formato PEM |
+
+Para identificar el caso, se abre `https://<vcenter>` en el navegador y se revisa el emisor del certificado (icono del candado). Un emisor del tipo `CA, O=vsphere.local` corresponde a VMCA; el nombre de la CA de la organización corresponde a una CA corporativa.
+
+### Obtención desde VMCA
+
+<Steps>
+
+1. Descargar `https://<vcenter>/certs/download.zip`. El enlace también figura en la página de inicio de vCenter como *Descargar certificados de CA raíz de confianza*.
+
+2. Descomprimir el archivo. La carpeta `certs/win/` contiene los certificados raíz en archivos `.crt`; puede haber más de uno si la VMCA se regeneró.
+
+3. Comprobar el formato. Si el archivo comienza con `-----BEGIN CERTIFICATE-----`, ya está en PEM. Si es binario (DER), convertirlo:
+
+   ```powershell
+   certutil -encode .\certs\win\<archivo>.crt C:\certs\vcenter-ca.pem
+   ```
+
+   Si hay varios certificados, se concatenan en un único archivo `.pem`.
+
+4. **Validar la huella** del certificado antes de confiar en él (ver la advertencia siguiente):
+
+   ```powershell
+   certutil -hashfile C:\certs\vcenter-ca.pem SHA256
+   ```
+
+5. Configurar el perfil con `"caCerts": "C:/certs/vcenter-ca.pem"` e `"insecure": false`, y verificar con `task env ENV=<entorno>`.
+
+</Steps>
+
+:::caution[Validación de la huella]
+La primera descarga se realiza sin una CA de confianza, por lo que podría ser interceptada. La huella SHA-256 debe compararse con la que proporcione Infraestructura por un canal independiente, en especial para `prod` y `dr`. `certutil -hashfile` calcula la huella del archivo; si se compara con la que muestra el navegador, se calcula sobre el `.crt` original.
+:::
+
+### Cuándo no es necesario
+
+Si la raíz de VMCA o de la CA corporativa ya está instalada en el almacén de Windows *Entidades de certificación raíz de confianza* (por ejemplo, distribuida por GPO), govc la toma del sistema. En ese caso `caCerts` puede dejarse vacío.
+
+### Consideraciones
+
+- El archivo se guarda fuera del repositorio (por ejemplo, `C:/certs/`). Si se coloca dentro, no debe versionarse.
+- Cuando vCenter renueva o reemplaza su CA, hay que actualizar el archivo; el síntoma es el error `x509: certificate signed by unknown authority` (ver [solución de problemas](/vcenter/referencia/solucion-problemas/)).
+- `insecure: true` desactiva precisamente esta verificación: solo es aceptable en `lab` o con el simulador.
+- La CA que corresponde a cada entorno y su huella esperada las confirma Infraestructura (equipo dueño de vCenter) junto con Seguridad de la Información.
 
 ## Registro de credenciales
 

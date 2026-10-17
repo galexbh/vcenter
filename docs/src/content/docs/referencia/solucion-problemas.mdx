@@ -11,7 +11,7 @@ sidebar:
 | `Entorno 'x' no definido` | Nombre incorrecto o perfil ausente | Revisar las claves del archivo (en minúsculas) |
 | `No hay credencial 'govc:x'` | Credencial no registrada, o registrada con otro destino | Comprobar con `task credential:list` y registrarla con `task credential ENV=x` (o `./scripts/Set-GovcCredential.ps1 -Env x`) en una terminal propia, fuera de Claude Code |
 | `NotAuthenticated` / `InvalidLogin` | Contraseña vencida o rotada | Registrar nuevamente la credencial |
-| `x509: certificate signed by unknown authority` | Falta la autoridad certificadora interna | Configurar `caCerts`; no habilitar `insecure` en producción |
+| `x509: certificate signed by unknown authority` | Falta la autoridad certificadora interna, o vCenter renovó o reemplazó su CA | Configurar o actualizar `caCerts` (ver [certificados de la CA](/vcenter/inicio/configuracion/#certificados-de-la-ca-cacerts)); no habilitar `insecure` en producción |
 | `NoPermission` | La cuenta de servicio carece del privilegio | Solicitar el privilegio específico; no utilizar otra cuenta |
 | `resolves to multiple instances, please specify` | Existen varios pools, datastores u hosts posibles | Indicar `-pool`, `-ds` o `-host`, o definirlos en el perfil |
 | `InvalidPowerState` al convertir en plantilla | La VM está encendida | El apagado es destructivo: en producción lo ejecuta una persona |
