@@ -5,7 +5,7 @@
 # atajo a propósito: siguen el flujo con validación y aprobación (/vm-create en Claude Code).
 # Claude no usa estas tareas: invoca los scripts directamente para que las guardas vean cada operación.
 #
-# Variables: ENV (entorno, obligatoria donde aplica), TYPE, SCOPE, CLUSTER.
+# Variables: ENV (entorno) o FROM (carpeta de reports/ ya recolectada), TYPE, SCOPE, CLUSTER.
 # Parámetros adicionales del script, después de `--`:  task report ENV=prod -- -Format csv
 version: '3'
 
@@ -21,6 +21,20 @@ tasks:
 
   # --- Instalación y conexión ---------------------------------------------------
 
+  setup:
+    desc: Prepara un clon nuevo (activa el control pre-commit y crea la configuración desde el ejemplo)
+    cmds:
+      - git config core.hooksPath .githooks
+      - task: setup:config
+
+  setup:config:
+    internal: true
+    status:
+      - test -f config/environments.json
+    cmds:
+      - pwsh -NoProfile -Command "Copy-Item config/environments.example.json config/environments.json"
+      - echo "Creado config/environments.json a partir del ejemplo; ajusta url, datacenter, mode y caCerts."
+
   install:
     desc: Instala la versión estable más alta de govc en tools/ (-- -WithVcsim, -- -Version vX.Y.Z)
     cmds:
@@ -33,65 +47,80 @@ tasks:
     cmds:
       - pwsh -NoProfile -File scripts/govc.ps1 -Env '{{.ENV}}' about
 
+  vcsim:
+    desc: Inicia el simulador de vCenter en https://127.0.0.1:8989/sdk (instalar con task install -- -WithVcsim)
+    preconditions:
+      - sh: test -f tools/vcsim.exe
+        msg: 'vcsim no está instalado: task install -- -WithVcsim'
+    cmds:
+      - ./tools/vcsim.exe -l 127.0.0.1:8989
+
   # --- Reportes y análisis (solo lectura) -----------------------------------------
+  # SRC: entorno en vivo (-Env) o datos ya recolectados (-FromRaw), sin volver a consultar vCenter.
 
   report:
-    desc: Reporte HTML/Markdown en reports/ (ENV=prod TYPE=all|inventory|snapshots|capacity|health)
+    desc: Reporte HTML/Markdown en reports/ (ENV=prod o FROM=<carpeta>; TYPE=all|inventory|snapshots|capacity|health)
     vars:
       TYPE: '{{.TYPE | default "all"}}'
+      SRC: '{{if .FROM}}-FromRaw ''{{.FROM}}''{{else}}-Env ''{{.ENV}}''{{end}}'
     requires:
       vars:
-        - ENV
         - name: TYPE
           enum: [all, inventory, snapshots, capacity, health]
+    preconditions:
+      - sh: '[ -n "{{.ENV}}{{.FROM}}" ]'
+        msg: 'Indica ENV=<entorno> o FROM=<carpeta en reports/>'
     cmds:
-      - '{{.PS}} "./scripts/New-Report.ps1 -Env ''{{.ENV}}'' -Type {{.TYPE}} {{.CLI_ARGS}}"'
+      - '{{.PS}} "./scripts/New-Report.ps1 {{.SRC}} -Type {{.TYPE}} {{.CLI_ARGS}}"'
 
   inventory:
-    desc: Reporte de inventario (ENV=prod)
-    requires: { vars: [ENV] }
+    desc: Reporte de inventario (ENV=prod o FROM=<carpeta>)
     cmds:
       - task: report
-        vars: { ENV: '{{.ENV}}', TYPE: inventory }
+        vars: { ENV: '{{.ENV}}', FROM: '{{.FROM}}', TYPE: inventory }
 
   health:
-    desc: Chequeo de salud con hallazgos priorizados (ENV=prod)
-    requires: { vars: [ENV] }
+    desc: Chequeo de salud con hallazgos priorizados (ENV=prod o FROM=<carpeta>)
     cmds:
       - task: report
-        vars: { ENV: '{{.ENV}}', TYPE: health }
+        vars: { ENV: '{{.ENV}}', FROM: '{{.FROM}}', TYPE: health }
 
   capacity:
-    desc: Capacidad por clúster y datastores (ENV=prod)
-    requires: { vars: [ENV] }
+    desc: Capacidad por clúster y datastores (ENV=prod o FROM=<carpeta>)
     cmds:
       - task: report
-        vars: { ENV: '{{.ENV}}', TYPE: capacity }
+        vars: { ENV: '{{.ENV}}', FROM: '{{.FROM}}', TYPE: capacity }
 
   snapshots:
-    desc: Snapshots por antigüedad (ENV=prod; umbral con -- -SnapshotWarnDays 3)
-    requires: { vars: [ENV] }
+    desc: Snapshots por antigüedad (ENV=prod o FROM=<carpeta>; umbral con -- -SnapshotWarnDays 3)
     cmds:
       - task: report
-        vars: { ENV: '{{.ENV}}', TYPE: snapshots }
+        vars: { ENV: '{{.ENV}}', FROM: '{{.FROM}}', TYPE: snapshots }
 
   host-check:
-    desc: Revisión esxcli por host y detección de diferencias (ENV=prod CLUSTER=CL-PROD-01)
-    requires: { vars: [ENV] }
+    desc: Revisión esxcli por host y detección de diferencias (ENV=prod CLUSTER=CL-PROD-01, o FROM=<carpeta>)
+    vars:
+      SRC: '{{if .FROM}}-FromRaw ''{{.FROM}}''{{else}}-Env ''{{.ENV}}''{{end}}'
+    preconditions:
+      - sh: '[ -n "{{.ENV}}{{.FROM}}" ]'
+        msg: 'Indica ENV=<entorno> o FROM=<carpeta en reports/>'
     cmds:
-      - '{{.PS}} "./scripts/Invoke-HostCheck.ps1 -Env ''{{.ENV}}'' {{if .CLUSTER}}-Cluster ''{{.CLUSTER}}''{{end}} {{.CLI_ARGS}}"'
+      - '{{.PS}} "./scripts/Invoke-HostCheck.ps1 {{.SRC}} {{if .CLUSTER}}-Cluster ''{{.CLUSTER}}''{{end}} {{.CLI_ARGS}}"'
 
   audit:
-    desc: Auditoría técnica con informe formal (ENV=prod SCOPE=full|security|capacity CLUSTER=…)
+    desc: Auditoría técnica con informe formal (ENV=prod o FROM=<carpeta>; SCOPE=full|security|capacity CLUSTER=…)
     vars:
       SCOPE: '{{.SCOPE | default "full"}}'
+      SRC: '{{if .FROM}}-FromRaw ''{{.FROM}}''{{else}}-Env ''{{.ENV}}''{{end}}'
     requires:
       vars:
-        - ENV
         - name: SCOPE
           enum: [full, security, capacity]
+    preconditions:
+      - sh: '[ -n "{{.ENV}}{{.FROM}}" ]'
+        msg: 'Indica ENV=<entorno> o FROM=<carpeta en reports/>'
     cmds:
-      - '{{.PS}} "./scripts/Invoke-Audit.ps1 -Env ''{{.ENV}}'' -Scope {{.SCOPE}} {{if .CLUSTER}}-Cluster ''{{.CLUSTER}}''{{end}} {{.CLI_ARGS}}"'
+      - '{{.PS}} "./scripts/Invoke-Audit.ps1 {{.SRC}} -Scope {{.SCOPE}} {{if .CLUSTER}}-Cluster ''{{.CLUSTER}}''{{end}} {{.CLI_ARGS}}"'
 
   trend:
     desc: Tendencias entre las dos corridas más recientes (ENV=prod)
@@ -100,9 +129,15 @@ tasks:
       - '{{.PS}} "./scripts/Compare-Report.ps1 -Env ''{{.ENV}}'' {{.CLI_ARGS}}"'
 
   demo:
-    desc: Genera el entorno ficticio demo en reports/demo/ (sin vCenter)
+    desc: Genera datos ficticios y todos sus reportes en reports/demo/ (sin vCenter)
+    vars:
+      OUT:
+        sh: pwsh -NoProfile -Command "'reports/demo/' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-auditoria'"
     cmds:
-      - '{{.PS}} "./scripts/New-DemoData.ps1 {{.CLI_ARGS}}"'
+      - '{{.PS}} "./scripts/New-DemoData.ps1 -OutDir ''{{.OUT}}'' {{.CLI_ARGS}}" > /dev/null'
+      - '{{.PS}} "./scripts/Invoke-Audit.ps1 -FromRaw ''{{.OUT}}''" > /dev/null'
+      - echo "Datos y reportes en {{.OUT}} (inventario/, hosts/ y auditoria.html)."
+      - echo "Otros reportes sobre estos datos, p. ej. task health FROM={{.OUT}}/inventario"
 
   # --- Pruebas ---------------------------------------------------------------------
 

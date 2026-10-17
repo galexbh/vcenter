@@ -23,7 +23,7 @@ Las credenciales se guardan solo en Windows Credential Manager. Cada operación 
     <img src=".github/assets/vista-reporte-claro.png" alt="Reporte de salud generado con datos de demostración: indicadores de inventario y hallazgos priorizados con el comando para revisarlos" width="860">
   </picture>
   <br>
-  <sub>Reporte generado con el entorno de demostración (<code>task demo</code>); los datos son ficticios.</sub>
+  <sub>Reporte generado con <code>task demo</code>; los datos son ficticios.</sub>
 </p>
 
 ---
@@ -41,37 +41,50 @@ Las credenciales se guardan solo en Windows Credential Manager. Cada operación 
 
 ## Requisitos
 
-- Windows con PowerShell 7.5 o superior (`pwsh`) y Git for Windows.
-- Una cuenta de servicio de vCenter por entorno, con **rol mínimo**: de preferencia una de solo lectura para reportes y otra con privilegios de provisión limitados a carpetas y pools.
-- Opcional: [Task](https://taskfile.dev) para los atajos de `Taskfile.yml`, y Node.js 24 para compilar la documentación en local.
+| Dependencia | Para qué | Instalación |
+|---|---|---|
+| PowerShell 7.5 o superior | Scripts, wrapper y guardas | `winget install --id Microsoft.PowerShell -e` |
+| Git for Windows | Clonar el repositorio y ejecutar el control `pre-commit` | `winget install --id Git.Git -e` |
+| [Task](https://taskfile.dev) | Atajos de `Taskfile.yml` | `winget install --id Task.Task -e` |
+| Node.js LTS (opcional) | Compilar la documentación en local | `winget install --id OpenJS.NodeJS.LTS -e` |
+
+```powershell
+winget install --id Microsoft.PowerShell -e
+winget install --id Git.Git -e
+winget install --id Task.Task -e
+```
+
+Abre una terminal nueva después de instalar, para que `pwsh`, `git` y `task` queden en el `PATH`. govc no se instala con winget: lo descarga `task install` con verificación SHA256.
+
+También se necesita una cuenta de servicio de vCenter por entorno, con **rol mínimo**: de preferencia una de solo lectura para reportes y otra con privilegios de provisión limitados a carpetas y pools.
 
 ## Puesta en marcha
 
 ```powershell
-# 1. Clonar y activar el control pre-commit (bloquea reportes, bitácoras y secretos)
+# 1. Clonar y preparar: activa el control pre-commit y crea config/environments.json desde el ejemplo
 git clone https://github.com/galexbh/vcenter.git
 cd vcenter
-git config core.hooksPath .githooks
+task setup
 
-# 2. Instalar la versión estable más reciente de govc en tools/, con verificación SHA256
-./scripts/Install-Govc.ps1                 # -WithVcsim agrega el simulador; -Version vX.Y.Z fija una versión
+# 2. Ajustar config/environments.json: url, datacenter, mode (readonly | confirm | lab), caCerts…
 
-# 3. Definir los perfiles de entorno (archivo no versionado)
-Copy-Item config/environments.example.json config/environments.json
-#    Ajustar url, datacenter, mode (readonly | confirm | lab), caCerts, etc.
+# 3. Instalar la versión estable más reciente de govc en tools/
+task install
 
 # 4. Registrar las credenciales (las ingresa la persona por consola)
 ./scripts/Set-GovcCredential.ps1 -Env lab
 ./scripts/Set-GovcCredential.ps1 -Env prod
 
 # 5. Verificar guardas y conectividad
-./scripts/Test-Guards.ps1
-./scripts/govc.ps1 -Env lab about
+task test:guards
+task env ENV=lab
 ```
 
-Después, abre Claude Code en la carpeta del proyecto y usa los comandos de la sección siguiente.
+El registro de credenciales no tiene tarea a propósito: lo ejecuta una persona en su terminal, y Claude Code tiene prohibido invocarlo.
 
-## Comandos
+Después, abre Claude Code en la carpeta del proyecto y usa los comandos de la sección siguiente, o los atajos de Task desde una terminal.
+
+## Comandos de Claude Code
 
 | Comando | Propósito |
 |---|---|
@@ -88,21 +101,24 @@ Después, abre Claude Code en la carpeta del proyecto y usa los comandos de la s
 
 ## Atajos con Task
 
-Fuera de Claude Code, las tareas habituales se ejecutan con [Task](https://taskfile.dev) (`winget install Task.Task`). `task` sin argumentos lista todas.
+`task` sin argumentos lista todas las tareas.
 
-```powershell
-task install                          # govc estable más reciente (-- -WithVcsim para el simulador)
-task env ENV=lab                      # probar conexión
-task health ENV=prod                  # también: inventory, capacity, snapshots
-task report ENV=prod TYPE=all -- -Format csv
-task host-check ENV=prod CLUSTER=CL-PROD-01
-task audit ENV=prod SCOPE=security
-task trend ENV=prod
-task test                             # pruebas de guardas y de reportes
-task docs                             # documentación en http://localhost:4321/vcenter/
-```
+| Tarea | Ejemplo |
+|---|---|
+| Probar conexión | `task env ENV=lab` |
+| Salud, inventario, capacidad, snapshots | `task health ENV=prod` · `task inventory` · `task capacity` · `task snapshots` |
+| Reporte a medida | `task report ENV=prod TYPE=all -- -Format csv` |
+| Revisión de hosts | `task host-check ENV=prod CLUSTER=CL-PROD-01` |
+| Auditoría | `task audit ENV=prod SCOPE=security` |
+| Tendencias | `task trend ENV=prod` |
+| Reanalizar sin consultar vCenter | `task health FROM=reports/prod/<marca>` |
+| Instalar o actualizar govc | `task install` · `task install -- -Version vX.Y.Z` |
+| Documentación | `task docs` · `task docs:build` |
 
-Los parámetros adicionales de cada script van después de `--`. Las tareas solo cubren operaciones que no modifican vCenter: los cambios y la provisión siguen el flujo con validación y aprobación (`/vm-create`).
+- `ENV` indica el entorno y `FROM`, una carpeta ya recolectada en `reports/`. Los reportes necesitan una de las dos.
+- Los parámetros adicionales de cada script van después de `--`.
+- `task --dry <tarea> …` muestra el comando sin ejecutarlo.
+- Las tareas solo cubren operaciones que no modifican vCenter. Los cambios y la provisión siguen el flujo con validación y aprobación (`/vm-create`).
 
 ## Modelo de seguridad
 
@@ -126,19 +142,18 @@ En `prod` y `dr`, las operaciones destructivas solo las ejecuta una persona en u
 ## Pruebas
 
 ```powershell
-./scripts/Test-Guards.ps1      # clasificación de operaciones y hook
-./scripts/Test-Reports.ps1     # regresión de reportes, CSV, hosts, auditoría y tendencias
-./scripts/Test-AuditLog.ps1    # integridad de la bitácora
+task test          # guardas (clasificación y hook) y regresión de reportes, CSV, hosts, auditoría y tendencias
+task test:log      # integridad de la bitácora
 ```
 
 ### Sin vCenter real
 
-- **Datos de demostración:** `./scripts/New-DemoData.ps1` crea un entorno ficticio `demo`. Los reportes se generan sin conexión con `-FromRaw reports/demo/<marca>`.
+- **Datos de demostración:** `task demo` crea un entorno ficticio en `reports/demo/<marca>-auditoria`, con el reporte de inventario, la revisión de hosts y la auditoría. Para generar otros reportes sobre esos datos: `task health FROM=reports/demo/<marca>-auditoria/inventario`.
 - **Simulador:**
 
   ```powershell
-  ./scripts/Install-Govc.ps1 -WithVcsim
-  ./tools/vcsim.exe -l 127.0.0.1:8989       # credenciales por defecto del simulador: user / pass
+  task install -- -WithVcsim
+  task vcsim                                 # credenciales por defecto del simulador: user / pass
   ```
 
   Agrega un perfil `vcsim` (`url: https://127.0.0.1:8989/sdk`, `insecure: true`, `mode: lab`) y registra su credencial con `./scripts/Set-GovcCredential.ps1 -Env vcsim`.

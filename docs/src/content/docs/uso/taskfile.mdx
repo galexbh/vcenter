@@ -17,19 +17,23 @@ winget install Task.Task
 
 | Tarea | Variables | Script |
 |---|---|---|
+| `task setup` | — | Activa el control `pre-commit` y crea `config/environments.json` desde el ejemplo si no existe |
 | `task install` | — | `Install-Govc.ps1` |
 | `task env` | `ENV` | `govc.ps1 -Env <ENV> about` |
-| `task report` | `ENV`, `TYPE` (`all` por defecto) | `New-Report.ps1` |
-| `task inventory` · `health` · `capacity` · `snapshots` | `ENV` | `New-Report.ps1 -Type <tipo>` |
-| `task host-check` | `ENV`, `CLUSTER` (opcional) | `Invoke-HostCheck.ps1` |
-| `task audit` | `ENV`, `SCOPE` (`full` por defecto), `CLUSTER` (opcional) | `Invoke-Audit.ps1` |
+| `task vcsim` | — | Simulador en `https://127.0.0.1:8989/sdk` |
+| `task report` | `ENV` o `FROM`, `TYPE` (`all` por defecto) | `New-Report.ps1` |
+| `task inventory` · `health` · `capacity` · `snapshots` | `ENV` o `FROM` | `New-Report.ps1 -Type <tipo>` |
+| `task host-check` | `ENV` o `FROM`, `CLUSTER` (opcional) | `Invoke-HostCheck.ps1` |
+| `task audit` | `ENV` o `FROM`, `SCOPE` (`full` por defecto), `CLUSTER` (opcional) | `Invoke-Audit.ps1` |
 | `task trend` | `ENV` | `Compare-Report.ps1` |
-| `task demo` | — | `New-DemoData.ps1` |
+| `task demo` | — | `New-DemoData.ps1` y los reportes de inventario, hosts y auditoría sobre esos datos |
 | `task test` | — | `Test-Guards.ps1` y `Test-Reports.ps1` |
 | `task test:guards` · `test:reports` · `test:log` | — | Prueba individual |
 | `task docs` · `docs:build` | — | Servidor local o compilación de esta documentación |
 
-Las variables se indican como `NOMBRE=valor`. `ENV` es obligatoria en las tareas que consultan vCenter. `TYPE` y `SCOPE` solo admiten los valores del script; un valor distinto cancela la tarea antes de ejecutar nada.
+Las variables se indican como `NOMBRE=valor`. Los reportes requieren `ENV` (consulta el entorno) o `FROM` (vuelve a analizar una carpeta ya recolectada en `reports/`, sin consultar vCenter); sin ninguna de las dos, la tarea se cancela. `TYPE` y `SCOPE` solo admiten los valores del script; un valor distinto cancela la tarea antes de ejecutar nada.
+
+El registro de credenciales no tiene tarea: lo ejecuta una persona con `Set-GovcCredential.ps1`, como se indica en [Configuración](/vcenter/inicio/configuracion/).
 
 ## Ejemplos
 
@@ -39,6 +43,8 @@ task report ENV=prod TYPE=inventory -- -Format csv
 task snapshots ENV=prod -- -SnapshotWarnDays 3
 task host-check ENV=prod CLUSTER=CL-PROD-01
 task audit ENV=prod SCOPE=security
+task health FROM=reports/prod/20261017-080000
+task demo
 task install -- -WithVcsim
 ```
 
