@@ -1,10 +1,21 @@
-# Plataforma vSphere · govc
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/src/assets/logo-dark.svg">
+    <img src="docs/src/assets/logo-light.svg" alt="Plataforma vSphere · govc" width="120">
+  </picture>
+</p>
+
+<h1 align="center">Plataforma vSphere · govc</h1>
+
+<p align="center">
+  <a href="https://galexbh.github.io/vcenter/">Documentación</a> ·
+  <a href="#puesta-en-marcha">Puesta en marcha</a> ·
+  <a href="#modelo-de-seguridad">Seguridad</a>
+</p>
 
 Kit para operar, analizar y auditar VMware vCenter con [`govc`](https://github.com/vmware/govmomi/tree/main/govc) desde Claude Code de forma controlada. Incluye consultas de inventario, reportes HTML y Markdown con hallazgos priorizados, análisis de tendencias, auditorías técnicas formales y provisión de máquinas virtuales con aprobación explícita.
 
 Las credenciales se guardan solo en Windows Credential Manager. Cada operación pasa por un wrapper que aplica la política del entorno y la registra en una bitácora con integridad verificable.
-
-**Documentación:** https://galexbh.github.io/vcenter/
 
 ---
 
