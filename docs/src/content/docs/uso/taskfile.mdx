@@ -8,29 +8,30 @@ sidebar:
 `Taskfile.yml` reúne las tareas habituales en comandos cortos para ejecutarlos desde una terminal, fuera de Claude Code. Requiere [Task](https://taskfile.dev):
 
 ```powershell
-winget install Task.Task
+winget install --id Task.Task -e
 ```
 
-`task` sin argumentos muestra la lista de tareas.
+Después de instalarlo, abrir una terminal nueva para que `task` quede disponible en el `PATH`. `task` sin argumentos muestra la lista de tareas.
 
 ## Tareas disponibles
 
 | Tarea | Variables | Script |
 |---|---|---|
 | `task setup` | — | Activa el control `pre-commit` y crea `config/environments.json` desde el ejemplo si no existe |
-| `task install` | — | `Install-Govc.ps1` |
+| `task install` | — | `Install-Govc.ps1`: la versión estable más alta de govc; `-- -Version vX.Y.Z` fija una versión y `-- -WithVcsim` agrega el simulador |
 | `task credential` | `ENV`, `ACCOUNT` (opcional) | `Set-GovcCredential.ps1` (no se ejecuta dentro de Claude Code) |
 | `task env` | `ENV` | `govc.ps1 -Env <ENV> about` |
 | `task vcsim` | — | Simulador en `https://127.0.0.1:8989/sdk` |
 | `task report` | `ENV` o `FROM`, `TYPE` (`all` por defecto) | `New-Report.ps1` |
 | `task inventory` · `health` · `capacity` · `snapshots` | `ENV` o `FROM` | `New-Report.ps1 -Type <tipo>` |
-| `task host-check` | `ENV` o `FROM`, `CLUSTER` (opcional) | `Invoke-HostCheck.ps1` |
-| `task audit` | `ENV` o `FROM`, `SCOPE` (`full` por defecto), `CLUSTER` (opcional) | `Invoke-Audit.ps1` |
+| `task host-check` | `ENV` o `FROM`, `CLUSTER` (opcional, solo con `ENV`) | `Invoke-HostCheck.ps1` |
+| `task audit` | `ENV` o `FROM`, `SCOPE` (opcional: sin él, `full` con `ENV` y el alcance guardado con `FROM`), `CLUSTER` (opcional, solo con `ENV`) | `Invoke-Audit.ps1` |
 | `task trend` | `ENV` | `Compare-Report.ps1` |
 | `task demo` | — | `New-DemoData.ps1` y los reportes de inventario, hosts y auditoría sobre esos datos |
 | `task test` | — | `Test-Guards.ps1` y `Test-Reports.ps1` |
 | `task test:guards` · `test:reports` · `test:log` | — | Prueba individual |
-| `task docs` · `docs:build` | — | Servidor local o compilación de esta documentación |
+| `task docs` | — | Servidor local de esta documentación en `http://localhost:4321/vcenter/` |
+| `task docs:build` | — | Compilación de esta documentación en `docs/dist/` |
 
 Las variables se indican como `NOMBRE=valor`. Los reportes requieren `ENV` (consulta el entorno) o `FROM` (vuelve a analizar una carpeta ya recolectada en `reports/`, sin consultar vCenter); sin ninguna de las dos, la tarea se cancela. `TYPE` y `SCOPE` solo admiten los valores del script; un valor distinto cancela la tarea antes de ejecutar nada.
 

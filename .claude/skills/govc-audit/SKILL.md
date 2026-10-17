@@ -8,12 +8,12 @@ description: Auditoría técnica completa de un entorno vSphere con informe form
 ## Ejecución
 
 ```powershell
-./scripts/Invoke-Audit.ps1 -Env <entorno> [-Cluster <c>] [-Scope full|security|capacity]
+./scripts/Invoke-Audit.ps1 -Env <entorno> [-Cluster <c>] [-Scope full|security|capacity] [-SkipDeviceScan]
 ./scripts/Invoke-Audit.ps1 -FromRaw reports/<env>/<marca>-auditoria [-Scope …]   # regenerar sin consultar
 ```
 
 - Orquesta `New-Report.ps1` (inventario y configuración), `Invoke-HostCheck.ps1` (hosts por esxcli) y controles de acceso (`permissions.ls`, `role.ls`). Todo es lectura.
-- Antes de ejecutar en un entorno grande, sugerir `-Cluster` (la revisión de hosts hace una consulta por host y chequeo).
+- Antes de ejecutar en un entorno grande, sugerir `-Cluster` (la revisión de hosts hace una consulta por host y chequeo). Con miles de VMs, sugerir también `-SkipDeviceScan` (no recolecta dispositivos de VM y omite el chequeo de ISO conectada).
 - Salida: `reports/<env>/<marca>-auditoria/auditoria.{html,md}`, subcarpetas `inventario/` y `hosts/`, y `raw/audit.json`.
 
 ## Presentación del resultado

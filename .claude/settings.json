@@ -15,7 +15,9 @@
     ],
     "ask": [
       "Edit(./scripts/govc.ps1)",
-      "Write(./scripts/govc.ps1)"
+      "Write(./scripts/govc.ps1)",
+      "Edit(./config/environments.json)",
+      "Write(./config/environments.json)"
     ],
     "deny": [
       "Read(~/.govmomi/**)",

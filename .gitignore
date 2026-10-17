@@ -3,7 +3,7 @@ reports/
 logs/
 config/environments.json
 tools/
-specs/*.yaml
+specs/*
 !specs/.gitkeep
 
 # Secretos y sesiones

@@ -15,7 +15,7 @@ sidebar:
 - El resto de los argumentos se transfiere sin cambios a govc.
 - Códigos de salida: el de govc, o bien `2` (uso o configuración), `3` (bloqueado por política) y `4` (cancelado).
 
-En ambos modos, las variables de conexión (incluida la contraseña) se entregan solo al proceso de govc; nunca se definen en el entorno de la sesión de PowerShell. La salida se emite línea a línea, por lo que puede encadenarse con `ConvertFrom-Json`.
+El wrapper se invoca de dos formas: con un comando por llamada, como en esta sintaxis, o en [modo lote](/vcenter/uso/wrapper/#modo-lote-una-sesión-por-corrida), descrito más abajo. En ambos casos, las variables de conexión (incluida la contraseña) se entregan solo al proceso de govc; nunca se definen en el entorno de la sesión de PowerShell. La salida se emite línea a línea, por lo que puede encadenarse con `ConvertFrom-Json`.
 
 ## Ejemplos
 

@@ -37,5 +37,5 @@ Durante la ejecución, el wrapper mantiene la contraseña en memoria, como cualq
 ## Rotación
 
 1. Rotar la contraseña en vCenter / SSO.
-2. Ejecutar `./scripts/Set-GovcCredential.ps1 -Env <entorno>` para reemplazarla.
-3. Verificar con `./scripts/govc.ps1 -Env <entorno> about`.
+2. En una terminal propia, fuera de Claude Code, ejecutar `task credential ENV=<entorno>` (o `./scripts/Set-GovcCredential.ps1 -Env <entorno>`) para reemplazarla.
+3. Verificar con `task env ENV=<entorno>` (equivale a `./scripts/govc.ps1 -Env <entorno> about`).

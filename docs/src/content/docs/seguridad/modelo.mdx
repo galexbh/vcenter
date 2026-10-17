@@ -11,9 +11,10 @@ sidebar:
 |---|---|---|
 | Punto único de acceso | `scripts/govc.ps1` | Credenciales en disco o en variables persistentes; operaciones fuera del modo del entorno; acciones sin registro |
 | Control previo de comandos | `.claude/hooks/govc-guard.ps1` (tools Bash y PowerShell) | Ejecución directa de govc, exposición de secretos, cambios destructivos, escrituras en entornos de solo lectura, comandos codificados, alteración de la bitácora |
-| Control previo de archivos | `.claude/hooks/govc-guard.ps1` (tools Write y Edit) | Creación por Claude de scripts que accedan a la bóveda de credenciales |
+| Control previo de archivos | `.claude/hooks/govc-guard.ps1` (tools Write, Edit, MultiEdit y NotebookEdit) | Creación por Claude de scripts que accedan a la bóveda de credenciales |
+| Control previo de lecturas | `.claude/hooks/read-guard.sh` (tools Read, Glob y Grep) | Lectura por Claude de la carpeta de sesión efímera del modo lote y de las sesiones guardadas de govmomi en el perfil del usuario |
 | Clasificador | `scripts/lib/Classify.psm1` | Subcomandos nuevos o desconocidos (se tratan como modificación) |
-| Permisos de Claude Code | `.claude/settings.json` | Modificación de guardas, bitácoras o configuración; lectura de sesiones de govc |
+| Permisos de Claude Code | `.claude/settings.json` | Modificación de guardas, bitácoras o configuración (la edición de `config/environments.json` y de `scripts/govc.ps1` requiere aprobación); lectura de sesiones de govc |
 | Control de versiones | `.gitignore`, `.githooks/pre-commit` | Reportes, bitácoras, configuración real o credenciales en el repositorio |
 | Integridad de la bitácora | Encadenamiento SHA-256 + `scripts/Test-AuditLog.ps1` | Edición, eliminación o inserción no detectada de registros |
 

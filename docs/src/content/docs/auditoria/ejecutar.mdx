@@ -75,8 +75,8 @@ Todas las consultas son de solo lectura y quedan registradas en la bitácora de 
   - inventario/ reporte de detalle y datos crudos
   - hosts/ revisión de hosts y datos crudos
   - raw/
-    - audit.json modelo consolidado (seguimiento)
-    - meta-audit.json
+    - audit.json modelo consolidado del informe (referencia)
+    - meta-audit.json entorno, fecha, alcance, clústeres, usuario y versión de la recolección
     - vcenter-access.json
 </FileTree>
 
@@ -88,15 +88,20 @@ Tras un período de remediación, ejecutar una nueva auditoría y compararla con
 ./scripts/Compare-Report.ps1 -Base reports/prod/20261017-090000-auditoria -Current reports/prod/20261117-090000-auditoria
 ```
 
-La sección *Evolución de hallazgos* muestra los hallazgos resueltos, los que persisten con otra severidad y los nuevos.
+`Compare-Report.ps1` compara los datos de inventario de ambas auditorías (subcarpeta `inventario/`): cambios en VMs, asignación por clúster, crecimiento de datastores, snapshots y, en la sección *Evolución de hallazgos*, los hallazgos de inventario y configuración nuevos, resueltos y con cambio de severidad. No incorpora los hallazgos de la revisión de hosts (`hosts/raw/findings.json`) ni los de controles de acceso (administradores en la raíz), y no lee `audit.json`; el seguimiento de esos hallazgos se realiza contrastando los dos informes de auditoría. Ver [Tendencias](/vcenter/reportes/tendencias/).
+
+`audit.json` es el modelo consolidado del informe (identificadores, dominios, indicadores y hallazgos). Se conserva como referencia y se vuelve a escribir cada vez que se regenera el informe.
 
 ## Recálculo
 
 ```powershell
+./scripts/Invoke-Audit.ps1 -FromRaw reports/prod/20261017-090000-auditoria
 ./scripts/Invoke-Audit.ps1 -FromRaw reports/prod/20261017-090000-auditoria -Scope security
 ```
 
-Regenera el informe a partir de los datos recolectados, sin consultar vCenter.
+Regenera el informe a partir de los datos recolectados, sin consultar vCenter. Si no se indica `-Scope`, se conserva el alcance de la recolección original, guardado en `raw/meta-audit.json`; lo mismo ocurre con `task audit FROM=<carpeta>` sin `SCOPE` (ver [Atajos con Task](/vcenter/uso/taskfile/)).
+
+`Invoke-Audit.ps1` no admite umbrales propios, `-OutDir` ni `-MdMaxRows`: ejecuta `New-Report.ps1` e `Invoke-HostCheck.ps1` con sus valores por defecto (ver [Hallazgos y umbrales](/vcenter/reportes/hallazgos/)) y en formato HTML, también al regenerar con `-FromRaw`.
 
 :::caution[Validación]
 El informe es un insumo técnico. Una auditoría formal debe ser validada por Auditoría Interna, Riesgo Tecnológico y Seguridad de la Información según sus procedimientos. El resumen de permisos contiene nombres de cuentas privilegiadas y debe tratarse como información sensible.

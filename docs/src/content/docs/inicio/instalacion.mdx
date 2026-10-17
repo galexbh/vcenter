@@ -12,42 +12,49 @@ import { Steps } from '@astrojs/starlight/components';
 | Requisito | Detalle |
 |---|---|
 | Windows 10/11 | Windows Credential Manager actúa como bóveda de credenciales |
-| PowerShell 7.5 o superior (`pwsh`) | Necesario para `ConvertFrom-Json -DateKind` y para el analizador de comandos del hook |
-| Git for Windows | Ejecuta el control `pre-commit` |
+| PowerShell 7.5 o superior (`pwsh`) | Necesario para `ConvertFrom-Json -DateKind` y para el analizador de comandos del hook. Instalación: `winget install --id Microsoft.PowerShell -e` |
+| Git for Windows | Clonar el repositorio y ejecutar el control `pre-commit`. Instalación: `winget install --id Git.Git -e` |
 | Claude Code | CLI, aplicación de escritorio o extensión de IDE |
-| [Task](https://taskfile.dev) (opcional) | Atajos de `Taskfile.yml`. Instalación: `winget install Task.Task` |
-| Node.js 20 o superior | Solo para compilar esta documentación |
+| [Task](https://taskfile.dev) | Atajos de `Taskfile.yml`, incluida la preparación del clon (`task setup`). Instalación: `winget install --id Task.Task -e` |
+| Node.js LTS (opcional, 22.12 o superior) | Solo para compilar esta documentación. Instalación: `winget install --id OpenJS.NodeJS.LTS -e` |
 | Cuenta de servicio de vCenter | Una por entorno, con el **rol mínimo** necesario |
+
+:::note
+Después de instalar con `winget`, abrir una terminal nueva para que `pwsh`, `git` y `task` queden disponibles en el `PATH`.
+:::
 
 ## Procedimiento
 
 <Steps>
 
-1. **Instalar govc** en `tools/` (excluido de git):
+1. **Clonar el repositorio y preparar el clon:**
 
    ```powershell
-   ./scripts/Install-Govc.ps1
+   git clone https://github.com/galexbh/vcenter.git
+   cd vcenter
+   task setup
    ```
 
-   El script descarga `govc_Windows_x86_64.zip` de la versión estable más alta disponible desde las publicaciones oficiales de [vmware/govmomi](https://github.com/vmware/govmomi/releases), verifica su SHA-256 contra el archivo `checksums.txt` de la misma publicación y copia `govc.exe` a `tools/`. Para instalar una versión concreta: `-Version v0.56.0`.
+   `task setup` activa el control de git que impide versionar reportes, bitácoras y credenciales (`git config core.hooksPath .githooks`) y crea `config/environments.json` a partir de `config/environments.example.json` si aún no existe.
 
-2. **Opcional: instalar el simulador** para pruebas sin un vCenter real:
+2. **Instalar govc** en `tools/` (excluido de git):
 
    ```powershell
-   ./scripts/Install-Govc.ps1 -WithVcsim
+   task install
    ```
 
-3. **Activar el control de git** que impide versionar reportes, bitácoras y credenciales:
+   La tarea ejecuta `./scripts/Install-Govc.ps1`, que descarga `govc_Windows_x86_64.zip` de la versión estable más alta disponible desde las publicaciones oficiales de [vmware/govmomi](https://github.com/vmware/govmomi/releases), verifica su SHA-256 contra el archivo `checksums.txt` de la misma publicación y copia `govc.exe` a `tools/`. Para instalar una versión concreta: `task install -- -Version v0.56.0`.
+
+3. **Opcional: instalar el simulador** para pruebas sin un vCenter real:
 
    ```powershell
-   git init
-   git config core.hooksPath .githooks
+   task install -- -WithVcsim
    ```
 
 4. **Verificar las guardas:**
 
    ```powershell
-   ./scripts/Test-Guards.ps1
+   task test:guards
    ```
 
    Todas las pruebas deben finalizar sin fallas.
@@ -55,5 +62,5 @@ import { Steps } from '@astrojs/starlight/components';
 </Steps>
 
 :::tip[Actualización de govc]
-Para actualizar, volver a ejecutar `./scripts/Install-Govc.ps1`. Se elige la versión semántica más alta entre las publicaciones estables, no la marcada como *latest* en GitHub: govmomi publica parches de ramas anteriores (por ejemplo, `v0.55.2` después de `v0.56.0`) y esa marca apunta a la más reciente. Si una versión nueva presenta problemas, fijar la anterior con `-Version`.
+Para actualizar, volver a ejecutar `task install` (o `./scripts/Install-Govc.ps1`). Se elige la versión semántica más alta entre las publicaciones estables, no la marcada como *latest* en GitHub: govmomi publica parches de ramas anteriores (por ejemplo, `v0.55.2` después de `v0.56.0`) y esa marca apunta a la más reciente. Si una versión nueva presenta problemas, fijar la anterior con `-Version`.
 :::

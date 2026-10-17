@@ -10,14 +10,20 @@ import { FileTree } from '@astrojs/starlight/components';
 <FileTree>
 - CLAUDE.md reglas para Claude
 - README.md
+- Taskfile.yml atajos para personas (task)
 - .gitignore
-- .gitattributes
+- .gitattributes fin de línea LF en .githooks/ y *.sh
 - .githooks/
   - pre-commit bloquea reportes, bitácoras y credenciales
+- .github/
+  - workflows/
+    - docs.yml compila y publica la documentación en GitHub Pages
+  - assets/ capturas del README
 - .claude/
-  - settings.json permisos y registro del hook
+  - settings.json permisos y registro de los hooks
   - hooks/
     - govc-guard.ps1 control de comandos y archivos
+    - read-guard.sh control de lecturas (Read, Glob, Grep)
   - skills/
     - govc-core/SKILL.md
     - govc-report/SKILL.md
@@ -47,11 +53,14 @@ import { FileTree } from '@astrojs/starlight/components';
   - Compare-Report.ps1
   - Test-Guards.ps1
   - Test-AuditLog.ps1
+  - Test-Reports.ps1 pruebas de regresión con datos demo
+  - New-DemoData.ps1 entorno ficticio demo
   - Install-Govc.ps1
   - Set-GovcCredential.ps1
   - lib/
     - Classify.psm1
     - CredMan.psm1
+    - GovcBatch.psm1 modo lote (una sesión por corrida)
     - GovcJson.psm1
     - Render.psm1
 - templates/
@@ -61,7 +70,7 @@ import { FileTree } from '@astrojs/starlight/components';
   - audit.md
   - vm-spec.example.yaml
 - specs/ no versionado (salvo .gitkeep)
-- docs/ este sitio (Astro Starlight)
+- docs/ este sitio (Astro Starlight), publicado en GitHub Pages
 - **reports/** no versionado
 - **logs/** no versionado
 - **tools/** no versionado (govc.exe, vcsim.exe)
@@ -74,14 +83,18 @@ import { FileTree } from '@astrojs/starlight/components';
 | `reports/`, `reporte-*.html`, `reporte-*.md`, `*.raw.json` | Inventario interno |
 | `logs/` | Bitácora de auditoría con usuarios y comandos |
 | `config/environments.json` | Nombres de servidores internos |
-| `specs/*.yaml` | Datos de provisión (direcciones IP, nombres) |
+| `specs/*` (salvo `specs/.gitkeep`) | Datos de provisión (direcciones IP, nombres) |
 | `tools/` | Binarios descargados |
 | `*.env`, `.env*`, `*.pem`, `*.pfx`, `*.key`, `.govmomi/` | Secretos y certificados |
+| `.claude/settings.local.json` | Configuración local de Claude Code de cada persona |
 
 ## Elementos protegidos frente a Claude
 
-| Ruta | Control |
+| Ruta o comando | Control |
 |---|---|
 | `scripts/lib/**`, `.claude/hooks/**`, `.claude/settings.json` | Modificación bloqueada |
-| `scripts/govc.ps1` | Modificación con aprobación |
+| `scripts/govc.ps1`, `config/environments.json` | Modificación con aprobación |
 | `logs/**` | Escritura, movimiento y eliminación bloqueados |
+| `~/.govmomi/**` | Lectura bloqueada |
+| `cmdkey /generic…`, `Set-GovcCredential.ps1` | Ejecución bloqueada: la credencial la registra una persona |
+| `git add -f`, `git add --force` | Ejecución bloqueada |

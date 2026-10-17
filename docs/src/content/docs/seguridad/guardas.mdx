@@ -25,6 +25,13 @@ Reglas particulares:
 
 Prevalece siempre la decisión más restrictiva.
 
+`.claude/settings.json` registra dos entradas `PreToolUse`:
+
+| Matcher | Hook | Intérprete | Tiempo máximo |
+|---|---|---|---|
+| `Bash\|PowerShell\|Write\|Edit\|MultiEdit\|NotebookEdit` | `.claude/hooks/govc-guard.ps1` | `pwsh` | 20 s |
+| `Read\|Glob\|Grep` | `.claude/hooks/read-guard.sh` | `sh` | 10 s |
+
 ### Comandos (Bash y PowerShell)
 
 | Situación | Decisión |
@@ -41,7 +48,7 @@ Prevalece siempre la decisión más restrictiva.
 
 Cmdlets de transformación admitidos para la aprobación automática: `ConvertFrom-Json`, `ConvertTo-Json`, `Select-Object`, `Where-Object`, `Sort-Object`, `Group-Object`, `Measure-Object`, `Format-Table`, `Format-List`, `Out-String`, `Select-String` y `ForEach-Object`. Los comandos contenidos en sus bloques también se validan.
 
-### Archivos (Write y Edit)
+### Archivos (Write, Edit, MultiEdit y NotebookEdit)
 
 El hook revisa el contenido que Claude escribe y bloquea cualquier archivo que acceda a la bóveda de credenciales o defina la contraseña de govc. Así se evita que el control de comandos se eluda mediante un script nuevo.
 
@@ -53,6 +60,10 @@ Una guarda liviana en `sh` (`.claude/hooks/read-guard.sh`) bloquea la lectura de
 
 Las reglas de archivos se aplican a **cualquier** contenido, incluida la documentación. Un texto que mencione literalmente la ruta de la carpeta de sesión o las variables de sesión de govc se bloquea aunque sea solo descriptivo. Se mantiene así a propósito: limitar la regla por extensión permitiría escribir código en un archivo de texto y ejecutarlo de otra forma. Al documentar, se describe la carpeta en palabras («carpeta temporal privada del lote») en lugar de su nombre literal.
 
+### Limitación conocida: exclusiones del control pre-commit
+
+La búsqueda de credenciales en el contenido agregado de `.githooks/pre-commit` excluye `scripts/Test-Guards.ps1`, `.claude/hooks/govc-guard.ps1` y `.githooks/*`, porque contienen patrones de ejemplo que de otro modo bloquearían el commit. Una credencial real agregada a esos archivos no se detectaría; los cambios en ellos requieren revisión manual del diff antes de confirmarlos.
+
 ## Mantenimiento de las guardas
 
 Claude no puede modificar `scripts/lib/`, `.claude/hooks/` ni `.claude/settings.json`, y la edición de `scripts/govc.ps1` requiere aprobación. Los cambios a estas piezas se preparan para revisión y los aplica una persona.
@@ -60,7 +71,7 @@ Claude no puede modificar `scripts/lib/`, `.claude/hooks/` ni `.claude/settings.
 ## Pruebas
 
 ```powershell
-./scripts/Test-Guards.ps1
+./scripts/Test-Guards.ps1   # o bien: task test:guards
 ```
 
 El script ejecuta los casos de clasificación y del hook contra `config/environments.example.json`, sin contactar vCenter. Debe agregarse un caso por cada regla nueva o modificada.

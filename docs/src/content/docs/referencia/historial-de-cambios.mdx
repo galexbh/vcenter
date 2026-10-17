@@ -5,6 +5,35 @@ sidebar:
   order: 6
 ---
 
+## 1.6 — Octubre 2026
+
+**Publicación**
+- Repositorio publicado en GitHub y documentación en GitHub Pages (https://galexbh.github.io/vcenter/), con base `/vcenter`.
+- Workflow `.github/workflows/docs.yml`: compila y despliega la documentación con Node 24 y versiones de las acciones que se ejecutan en Node 24.
+- Redirección de la ruta anterior de *Ejemplos y casos de uso* actualizada a la nueva base.
+
+**Instalación**
+- `Install-Govc.ps1` instala por defecto la versión estable más alta de govmomi, en lugar de la marca *latest* de GitHub, porque govmomi publica parches de ramas anteriores después de versiones más recientes.
+- `-Version vX.Y.Z` fija una versión concreta; vcsim se instala con la misma versión que govc.
+
+**Atajos**
+- `Taskfile.yml` con tareas de preparación (`setup`, `install`, `credential`, `env`, `vcsim`), reportes con `ENV` o `FROM`, `host-check`, `audit`, `trend`, `demo`, pruebas y documentación. Página [Atajos con Task](/vcenter/uso/taskfile/).
+- `task credential` se cancela si se ejecuta dentro de Claude Code.
+- Sin tareas que escriban en vCenter: los cambios y la provisión siguen el flujo con validación y aprobación.
+
+**Seguridad y control**
+- La edición de `config/environments.json` por Claude requiere aprobación (`.claude/settings.json`).
+- `.gitignore` ignora `specs/*`, salvo `specs/.gitkeep`.
+- Fin de línea LF para `*.sh` (`.gitattributes`).
+- El escaneo de secretos del control `pre-commit` excluye `.claude/hooks/govc-guard.ps1`, que contiene los patrones de detección.
+
+**Correcciones**
+- `task audit FROM=<carpeta>` sin `SCOPE` conserva el alcance de la recolección original.
+- Documentación alineada con el código: umbrales y severidades de hallazgos, parámetros de los scripts y guía de credenciales (la credencial la registra la persona en su propia terminal, no con `!` desde Claude Code).
+
+**README**
+- Dependencias con winget, comandos con Task y vista previa del reporte.
+
 ## 1.5 — Octubre 2026
 
 Resultado de la revisión de código.

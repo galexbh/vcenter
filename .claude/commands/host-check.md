@@ -3,7 +3,7 @@ description: Ronda de técnicos — revisa por esxcli cada host de un clúster y
 argument-hint: "<entorno> [clúster|host…] [chequeos]"
 ---
 
-Argumentos: `$ARGUMENTS` → entorno (obligatorio; si falta, pregunta), clúster(es) u host(s) opcionales, chequeos opcionales (`vibs,nics,paths,ntp,syslog,coredump,platform,services`).
+Argumentos: `$ARGUMENTS` → entorno (obligatorio; si falta, pregunta), clúster(es) u host(s) opcionales, chequeos opcionales (`vibs,nics,paths,ntp,syslog,coredump,platform,services,certs`).
 
 Sigue la skill `govc-esxcli`:
 

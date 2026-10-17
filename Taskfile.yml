@@ -1,11 +1,12 @@
 # Atajos para personas (https://taskfile.dev): `task` lista las tareas.
 #
-# Solo cubre operaciones que no modifican vCenter: reportes, revisión de hosts, auditoría,
-# tendencias, pruebas, instalación y documentación. Las escrituras y la provisión no tienen
-# atajo a propósito: siguen el flujo con validación y aprobación (/vm-create en Claude Code).
+# Solo cubre operaciones que no modifican vCenter: preparación (setup, install, credential, env,
+# vcsim), reportes, revisión de hosts, auditoría, tendencias, demo, pruebas y documentación.
+# Las escrituras y la provisión no tienen atajo a propósito: siguen el flujo con validación y
+# aprobación (/vm-create en Claude Code).
 # Claude no usa estas tareas: invoca los scripts directamente para que las guardas vean cada operación.
 #
-# Variables: ENV (entorno) o FROM (carpeta de reports/ ya recolectada), TYPE, SCOPE, CLUSTER.
+# Variables: ENV (entorno) o FROM (carpeta de reports/ ya recolectada), TYPE, SCOPE, CLUSTER, ACCOUNT.
 # Parámetros adicionales del script, después de `--`:  task report ENV=prod -- -Format csv
 version: '3'
 
@@ -71,7 +72,7 @@ tasks:
   # SRC: entorno en vivo (-Env) o datos ya recolectados (-FromRaw), sin volver a consultar vCenter.
 
   report:
-    desc: Reporte HTML/Markdown en reports/ (ENV=prod o FROM=<carpeta>; TYPE=all|inventory|snapshots|capacity|health)
+    desc: Reporte HTML/Markdown (CSV con -- -Format csv) en reports/ (ENV=prod o FROM=<carpeta>; TYPE=all|inventory|snapshots|capacity|health)
     vars:
       TYPE: '{{.TYPE | default "all"}}'
       SRC: '{{if .FROM}}-FromRaw ''{{.FROM}}''{{else}}-Env ''{{.ENV}}''{{end}}'
@@ -110,7 +111,7 @@ tasks:
         vars: { ENV: '{{.ENV}}', FROM: '{{.FROM}}', TYPE: snapshots }
 
   host-check:
-    desc: Revisión esxcli por host y detección de diferencias (ENV=prod CLUSTER=CL-PROD-01, o FROM=<carpeta>)
+    desc: Revisión esxcli por host y detección de diferencias (ENV=prod CLUSTER=CL-PROD-01, o FROM=<carpeta>; CLUSTER solo con ENV)
     vars:
       SRC: '{{if .FROM}}-FromRaw ''{{.FROM}}''{{else}}-Env ''{{.ENV}}''{{end}}'
     preconditions:
@@ -119,20 +120,18 @@ tasks:
     cmds:
       - '{{.PS}} "./scripts/Invoke-HostCheck.ps1 {{.SRC}} {{if .CLUSTER}}-Cluster ''{{.CLUSTER}}''{{end}} {{.CLI_ARGS}}"'
 
+  # Sin SCOPE, el script usa full con ENV y conserva el alcance guardado con FROM.
   audit:
-    desc: Auditoría técnica con informe formal (ENV=prod o FROM=<carpeta>; SCOPE=full|security|capacity CLUSTER=…)
+    desc: Auditoría técnica con informe formal (ENV=prod o FROM=<carpeta>; SCOPE=full|security|capacity; CLUSTER solo con ENV)
     vars:
-      SCOPE: '{{.SCOPE | default "full"}}'
       SRC: '{{if .FROM}}-FromRaw ''{{.FROM}}''{{else}}-Env ''{{.ENV}}''{{end}}'
-    requires:
-      vars:
-        - name: SCOPE
-          enum: [full, security, capacity]
     preconditions:
       - sh: '[ -n "{{.ENV}}{{.FROM}}" ]'
         msg: 'Indica ENV=<entorno> o FROM=<carpeta en reports/>'
+      - sh: 'case "{{.SCOPE}}" in ""|full|security|capacity) ;; *) exit 1;; esac'
+        msg: 'SCOPE admite full, security o capacity'
     cmds:
-      - '{{.PS}} "./scripts/Invoke-Audit.ps1 {{.SRC}} -Scope {{.SCOPE}} {{if .CLUSTER}}-Cluster ''{{.CLUSTER}}''{{end}} {{.CLI_ARGS}}"'
+      - '{{.PS}} "./scripts/Invoke-Audit.ps1 {{.SRC}} {{if .SCOPE}}-Scope {{.SCOPE}}{{end}} {{if .CLUSTER}}-Cluster ''{{.CLUSTER}}''{{end}} {{.CLI_ARGS}}"'
 
   trend:
     desc: Tendencias entre las dos corridas más recientes (ENV=prod)
@@ -141,7 +140,7 @@ tasks:
       - '{{.PS}} "./scripts/Compare-Report.ps1 -Env ''{{.ENV}}'' {{.CLI_ARGS}}"'
 
   demo:
-    desc: Genera datos ficticios y todos sus reportes en reports/demo/ (sin vCenter)
+    desc: Genera datos ficticios con inventario y hosts (HTML) y auditoría (HTML y MD) en reports/demo/ (sin vCenter)
     vars:
       OUT:
         sh: pwsh -NoProfile -Command "'reports/demo/' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-auditoria'"

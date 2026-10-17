@@ -37,11 +37,12 @@ Cada hallazgo incluye **severidad**, **categoría**, **objeto**, **evidencia**, 
 | VMware Tools | Desactualizado | Info | Actualizar en ventana de mantenimiento |
 | Certificados | Certificado de vCenter vencido | Crítico | Interrupción de conexiones y alertas de confianza |
 | Certificados | Vence en ≤ 60 días | Advertencia | Planificar la renovación |
+| Licencias | Licencia vencida | Crítico | Pérdida de funcionalidades |
 | Licencias | Vence en ≤ 60 días | Advertencia | Pérdida de funcionalidades al vencer |
-| Alarmas | Roja / amarilla | Crítico / Advertencia | Según el procedimiento de la alarma |
+| Alarmas | Roja / amarilla / otro estado | Crítico / Advertencia / Info | Según el procedimiento de la alarma |
 | Higiene | VMs apagadas | Info | Consumo de almacenamiento y licencias |
 
-Los hallazgos de VMware Tools, VMs apagadas, versión de hardware e ISO conectada se **agrupan** en una sola fila por condición.
+Los hallazgos de VMware Tools, VMs apagadas, consolidación pendiente, límites de CPU o memoria, versión de hardware e ISO conectada se **agrupan** en una sola fila por condición.
 
 ## Reglas de la revisión de hosts
 

@@ -1,6 +1,6 @@
 ---
 name: govc-report
-description: Genera reportes de vCenter en HTML y Markdown (inventario, snapshots, capacidad, salud) con scripts/New-Report.ps1, guardados en reports/ y nunca en git. Úsala cuando pidan un reporte, inventario exportable, resumen para jefatura o un análisis repetible.
+description: Genera reportes de vCenter en HTML, Markdown y CSV (inventario, snapshots, capacidad, salud) con scripts/New-Report.ps1, guardados en reports/ y nunca en git. Úsala cuando pidan un reporte, inventario exportable, resumen para jefatura o un análisis repetible.
 ---
 
 # Reportes de vCenter
@@ -8,7 +8,7 @@ description: Genera reportes de vCenter en HTML y Markdown (inventario, snapshot
 ## Generar
 
 ```powershell
-./scripts/New-Report.ps1 -Env <entorno> [-Type all|inventory|snapshots|capacity|health] [-Format html,md]
+./scripts/New-Report.ps1 -Env <entorno> [-Type all|inventory|snapshots|capacity|health] [-Format html,md,csv]
 ```
 
 - Solo lectura: número fijo de llamadas (object.collect para VMs, hosts, compute resources, clústeres y datastores; alarmas; about.cert; license.ls) sin importar el tamaño del inventario.
@@ -28,7 +28,12 @@ description: Genera reportes de vCenter en HTML y Markdown (inventario, snapshot
 | `-VcpuRatioWarn` / `-VcpuRatioCrit` | 4 / 6 | vCPU encendidas : pCores por clúster |
 | `-MemRatioWarn` | 1.0 | RAM asignada (VMs encendidas) / RAM física |
 | `-HostMemWarnPct` | 85 | memoria en uso por host |
+| `-MinHwVersion` | 14 | hardware virtual mínimo (`vmx-NN`) |
+| `-CertWarnDays` | 60 | días antes del vencimiento del certificado de vCenter |
+| `-LicenseWarnDays` | 60 | días antes del vencimiento de licencias |
 | `-MdMaxRows` | 200 | filas máximas por tabla en Markdown |
+| `-CsvDelimiter` | separador de listas de Windows | separador de los CSV |
+| `-SkipDeviceScan` | desactivado | no recolecta dispositivos de VM (omite el chequeo de ISO conectada); recomendado con miles de VMs. Solo aplica al recolectar, no con `-FromRaw` |
 
 Ajusta los umbrales a la política del equipo si la persona la indica; no inventes una política.
 

@@ -2,14 +2,14 @@
 # Copia este archivo (p. ej. specs/app01.yaml) y ajústalo. Claude lo valida contra vCenter
 # antes de proponer comandos. Los campos vacíos toman el valor por defecto del perfil del entorno.
 
-env: lab                       # lab | dr | prod (debe existir en config/environments.json)
-name: lab-app01                # nombre de la VM (debe NO existir)
+env: lab                       # lab | prod (dr es readonly; debe existir en config/environments.json)
+name: lab-app01                # nombre de la VM (no debe existir)
 change: ""                     # número de cambio / ticket (obligatorio en prod)
 owner: "Equipo Aplicaciones"   # dueño funcional (se guarda como anotación)
 
 source:
   template: tpl-rhel9          # plantilla o VM origen para clonar
-  # library: "Plantillas/tpl-rhel9"   # alternativa: ítem de Content Library
+  # library: "/Plantillas/tpl-rhel9"   # alternativa: ítem de Content Library
 
 placement:
   cluster: ""                  # vacío = perfil

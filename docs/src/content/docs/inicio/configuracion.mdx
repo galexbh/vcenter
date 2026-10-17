@@ -9,7 +9,7 @@ import { Steps, Tabs, TabItem } from '@astrojs/starlight/components';
 
 ## Perfiles de entorno
 
-Cada entorno se define en `config/environments.json`. Este archivo contiene nombres de servidores internos y **no se versiona**; se parte de la plantilla incluida:
+Cada entorno se define en `config/environments.json`. Este archivo contiene nombres de servidores internos y **no se versiona**; se parte de la plantilla incluida. `task setup` lo crea si no existe; de forma manual:
 
 ```powershell
 Copy-Item config/environments.example.json config/environments.json
@@ -44,6 +44,7 @@ Copy-Item config/environments.example.json config/environments.json
 | `caCerts` | Recomendado | Certificado de la autoridad interna para validar TLS |
 | `insecure` | No | `true` omite la validación TLS. **No utilizar en producción ni en contingencia** |
 | `persistSession` | No | `true` conserva la sesión en `~/.govmomi`. Por defecto, `false` |
+| `batchTimeoutSec` | No | Tiempo máximo, en segundos, de cada comando en [modo lote](/vcenter/uso/wrapper/#modo-lote-una-sesión-por-corrida). Por defecto, `600` |
 
 **Configuración recomendada:** `dr` en `readonly`, `prod` en `confirm` y `lab` en `lab`.
 
@@ -51,19 +52,23 @@ Copy-Item config/environments.example.json config/environments.json
 
 <Steps>
 
-1. Abrir una **terminal propia** (no a través de Claude) y ejecutar:
+1. Abrir una **terminal propia**, fuera de Claude Code, y ejecutar:
 
    ```powershell
-   ./scripts/Set-GovcCredential.ps1 -Env prod
+   task credential ENV=prod
    ```
 
-2. Ingresar el usuario y, cuando `cmdkey` lo solicite, la contraseña. La contraseña no se muestra ni queda en el historial.
+   El usuario puede indicarse de antemano con `ACCOUNT` (opcional): `task credential ENV=prod ACCOUNT=svc-govc-ro@vsphere.local`. La tarea ejecuta `./scripts/Set-GovcCredential.ps1`, que también puede invocarse directamente.
+
+2. Ingresar el usuario (si no se indicó `ACCOUNT`) y, cuando `cmdkey` lo solicite, la contraseña. La contraseña no se muestra, no pasa por argumentos ni queda en el historial.
 
 3. Verificar la conexión:
 
    ```powershell
-   ./scripts/govc.ps1 -Env prod about
+   task env ENV=prod
    ```
+
+   Equivale a `./scripts/govc.ps1 -Env prod about`.
 
 </Steps>
 
@@ -71,11 +76,13 @@ Copy-Item config/environments.example.json config/environments.json
 <TabItem label="Rotación">
 
 ```powershell
-./scripts/Set-GovcCredential.ps1 -Env prod   # reemplaza la credencial existente
+task credential ENV=prod   # reemplaza la credencial existente
 ```
 
 </TabItem>
 <TabItem label="Eliminación">
+
+`task credential` no admite la eliminación; se usa el script directamente:
 
 ```powershell
 ./scripts/Set-GovcCredential.ps1 -Env prod -Remove
@@ -84,13 +91,7 @@ Copy-Item config/environments.example.json config/environments.json
 </TabItem>
 <TabItem label="Desde una sesión de Claude">
 
-Si falta la credencial, Claude solicita ejecutar el script con el prefijo `!`, que lo ejecuta la persona:
-
-```text
-! ./scripts/Set-GovcCredential.ps1 -Env prod
-```
-
-El script rechaza su ejecución cuando lo invoca Claude.
+Si falta la credencial, Claude indica el entorno afectado y solicita que una persona la registre en **su propia terminal**, fuera de Claude Code. Los comandos con el prefijo `!` se ejecutan dentro de la sesión de Claude Code y heredan su entorno, por lo que no sirven para este fin: tanto el script como `task credential` rechazan su ejecución cuando detectan una sesión de Claude Code (variable `CLAUDECODE`).
 
 </TabItem>
 </Tabs>

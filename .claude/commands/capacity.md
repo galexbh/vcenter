@@ -1,6 +1,6 @@
 ---
 description: Análisis de capacidad — CPU/RAM por clúster, datastores y holgura para HA
-argument-hint: "<entorno> [clúster]"
+argument-hint: "<entorno>"
 ---
 
 Argumentos: `$ARGUMENTS` (entorno obligatorio).

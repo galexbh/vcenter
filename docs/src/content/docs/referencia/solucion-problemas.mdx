@@ -7,9 +7,9 @@ sidebar:
 
 | Síntoma | Causa probable | Acción |
 |---|---|---|
-| `No existe config/environments.json` | Perfil no creado | Copiar `environments.example.json` y completarlo |
+| `No existe config/environments.json` | Perfil no creado | Ejecutar `task setup` (o copiar `environments.example.json`) y completarlo |
 | `Entorno 'x' no definido` | Nombre incorrecto o perfil ausente | Revisar las claves del archivo (en minúsculas) |
-| `No hay credencial 'govc:x'` | Credencial no registrada | Ejecutar `./scripts/Set-GovcCredential.ps1 -Env x` en una terminal propia |
+| `No hay credencial 'govc:x'` | Credencial no registrada | Ejecutar `task credential ENV=x` (o `./scripts/Set-GovcCredential.ps1 -Env x`) en una terminal propia, fuera de Claude Code |
 | `NotAuthenticated` / `InvalidLogin` | Contraseña vencida o rotada | Registrar nuevamente la credencial |
 | `x509: certificate signed by unknown authority` | Falta la autoridad certificadora interna | Configurar `caCerts`; no habilitar `insecure` en producción |
 | `NoPermission` | La cuenta de servicio carece del privilegio | Solicitar el privilegio específico; no utilizar otra cuenta |
@@ -22,15 +22,24 @@ sidebar:
 | `[govc-guard] logs/ es la bitácora de auditoría` | Intento de modificar o eliminar la bitácora | Comportamiento esperado; la gestión de la bitácora corresponde a una persona |
 | Claude solicita aprobación para una lectura | El comando combina otros cmdlets, redirecciones o variables | Comportamiento esperado; aprobar o simplificar el comando |
 | `Test-AuditLog.ps1` informa una ruptura | Registro editado, eliminado o insertado | Preservar la evidencia e informar a Seguridad de la Información |
-| `govc no encontrado` | govc no instalado | Ejecutar `./scripts/Install-Govc.ps1` |
+| `[govc-guard] La carpeta de sesion efimera de govc (o las sesiones guardadas de govmomi) …` | Claude intentó leer, listar o buscar en la carpeta de sesión del modo lote o en las sesiones guardadas de govmomi (`read-guard.sh`) | Comportamiento esperado; la sesión activa no se lee desde Claude |
+| `govc no encontrado` | govc no instalado | Ejecutar `task install` (o `./scripts/Install-Govc.ps1`) |
 | `pre-commit: archivos que no deben versionarse` | Se incorporó un reporte o una bitácora | `git restore --staged <archivo>` |
+| `pre-commit: el diff parece contener credenciales` | El contenido agregado incluye una contraseña o una URL con usuario y contraseña | Retirar el secreto del archivo, registrarlo en Credential Manager y, si llegó a compartirse, rotarlo |
+| `task` no se reconoce como comando | Task no instalado o terminal abierta antes de instalarlo | `winget install --id Task.Task -e` y abrir una terminal nueva |
+| `Indica ENV=<entorno> o FROM=<carpeta en reports/>` | Tarea de reporte, revisión de hosts o auditoría sin origen de datos | Indicar `ENV=` o `FROM=` |
+| `SCOPE admite full, security o capacity` | Valor de `SCOPE` no válido en `task audit` | Corregir el valor u omitirlo |
+| `La credencial la registra una persona en su propia terminal, no Claude.` | `task credential` se ejecutó dentro de Claude Code (incluido el prefijo `!`) | Ejecutarla en una terminal propia, fuera de Claude Code |
+| `vcsim no está instalado: task install -- -WithVcsim` | `task vcsim` sin el simulador en `tools/` | `task install -- -WithVcsim` |
 
 ## Pruebas con el simulador
 
 ```powershell
-./scripts/Install-Govc.ps1 -WithVcsim
-./tools/vcsim.exe -l 127.0.0.1:8989
+task install -- -WithVcsim
+task vcsim
 ```
+
+`task vcsim` mantiene el simulador en ejecución; los comandos siguientes se ejecutan en otra terminal.
 
 Agregar un perfil de prueba y su credencial (usuario `user`, contraseña `pass` del simulador):
 
@@ -39,6 +48,6 @@ Agregar un perfil de prueba y su credencial (usuario `user`, contraseña `pass` 
 ```
 
 ```powershell
-./scripts/Set-GovcCredential.ps1 -Env vcsim -UserName user
+task credential ENV=vcsim ACCOUNT=user
 ./scripts/New-Report.ps1 -Env vcsim
 ```

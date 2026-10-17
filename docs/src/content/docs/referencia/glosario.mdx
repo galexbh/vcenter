@@ -21,7 +21,7 @@ sidebar:
 | **Guarda** | Control que permite, solicita aprobación o bloquea una acción (clasificador, hook, wrapper, permisos, control de git) |
 | **Hallazgo** | Condición identificada con severidad, evidencia, sugerencia y comando de verificación |
 | **Holgura N+1** | Capacidad para absorber la carga si falla el host de mayor tamaño del clúster |
-| **Hook** | Script que Claude Code ejecuta antes de cada comando o escritura de archivo (`govc-guard.ps1`) |
+| **Hook** | Script que Claude Code ejecuta antes de cada comando o escritura de archivo (`govc-guard.ps1`) y antes de cada lectura, listado o búsqueda de archivos (`read-guard.sh`) |
 | **Indicador por dominio** | Valor de 0 a 100 para priorizar la atención; no es una calificación de cumplimiento |
 | **Modo de entorno** | Política de un entorno: `readonly`, `confirm` o `lab` |
 | **moref** | Identificador interno de un objeto en vCenter (por ejemplo, `vm-123`) |
@@ -29,6 +29,7 @@ sidebar:
 | **Regla** | Código estable de una condición evaluada (por ejemplo, `ds-used`), utilizado para seguir hallazgos entre corridas |
 | **Severidad** | Crítico, Advertencia o Info |
 | **Skill** | Conjunto de instrucciones y criterios que Claude aplica a un tipo de tarea |
+| **Task / Taskfile** | Herramienta [Task](https://taskfile.dev) y su archivo `Taskfile.yml`, con atajos para personas que no modifican vCenter. Ver [Atajos con Task](/vcenter/uso/taskfile/) |
 | **vCPU:pCore** | Relación entre vCPU asignadas a VMs encendidas y núcleos físicos del clúster |
 | **VIB** | *vSphere Installation Bundle*: paquete de software instalado en un host ESXi |
 | **Wrapper** | `scripts/govc.ps1`, punto único de acceso a vCenter |

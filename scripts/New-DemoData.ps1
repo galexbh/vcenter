@@ -9,7 +9,9 @@
     ./scripts/Invoke-Audit.ps1 -FromRaw <carpeta>
     ./scripts/New-Report.ps1  -FromRaw <carpeta>/inventario -Format html,md,csv
   -EdgeCases agrega casos límite usados por scripts/Test-Reports.ps1 (VM sin host, nombre que
-  empieza con '=', textos con | [] < > y saltos de línea, chequeo de host con error).
+  empieza con '=', textos con | [] < > y saltos de línea, marcadores de plantilla dentro de los
+  datos ({{SECTIONS}}, {{ANNEXES}}, {{REMEDIATION}}), nombre de VM con comilla invertida (`) y
+  chequeo de host con error en dos hosts).
 
 .EXAMPLE
   ./scripts/New-DemoData.ps1

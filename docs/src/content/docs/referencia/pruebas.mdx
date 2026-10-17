@@ -7,29 +7,51 @@ sidebar:
 
 El proyecto incluye dos baterías de pruebas que se ejecutan sin contactar vCenter. Ambas devuelven como código de salida el número de verificaciones fallidas.
 
-| Batería | Comando | Verifica |
-|---|---|---|
-| Guardas | `./scripts/Test-Guards.ps1` | Clasificación de subcomandos y decisiones del hook para comandos, archivos y lecturas |
-| Reportes | `./scripts/Test-Reports.ps1` | Reportes, CSV, revisión de hosts, auditoría y tendencias sobre datos de demostración |
+| Batería | Comando | Atajo | Verifica |
+|---|---|---|---|
+| Guardas | `./scripts/Test-Guards.ps1` | `task test:guards` | Clasificación de subcomandos y decisiones del hook para comandos, archivos y lecturas |
+| Reportes | `./scripts/Test-Reports.ps1` | `task test:reports` | Reportes, CSV, revisión de hosts, auditoría y tendencias sobre datos de demostración |
+
+`task test` ejecuta ambas baterías y `task test:log` verifica la integridad de la bitácora (`Test-AuditLog.ps1`). Ver [Atajos con Task](/vcenter/uso/taskfile/).
 
 :::tip[Cuándo ejecutarlas]
 Después de modificar cualquier script, plantilla o módulo. Cambios en guardas: `Test-Guards.ps1`. Cambios en reportes o plantillas: `Test-Reports.ps1`.
 :::
 
+## Test-Guards.ps1
+
+Evalúa las guardas con los perfiles de `config/environments.example.json` (`lab` en modo `lab`, `dr` en `readonly`, `prod` en `confirm`), sin contactar vCenter.
+
+| Grupo | Verificaciones |
+|---|---|
+| Clasificador | Clase (`read`, `write`, `destructive`, `secret`) de subcomandos representativos, incluidos `host.esxcli` por verbo, `find -p`, `-debug`, `env` y opciones de contraseña |
+| Hook: comandos | Decisión (`allow`, `ask`, `deny` o sin decisión) para lecturas, escrituras y destructivos según el modo; comandos encadenados o con redirección; entorno desconocido; govc directo; variables de contraseña; acceso a la bóveda; incorporación a git de `reports/`, `logs/` y `config/environments.json` |
+| Hook: archivos y bitácora | Contenido de Write, Edit y MultiEdit que accede a la bóveda o define variables de contraseña; modificación de `logs/`; comandos codificados |
+| Hook: sesión | Modo `-Batch` (requiere aprobación), acceso a la sesión efímera del lote y lecturas (Read, Glob) de sus carpetas |
+| Guarda de lecturas | Casos de `read-guard.sh` para Read, Glob y Grep; se omiten con un aviso si `read-guard.sh` o `sh` no están disponibles |
+
+Los grupos de archivos y de sesión se detectan por capacidad: con un hook anterior que no los incluye, se omiten con un aviso en lugar de fallar.
+
+Con `-HookPath` se prueba una copia alternativa del hook, por ejemplo una versión preparada para revisión antes de instalarla en `.claude/hooks/`:
+
+```powershell
+./scripts/Test-Guards.ps1 -HookPath <ruta>\.claude\hooks\govc-guard.ps1
+```
+
 ## Test-Reports.ps1
 
-Genera un entorno ficticio con `New-DemoData.ps1 -EdgeCases` en una carpeta temporal, ejecuta todos los scripts con `-FromRaw` y elimina la carpeta al terminar (`-Keep` la conserva para inspección).
+Genera un entorno ficticio con `New-DemoData.ps1 -EdgeCases` en una carpeta temporal y ejecuta sobre esos datos `New-Report.ps1`, `Invoke-HostCheck.ps1` e `Invoke-Audit.ps1` con `-FromRaw`, y `Compare-Report.ps1` con `-Base`/`-Current` entre una copia modificada y la corrida actual. La verificación del lote invoca el wrapper real y se omite, con un aviso, si no existe `config/environments.json`. La carpeta temporal se elimina al terminar (`-Keep` la conserva para inspección).
 
 | Área | Verificaciones |
 |---|---|
-| `New-Report.ps1` | Presencia y severidad de cada regla; código de regla en todos los hallazgos; indicadores; marcadores reemplazados; codificación de HTML; escape de Markdown; ausencia de filas vacías; VM sin host |
+| `New-Report.ps1` | Presencia y severidad de cada regla; código de regla en todos los hallazgos; indicadores; marcadores de plantilla reemplazados; marcadores presentes en los datos que se muestran literales y no se expanden; codificación de HTML; selector de tema; política CSP con `default-src 'none'` y hashes válidos de los scripts (reporte y plantilla de auditoría); escape de Markdown; comando con comilla invertida bien delimitado; ausencia de filas vacías; VM sin host; con `-SkipDeviceScan`, hallazgo de cobertura `coverage-devices` y sin evaluación de ISO |
 | CSV | BOM UTF-8; separador regional; neutralización de fórmulas; comillas escapadas; lectura con `Import-Csv`; un archivo por tabla |
 | `Invoke-HostCheck.ps1` | Presencia y severidad de las reglas de hosts; exclusión de discos locales; cobertura agrupada por chequeo |
-| `Invoke-Audit.ps1` | Identificadores consecutivos; indicadores según la fórmula; dominio y riesgo en cada hallazgo; cobertura fuera del puntaje; secciones del informe; filtro por alcance |
+| `Invoke-Audit.ps1` | Identificadores consecutivos; indicadores según la fórmula; dominio y riesgo en cada hallazgo; cobertura fuera del puntaje; secciones del informe; marcadores de plantilla reemplazados; marcadores presentes en los datos que no se expanden (HTML y Markdown); codificación de contenido de vCenter; filtro por alcance |
 | `Compare-Report.ps1` | VM nueva, eliminada y renombrada; hallazgo resuelto; crecimiento de datastore; secciones vacías sin filas |
-| Wrapper | Un lote con un comando no lectura se rechaza (requiere `config/environments.json`) |
+| Wrapper | Un lote con un comando no lectura se rechaza (código de salida 3) y un lote con formato anidado se rechaza (código de salida 2); requiere `config/environments.json` |
 
-Los casos límite incluidos (`-EdgeCases`) son: una VM sin host asignado, un nombre que empieza con `=`, textos con `|`, `[]`, `<script>` y saltos de línea, y un chequeo de host sin permisos en dos hosts.
+Los casos límite incluidos (`-EdgeCases`) son: una VM sin host asignado, un nombre que empieza con `=`, textos con `|`, `[]`, `<script>` y saltos de línea, marcadores de plantilla (`{{ANNEXES}}`, `{{SECTIONS}}`, `{{REMEDIATION}}`) en nombres y textos, un nombre de VM con comilla invertida y un chequeo de host sin permisos en dos hosts.
 
 ## Datos de demostración
 
@@ -38,6 +60,8 @@ Los casos límite incluidos (`-EdgeCases`) son: una VM sin host asignado, un nom
 ./scripts/Invoke-Audit.ps1 -FromRaw reports/demo/<marca>-auditoria
 ./scripts/New-Report.ps1 -FromRaw reports/demo/<marca>-auditoria/inventario -Format html,md,csv
 ```
+
+`task demo` realiza los dos primeros pasos: genera los datos y, sobre ellos, el reporte de inventario y la revisión de hosts (HTML) y el informe de auditoría (HTML y Markdown).
 
 El entorno `demo` es ficticio (2 clústeres, 7 hosts, ~40 VMs) y contiene hallazgos sembrados en todos los dominios. Es útil para capacitación y para revisar cambios de diseño en las plantillas.
 

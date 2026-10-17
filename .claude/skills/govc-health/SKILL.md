@@ -7,7 +7,7 @@ description: Criterios para evaluar la salud de vCenter y dar sugerencias priori
 
 ## Flujo
 
-1. Datos: `./scripts/New-Report.ps1 -Env <env> -Type health -Format md` (o `-FromRaw` si ya hay una corrida reciente de hoy).
+1. Datos: `./scripts/New-Report.ps1 -Env <env> -Type health` (genera HTML y MD; o `-FromRaw` si ya hay una corrida reciente de hoy).
 2. Profundiza solo en los críticos con lecturas puntuales (comando sugerido en cada hallazgo).
 3. Responde con la estructura de abajo.
 

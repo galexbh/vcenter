@@ -44,8 +44,8 @@ Cuando vCenter ya dispone del dato, govc lo obtiene en una sola consulta para to
 ## Sintaxis
 
 ```powershell
-./scripts/govc.ps1 -Env prod host.esxcli -json -host esx01.local network nic list
-./scripts/govc.ps1 -Env prod host.esxcli -host esx01.local storage core path list -d naa.600…
+./scripts/govc.ps1 -Env prod host.esxcli -json -host esx01.example.local network nic list
+./scripts/govc.ps1 -Env prod host.esxcli -host esx01.example.local storage core path list -d naa.600…
 ```
 
 Los flags de govc (`-json`, `-host`) preceden al comando esxcli; las opciones de esxcli (`-n`, `-d`) lo siguen.
@@ -80,9 +80,11 @@ Formula la misma consulta a cada host de un clúster y compara las respuestas.
 
 ```powershell
 ./scripts/Invoke-HostCheck.ps1 -Env prod -Cluster CL-PROD-01
-./scripts/Invoke-HostCheck.ps1 -Env prod -Hosts esx01.local, esx02.local -Checks nics, paths
+./scripts/Invoke-HostCheck.ps1 -Env prod -Hosts esx01.example.local, esx02.example.local -Checks nics, paths
 ./scripts/Invoke-HostCheck.ps1 -FromRaw reports/prod/20261016-100000
 ```
+
+Los valores de `-Hosts` deben coincidir con el nombre exacto del host en el inventario de vCenter (sin distinguir mayúsculas y minúsculas); no se admiten nombres cortos ni comodines. Un nombre que no coincide no se revisa.
 
 | Chequeo | Fuente | Hallazgo | Severidad |
 |---|---|---|---|

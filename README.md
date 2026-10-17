@@ -20,7 +20,7 @@ Las credenciales se guardan solo en Windows Credential Manager. Cada operación 
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset=".github/assets/vista-reporte-oscuro.png">
-    <img src=".github/assets/vista-reporte-claro.png" alt="Reporte de salud generado con datos de demostración: indicadores de inventario y hallazgos priorizados con el comando para revisarlos" width="860">
+    <img src=".github/assets/vista-reporte-claro.png" alt="Reporte general (all) generado con datos de demostración: indicadores de inventario y hallazgos priorizados con el comando para revisarlos" width="860">
   </picture>
   <br>
   <sub>Reporte generado con <code>task demo</code>; los datos son ficticios.</sub>
@@ -43,6 +43,8 @@ Las credenciales se guardan solo en Windows Credential Manager. Cada operación 
 
 | Dependencia | Para qué | Instalación |
 |---|---|---|
+| Windows 10 u 11 | Windows Credential Manager guarda las credenciales | — |
+| [Claude Code](https://claude.com/claude-code) | CLI, aplicación de escritorio o extensión de IDE | — |
 | PowerShell 7.5 o superior | Scripts, wrapper y guardas | `winget install --id Microsoft.PowerShell -e` |
 | Git for Windows | Clonar el repositorio y ejecutar el control `pre-commit` | `winget install --id Git.Git -e` |
 | [Task](https://taskfile.dev) | Atajos de `Taskfile.yml` | `winget install --id Task.Task -e` |
@@ -107,7 +109,7 @@ Después, abre Claude Code en la carpeta del proyecto y usa los comandos de la s
 |---|---|
 | Registrar credencial | `task credential ENV=lab` |
 | Probar conexión | `task env ENV=lab` |
-| Salud, inventario, capacidad, snapshots | `task health ENV=prod` · `task inventory` · `task capacity` · `task snapshots` |
+| Salud, inventario, capacidad, snapshots | `task health ENV=prod` · `task inventory ENV=prod` · `task capacity ENV=prod` · `task snapshots ENV=prod` |
 | Reporte a medida | `task report ENV=prod TYPE=all -- -Format csv` |
 | Revisión de hosts | `task host-check ENV=prod CLUSTER=CL-PROD-01` |
 | Auditoría | `task audit ENV=prod SCOPE=security` |
@@ -117,6 +119,7 @@ Después, abre Claude Code en la carpeta del proyecto y usa los comandos de la s
 | Documentación | `task docs` · `task docs:build` |
 
 - `ENV` indica el entorno y `FROM`, una carpeta ya recolectada en `reports/`. Los reportes necesitan una de las dos.
+- Con `FROM`, el reporte se regenera dentro de la carpeta original y reescribe su `raw/findings.json` y `raw/summary.json`; si cambias umbrales al reanalizar, eso también cambia las comparaciones posteriores de `/trend`.
 - Los parámetros adicionales de cada script van después de `--`.
 - `task --dry <tarea> …` muestra el comando sin ejecutarlo.
 - Las tareas solo cubren operaciones que no modifican vCenter. Los cambios y la provisión siguen el flujo con validación y aprobación (`/vm-create`).
@@ -127,8 +130,9 @@ Después, abre Claude Code en la carpeta del proyecto y usa los comandos de la s
 |---|---|
 | `scripts/govc.ps1` | Único punto de entrada. Lee la credencial de Credential Manager en cada llamada, la expone solo durante la ejecución, no guarda sesiones en disco, aplica el modo del entorno y registra cada acción en `logs/` |
 | `.claude/hooks/govc-guard.ps1` | Revisa cada comando de Claude antes de ejecutarlo. Bloquea el uso directo de govc, el manejo de secretos, las operaciones destructivas fuera de `lab` y las escrituras en `readonly`. Pide aprobación para escrituras y aprueba de forma automática solo las lecturas |
-| `.claude/settings.json` | Impide a Claude editar guardas, bitácoras y configuración, y leer `~/.govmomi` |
-| `.gitignore` y `.githooks/pre-commit` | `reports/`, `logs/`, `config/environments.json`, `tools/` y `specs/*.yaml` no se versionan nunca. Además, se escanea el diff en busca de credenciales |
+| `.claude/hooks/read-guard.sh` | Revisa las lecturas de Claude (Read, Glob, Grep) y bloquea el acceso a la carpeta de sesión temporal del modo por lotes y a las sesiones de `~/.govmomi` |
+| `.claude/settings.json` | Impide a Claude editar guardas, bitácoras y configuración, y leer `~/.govmomi`. Pide aprobación antes de editar `config/environments.json` |
+| `.gitignore` y `.githooks/pre-commit` | `reports/`, `logs/`, `config/environments.json`, `tools/` y `specs/` no se versionan nunca. Además, se escanea el diff en busca de credenciales |
 
 **Modos de entorno**
 
@@ -162,15 +166,18 @@ task test:log      # integridad de la bitácora
 ## Estructura del proyecto
 
 ```text
-.claude/        Skills, comandos, hook de control y permisos de Claude Code
+.claude/        Skills, comandos, hooks de control y permisos de Claude Code
 .githooks/      Control pre-commit
-.github/        Workflow de publicación de la documentación
+.github/        Workflow de publicación de la documentación y recursos del README
 config/         Perfiles de entorno (solo se versiona el ejemplo)
 docs/           Documentación (Astro Starlight), publicada en GitHub Pages
 scripts/        Wrapper, reportes, auditoría, pruebas y módulos (scripts/lib/)
 specs/          Especificaciones de VM propias (no versionadas)
 templates/      Plantillas de reporte, de auditoría y de especificación de VM
+tools/          govc y vcsim instalados por task install (no versionados)
+CLAUDE.md       Reglas del proyecto para Claude Code
 Taskfile.yml    Atajos de Task para reportes, pruebas, instalación y documentación
+.gitattributes  Finales de línea por tipo de archivo
 reports/ logs/  Salidas locales: reportes y bitácora (no versionadas)
 ```
 

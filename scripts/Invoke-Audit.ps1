@@ -10,8 +10,9 @@
                                    syslog, servicios, certificados de host).
     3. Controles de acceso          permisos con rol Administrador en la raíz del inventario.
   Asigna ID (AUD-001…), dominio, riesgo y referencia a cada hallazgo; calcula un indicador por
-  dominio y genera templates/audit.html (imprimible / PDF) y audit.md, más raw/audit.json para
-  auditorías de seguimiento (Compare-Report.ps1).
+  dominio y genera auditoria.html (imprimible / PDF) y auditoria.md a partir de templates/audit.*,
+  más raw/audit.json con el modelo consolidado. El seguimiento con Compare-Report.ps1 compara las
+  corridas de inventario (inventario/raw/), no audit.json.
 
 .EXAMPLE
   ./scripts/Invoke-Audit.ps1 -Env prod

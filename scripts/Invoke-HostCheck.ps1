@@ -6,12 +6,13 @@
   govc ve el edificio; esxcli conoce cada piso. Este script obtiene la lista de hosts con una
   llamada object.collect y luego pregunta lo mismo a cada host vía `host.esxcli` (por vCenter,
   sin SSH), en secuencia. Detecta: drift de VIBs/drivers, NIC sin link o con velocidad distinta,
-  paths de storage muertos o sin redundancia, NTP, syslog remoto, coredump, SSH/Shell encendidos
-  y diferencias de plataforma. Solo lectura. Salida en reports/<env>/<marca>/hosts-check.{html,md}.
+  paths de storage muertos o sin redundancia, NTP, syslog remoto, coredump, SSH/Shell encendidos,
+  diferencias de plataforma y vencimiento del certificado de cada host (chequeo certs, vía
+  host.cert.info). Solo lectura. Salida en reports/<env>/<marca>/hosts-check.{html,md}.
 
 .EXAMPLE
   ./scripts/Invoke-HostCheck.ps1 -Env prod -Cluster CL-PROD-01
-  ./scripts/Invoke-HostCheck.ps1 -Env prod -Hosts esx01.local, esx02.local -Checks nics, paths
+  ./scripts/Invoke-HostCheck.ps1 -Env prod -Hosts esx01.example.local, esx02.example.local -Checks nics, paths
   ./scripts/Invoke-HostCheck.ps1 -FromRaw reports/prod/20261016-100000
 #>
 param(

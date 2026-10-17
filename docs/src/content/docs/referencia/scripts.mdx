@@ -5,6 +5,8 @@ sidebar:
   order: 2
 ---
 
+Para ejecutar los scripts más habituales con comandos cortos desde una terminal, ver [Atajos con Task](/vcenter/uso/taskfile/).
+
 ## govc.ps1
 
 ```powershell
@@ -49,6 +51,7 @@ Ver [Wrapper govc.ps1](/vcenter/uso/wrapper/).
 | `-FromRaw` | ruta | — | Recalcula desde una corrida existente |
 | `-OutDir` | ruta | `reports/<env>/<marca>` | Carpeta de salida |
 | `-CertWarnDays` | int | 60 | |
+| `-MdMaxRows` | int | 200 | |
 
 ## Invoke-Audit.ps1
 
@@ -65,18 +68,20 @@ Ver [Wrapper govc.ps1](/vcenter/uso/wrapper/).
 
 ## Compare-Report.ps1
 
-| Parámetro | Tipo | Descripción |
-|---|---|---|
-| `-Env` | string | Compara las dos corridas más recientes del entorno |
-| `-Base`, `-Current` | ruta | Corridas específicas (también carpetas de auditoría) |
-| `-Format` | `html`, `md` | Formatos de salida |
+| Parámetro | Tipo | Valor por defecto | Descripción |
+|---|---|---|---|
+| `-Env` | string | — | Compara las dos corridas más recientes del entorno |
+| `-Base`, `-Current` | ruta | — | Corridas específicas (también carpetas de auditoría, a través de su subcarpeta `inventario/`) |
+| `-Format` | `html`, `md` | ambos | Formatos de salida |
+| `-OutDir` | ruta | `reports/<env>/<marca>-tendencia` | Carpeta de salida |
+| `-MdMaxRows` | int | 200 | |
 
 ## Test-Guards.ps1, Test-Reports.ps1 y Test-AuditLog.ps1
 
 | Script | Función | Salida |
 |---|---|---|
 | `Test-Reports.ps1 [-Keep]` | Pruebas de regresión de reportes, CSV, hosts, auditoría y tendencias (ver [Pruebas](/vcenter/referencia/pruebas/)) | Código de salida igual al número de fallas |
-| `Test-Guards.ps1` | Pruebas del clasificador y del hook | Código de salida igual al número de fallas |
+| `Test-Guards.ps1 [-HookPath]` | Pruebas del clasificador y del hook; `-HookPath` prueba una copia alternativa del hook (por ejemplo, una versión preparada para revisión) | Código de salida igual al número de fallas |
 | `Test-AuditLog.ps1 [-Path]` | Verificación de la cadena de hashes de la bitácora | `0` si está íntegra; `1` e indicación de la línea si no |
 
 ## New-DemoData.ps1
@@ -90,7 +95,7 @@ Ver [Wrapper govc.ps1](/vcenter/uso/wrapper/).
 
 | Parámetro | Valor por defecto | Descripción |
 |---|---|---|
-| `-Version` | `latest` | Versión de govmomi (`vX.Y.Z`); `latest` toma la estable más alta |
+| `-Version` | `latest` | `latest` instala la versión estable más alta publicada (no la marca *latest* de GitHub); `vX.Y.Z` fija una versión. vcsim usa la misma versión |
 | `-Arch` | `x86_64` | `x86_64` o `arm64` |
 | `-WithVcsim` | — | Instala también el simulador |
 
@@ -98,7 +103,7 @@ Ver [Wrapper govc.ps1](/vcenter/uso/wrapper/).
 
 | Parámetro | Descripción |
 |---|---|
-| `-Env` | Entorno (utiliza su `credentialTarget` o `govc:<env>`) |
+| `-Env` | Entorno, obligatorio (utiliza su `credentialTarget` o `govc:<env>`) |
 | `-UserName` | Opcional; si se omite, se solicita |
 | `-Remove` | Elimina la credencial |
 
@@ -112,4 +117,4 @@ Rechaza su ejecución cuando lo invoca Claude.
 | `CredMan.psm1` | Acceso a la bóveda (uso exclusivo del wrapper) |
 | `GovcJson.psm1` | `ConvertFrom-GovcCollect`, `Split-JsonStream` |
 | `GovcBatch.psm1` | `Invoke-GovcBatch`, `Get-GovcBatchError` (lotes de lectura con una sesión) |
-| `Render.psm1` | `New-ReportTable`, `Add-ReportFinding`, `Export-ReportFinding`, `Sort-ReportFinding`, `Write-GovcReport` |
+| `Render.psm1` | `New-ReportTable`, `New-FindingList`, `Add-ReportFinding`, `Export-ReportFinding`, `Sort-ReportFinding`, `Get-FindingColumns`, `Write-GovcReport`, `ConvertTo-HtmlText`, `Expand-Template`, `Format-MdCode` |

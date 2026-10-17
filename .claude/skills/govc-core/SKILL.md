@@ -12,7 +12,7 @@ description: Referencia para consultar y operar vCenter con govc a través del w
 ```
 
 - Tool **PowerShell**, un comando por llamada. `-Env` primero y literal.
-- El wrapper inyecta `GOVC_URL`, usuario/contraseña (Credential Manager), `GOVC_DATACENTER`, `GOVC_DATASTORE`, `GOVC_NETWORK`, `GOVC_RESOURCE_POOL`, `GOVC_FOLDER` desde el perfil. No hace falta `-dc` salvo para otro datacenter.
+- El wrapper inyecta `GOVC_URL`, usuario/contraseña (Credential Manager), `GOVC_TLS_CA_CERTS` (`caCerts`), `GOVC_INSECURE` (`insecure`), `GOVC_DATACENTER`, `GOVC_DATASTORE`, `GOVC_NETWORK`, `GOVC_RESOURCE_POOL`, `GOVC_FOLDER` desde el perfil. No hace falta `-dc` salvo para otro datacenter.
 - Lecturas puras (wrapper + `ConvertFrom-Json`/`Select-Object`/`Where-Object`/`Sort-Object`/`Measure-Object`/`Format-*`) se aprueban solas. Cualquier otro comando en la misma línea vuelve al flujo normal de permisos.
 
 ## Varias lecturas: modo lote
@@ -69,6 +69,6 @@ Cada objeto tiene `_type`, `_moref` y una propiedad por ruta (acceso con comilla
 ## Errores comunes
 
 - `no such host`/`x509`: revisa `url` y `caCerts` del perfil; no actives `insecure` en prod.
-- `NotAuthenticated`/`InvalidLogin`: la credencial de Credential Manager está vencida → la persona ejecuta `! ./scripts/Set-GovcCredential.ps1 -Env <env>`.
+- `NotAuthenticated`/`InvalidLogin`: la credencial de Credential Manager está vencida → la persona ejecuta `task credential ENV=<env>` en su propia terminal, fuera de Claude Code (el script se niega a ejecutarse dentro de Claude Code, también con `!`).
 - `NoPermission`: la cuenta de servicio no tiene el privilegio; no intentes otra cuenta, repórtalo.
 - Resultado vacío en `find`: revisa el datacenter del perfil o usa ruta absoluta.

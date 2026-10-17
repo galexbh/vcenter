@@ -28,7 +28,7 @@ Si vCenter ya lo sabe, usa govc nativo: una sola llamada para todos los hosts, s
 ## Sintaxis
 
 ```powershell
-./scripts/govc.ps1 -Env prod host.esxcli -json -host esx01.local network nic list
+./scripts/govc.ps1 -Env prod host.esxcli -json -host esx01.example.local network nic list
 ```
 
 - Flags de govc (`-json`, `-host`) **antes** del comando esxcli; las opciones de esxcli (`-n`, `-d`) después.
@@ -60,7 +60,7 @@ Los nombres de campos cambian entre versiones de ESXi; si un campo no aparece, r
 
 ```powershell
 ./scripts/Invoke-HostCheck.ps1 -Env prod -Cluster CL-PROD-01            # todos los chequeos
-./scripts/Invoke-HostCheck.ps1 -Env prod -Hosts esx01.local -Checks nics, paths
+./scripts/Invoke-HostCheck.ps1 -Env prod -Hosts esx01.example.local -Checks nics, paths
 ./scripts/Invoke-HostCheck.ps1 -FromRaw reports/prod/<marca>            # re-render sin consultar
 ```
 

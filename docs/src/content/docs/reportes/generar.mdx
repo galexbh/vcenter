@@ -13,7 +13,7 @@ import { FileTree } from '@astrojs/starlight/components';
 ./scripts/New-Report.ps1 -Env <entorno> [-Type all|inventory|snapshots|capacity|health] [-Format html,md,csv]
 ```
 
-Desde Claude: `/report prod health` o `/report prod inventory csv`.
+Desde Claude: `/report prod health` o `/report prod inventory csv`. Desde una terminal también pueden utilizarse los [atajos de Task](/vcenter/uso/taskfile/): `task report ENV=prod` o `task health FROM=reports/prod/<marca>`.
 
 | Formato | Resultado | Uso recomendado |
 |---|---|---|
@@ -24,7 +24,7 @@ Desde Claude: `/report prod health` o `/report prod inventory csv`.
 | Tipo | Secciones |
 |---|---|
 | `health` | Hallazgos y sugerencias |
-| `capacity` | Capacidad por clúster, datastores y hosts |
+| `capacity` | Capacidad por clúster, datastores, hosts, y certificado y licencias |
 | `snapshots` | Snapshots con antigüedad |
 | `inventory` | Máquinas virtuales |
 | `all` (por defecto) | Todas las anteriores |
@@ -37,13 +37,15 @@ El número de consultas es fijo e independiente del tamaño del inventario. Toda
 
 | # | Consulta | Datos |
 |---|---|---|
-| 1 | `object.collect -type m` | VMs: estado, host, CPU, RAM, disco, sistema operativo, IP, VMware Tools, snapshots, versión de hardware, límites, consolidación pendiente, unidades de CD/DVD |
+| 1 | `object.collect -type m` | VMs: estado, host, CPU, RAM, disco, sistema operativo, IP, VMware Tools, snapshots, versión de hardware, límites, consolidación pendiente, unidades de CD/DVD (se omiten con `-SkipDeviceScan`) |
 | 2 | `object.collect -type h` | Hosts: cores, frecuencia, RAM, uso, conexión, mantenimiento, versión |
 | 3 | `object.collect -type r` | Recursos de cómputo |
 | 4 | `object.collect -type c` | Clústeres: estado de HA y DRS, comportamiento de DRS |
 | 5 | `object.collect -type s` | Datastores: capacidad, espacio libre, espacio sin comprometer, tipo, accesibilidad |
 | 6 | `object.collect / triggeredAlarmState` | Alarmas activas (más una lectura por alarma distinta para obtener su nombre) |
 | 7 | `about.cert`, `license.ls` | Certificado de vCenter y licencias |
+
+Con `-SkipDeviceScan` no se recolectan las unidades de CD/DVD de las VMs y, por lo tanto, no se evalúa la regla de ISO conectada. Se recomienda en inventarios de miles de VMs, porque reduce de forma considerable el volumen de datos y el consumo de memoria. La omisión no pasa inadvertida: se declara como un hallazgo Info de cobertura (`coverage-devices`), que la auditoría presenta como limitación y no puntúa.
 
 ## Estructura de salida
 
@@ -55,7 +57,7 @@ El número de consultas es fijo e independiente del tamaño del inventario. Toda
       - reporte-all.md
       - reporte-all-maquinas-virtuales.csv con -Format csv (un archivo por tabla)
       - raw/
-        - meta.json entorno, fecha y usuario
+        - meta.json entorno, fecha, usuario y deviceScan (si se recolectaron las unidades de CD/DVD)
         - summary.json indicadores
         - findings.json hallazgos (entrada para auditoría y tendencias)
         - vms.json
@@ -77,7 +79,7 @@ Con `-Format csv` se genera un archivo por tabla del reporte: `reporte-<tipo>-re
 | Codificación | UTF-8 con BOM, para que Excel muestre correctamente los acentos |
 | Separador y decimales | Los de la configuración regional de Windows (por ejemplo, `;` y `,` en español). `-CsvDelimiter` permite forzar otro separador |
 | Filas | Todas las filas, sin el límite del Markdown |
-| Protección | Los textos que comienzan con `=`, `+`, `-` o `@` se prefijan con `'` para impedir la ejecución de fórmulas al abrir el archivo |
+| Protección | Los textos que comienzan con `=`, `+`, `-`, `@` o un tabulador se prefijan con `'` para impedir la ejecución de fórmulas al abrir el archivo |
 
 ```powershell
 ./scripts/New-Report.ps1 -Env prod -Type inventory -Format csv
