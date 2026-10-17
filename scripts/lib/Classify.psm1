@@ -94,7 +94,8 @@ function Get-GovcOpClass {
     $flags = @($Arguments | Where-Object { $_ -and $_.StartsWith('-') } | ForEach-Object { $_.ToLowerInvariant() })
 
     # Cualquier credencial en línea de comandos o modo debug (vuelca SOAP con sesión) se trata como secreto.
-    if ($flags | Where-Object { $_ -match '^-+(password|p|debug|dump-cookie)(=|$)' }) { return 'secret' }
+    # Nota: '-p' no es contraseña en govc (p. ej. `find -p` = objetos padre); no se incluye.
+    if ($flags | Where-Object { $_ -match '^-+(password|debug|dump-cookie)(=|$)' }) { return 'secret' }
     if ($script:SecretCommands -contains $sub) { return 'secret' }
 
     if ($sub -eq 'vm.power') {

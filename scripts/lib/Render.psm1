@@ -32,6 +32,27 @@ function Sort-ReportFinding {
     return , @($List | Sort-Object { $script:SevOrder[$_.severity] }, category, object)
 }
 
+function Expand-Template {
+    <#
+    .SYNOPSIS  Reemplaza {{MARCADORES}} en una sola pasada.
+    .NOTES     El contenido insertado no se vuelve a procesar: un dato de vCenter que contenga
+               "{{SECTIONS}}" se muestra literal en lugar de expandirse.
+    #>
+    param([Parameter(Mandatory)][string]$Template, [Parameter(Mandatory)][hashtable]$Map)
+    [regex]::Replace($Template, '\{\{([A-Z_]+)\}\}', [System.Text.RegularExpressions.MatchEvaluator] {
+            param($m)
+            $k = $m.Groups[1].Value
+            if ($Map.ContainsKey($k)) { [string]$Map[$k] } else { $m.Value }
+        })
+}
+
+function Format-MdCode {
+    <# Código en línea para Markdown; si el texto contiene comillas invertidas usa delimitador doble. #>
+    param([string]$Text)
+    if ($Text -match '`') { return '`` ' + $Text + ' ``' }
+    return '`' + $Text + '`'
+}
+
 function Get-FindingColumns {
     return @('severity:Severidad', 'category:Categoría', 'object:Objeto', 'evidence:Evidencia', 'suggestion:Sugerencia', 'command:Comando para revisar')
 }
@@ -78,10 +99,10 @@ function Write-GovcReport {
             $note = if ($s.note) { "<p class=""note"">$(& $enc $s.note)</p>" } else { '' }
             "<section><h2>$(& $enc $s.title) <small>($($s.rows.Count))</small></h2>$note<div class=""scroll""><table><thead><tr>$head</tr></thead><tbody>$body</tbody></table></div></section>"
         }
-        $html = (Get-Content (Join-Path $Root 'templates/report.html') -Raw).
-            Replace('{{TITLE}}', (& $enc $Title)).Replace('{{ENV}}', (& $enc $Env.ToUpper())).
-            Replace('{{GENERATED}}', $stamp).Replace('{{SOURCE}}', (& $enc $Source)).
-            Replace('{{KPIS}}', $kpiHtml).Replace('{{SECTIONS}}', ($secHtml -join "`n"))
+        $html = Expand-Template (Get-Content (Join-Path $Root 'templates/report.html') -Raw) @{
+            TITLE = (& $enc $Title); ENV = (& $enc $Env.ToUpper()); GENERATED = $stamp; SOURCE = (& $enc $Source)
+            KPIS = $kpiHtml; SECTIONS = ($secHtml -join "`n")
+        }
         $f = Join-Path $OutDir "$BaseName.html"; Set-Content $f $html -Encoding utf8; $written += $f
     }
     if ('md' -in $Format) {
@@ -94,15 +115,15 @@ function Write-GovcReport {
                 $lines += '| ' + (($cols | ForEach-Object { $_[1] }) -join ' | ') + ' |'
                 $lines += '|' + (($cols | ForEach-Object { '---' }) -join '|') + '|'
                 foreach ($r in ($s.rows | Select-Object -First $MdMaxRows)) {
-                    $lines += '| ' + (($cols | ForEach-Object { $v = $r.($_[0]); if ($_[0] -eq 'command' -and $v) { "``$v``" } else { & $mdEsc $v } }) -join ' | ') + ' |'
+                    $lines += '| ' + (($cols | ForEach-Object { $v = $r.($_[0]); if ($_[0] -eq 'command' -and $v) { Format-MdCode ("$v" -replace '\|', '\|') } else { & $mdEsc $v } }) -join ' | ') + ' |'
                 }
                 if ($s.rows.Count -gt $MdMaxRows) { $lines += '', "_Se muestran $MdMaxRows de $($s.rows.Count) filas; ver el HTML para la lista completa._" }
             } else { $lines += 'Sin elementos.' }
             $lines -join "`n"
         }
-        $md = (Get-Content (Join-Path $Root 'templates/report.md') -Raw).
-            Replace('{{TITLE}}', $Title).Replace('{{ENV}}', $Env.ToUpper()).Replace('{{GENERATED}}', $stamp).
-            Replace('{{SOURCE}}', $Source).Replace('{{KPIS}}', $kpiMd).Replace('{{SECTIONS}}', ($secMd -join "`n`n"))
+        $md = Expand-Template (Get-Content (Join-Path $Root 'templates/report.md') -Raw) @{
+            TITLE = $Title; ENV = $Env.ToUpper(); GENERATED = $stamp; SOURCE = $Source; KPIS = $kpiMd; SECTIONS = ($secMd -join "`n`n")
+        }
         $f = Join-Path $OutDir "$BaseName.md"; Set-Content $f $md -Encoding utf8; $written += $f
     }
     return , $written
@@ -110,4 +131,4 @@ function Write-GovcReport {
 
 function ConvertTo-HtmlText { param($s) [System.Net.WebUtility]::HtmlEncode("$s") }
 
-Export-ModuleMember -Function New-ReportTable, New-FindingList, Add-ReportFinding, Export-ReportFinding, Sort-ReportFinding, Get-FindingColumns, Write-GovcReport, ConvertTo-HtmlText
+Export-ModuleMember -Function New-ReportTable, New-FindingList, Add-ReportFinding, Export-ReportFinding, Sort-ReportFinding, Get-FindingColumns, Write-GovcReport, ConvertTo-HtmlText, Expand-Template, Format-MdCode
