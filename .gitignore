@@ -16,6 +16,7 @@ specs/*
 
 # Claude Code local
 .claude/settings.local.json
+.claude/scheduled_tasks.lock
 
 # Cualquier reporte generado fuera de reports/
 reporte-*.html
