@@ -15,6 +15,7 @@
   ./scripts/Set-GovcCredential.ps1 -List
   ./scripts/Set-GovcCredential.ps1 -Env lab -Remove
 #>
+#Requires -Version 7.5
 [CmdletBinding(DefaultParameterSetName = 'Set')]
 param(
     [Parameter(Mandatory, ParameterSetName = 'Set')]
@@ -66,6 +67,7 @@ $target = Get-Target $Env
 
 if ($Remove) {
     cmdkey /delete:$target
+    if ($LASTEXITCODE -ne 0) { throw "No se pudo eliminar la credencial '$target' (¿no existe?)." }
     return
 }
 

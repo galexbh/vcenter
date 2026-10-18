@@ -17,6 +17,8 @@
   ./scripts/New-DemoData.ps1
   ./scripts/New-DemoData.ps1 -OutDir $env:TEMP\demo -EdgeCases
 #>
+#Requires -Version 7.5
+[CmdletBinding(PositionalBinding = $false)]
 param(
     [string]$OutDir,
     [switch]$EdgeCases
@@ -29,7 +31,7 @@ $rnd = [Random]::new(20261017)
 $now = Get-Date
 $inv = Join-Path $AuditDir 'inventario/raw'; $hst = Join-Path $AuditDir 'hosts/raw'; $aud = Join-Path $AuditDir 'raw'
 New-Item -ItemType Directory -Force -Path $inv, $hst, $aud | Out-Null
-function Save($dir, $name, $obj, $depth = 12) { ConvertTo-Json -InputObject $obj -Depth $depth | Set-Content (Join-Path $dir "$name.json") -Encoding utf8 }
+function Save($dir, $name, $obj, $depth = 100) { ConvertTo-Json -InputObject $obj -Depth $depth | Set-Content (Join-Path $dir "$name.json") -Encoding utf8 }
 function Ref($type, $value) { [pscustomobject]@{ type = $type; value = $value } }
 $GB = 1GB
 
@@ -130,7 +132,14 @@ if ($EdgeCases) {
     $marker.'summary.config.guestFullName' = 'SO {{SECTIONS}} {{REMEDIATION}}'; $marker.'runtime.consolidationNeeded' = $true
     $tick = $vms[4].PSObject.Copy(); $tick._moref = 'vm-3004'; $tick.name = 'vm-comilla`x'
     $tick.'snapshot.rootSnapshotList' = @(Snap 'snap-tick' 10 '')   # genera un hallazgo con comando que incluye el nombre
-    $vms += $orphan, $evil, $marker, $tick
+    # Nombre con comilla simple y comillas tipográficas: los comandos sugeridos deben escaparlo.
+    $quote = $vms[5].PSObject.Copy(); $quote._moref = 'vm-3005'; $quote.name = "vm-O'Brien-" + [char]0x2019 + 'x'
+    $quote.'snapshot.rootSnapshotList' = @(Snap 'snap-quote' 11 '')
+    # Cadena de 8 snapshots: con -Depth 12 se truncaba al guardar y -FromRaw fallaba.
+    $deep = $vms[6].PSObject.Copy(); $deep._moref = 'vm-3006'; $deep.name = 'vm-cadena-larga'
+    $chain = $null; foreach ($lvl in 8..1) { $chain = Snap "nivel-$lvl" (40 - $lvl) '' $(if ($chain) { @($chain) } else { @() }) }
+    $deep.'snapshot.rootSnapshotList' = @($chain)
+    $vms += $orphan, $evil, $marker, $tick, $quote, $deep
 }
 $hostsOut = @($hosts | ForEach-Object { $o = $_.PSObject.Copy(); $o.PSObject.Properties.Remove('cluster'); $o })
 

@@ -1,12 +1,14 @@
 # Atajos para personas (https://taskfile.dev): `task` lista las tareas.
 #
 # Solo cubre operaciones que no modifican vCenter: preparación (setup, install, credential, env,
-# vcsim), reportes, revisión de hosts, auditoría, tendencias, demo, pruebas y documentación.
-# Las escrituras y la provisión no tienen atajo a propósito: siguen el flujo con validación y
-# aprobación (/vm-create en Claude Code).
+# vcsim), reportes, revisión de hosts, rendimiento, auditoría, tendencias, demo, pruebas y
+# documentación. Las escrituras y la provisión no tienen atajo a propósito: siguen el flujo con
+# validación y aprobación (/vm-create en Claude Code).
 # Claude no usa estas tareas: invoca los scripts directamente para que las guardas vean cada operación.
 #
-# Variables: ENV (entorno) o FROM (carpeta de reports/ ya recolectada), TYPE, SCOPE, CLUSTER, ACCOUNT.
+# Variables: ENV (entorno) o FROM (carpeta de reports/ ya recolectada), TYPE, SCOPE, WINDOW, CLUSTER, ACCOUNT.
+# Los valores llegan a PowerShell como variables de entorno (T_*), nunca dentro del texto del comando:
+# un nombre con comillas o $ no rompe ni inyecta nada. Se validan antes de ejecutar.
 # Parámetros adicionales del script, después de `--`:  task report ENV=prod -- -Format csv
 version: '3'
 
@@ -43,10 +45,14 @@ tasks:
 
   env:
     desc: Prueba la conexión a un entorno (ENV=lab)
-    requires:
-      vars: [ENV]
+    requires: { vars: [ENV] }
+    env: { T_ENV: '{{.ENV}}' }
+    preconditions:
+      - &env-ok
+        sh: '{{if and .ENV (not (regexMatch "^[A-Za-z0-9][A-Za-z0-9_-]*$" .ENV))}}exit 1{{end}}'
+        msg: 'ENV solo admite letras, números, guion y guion bajo'
     cmds:
-      - pwsh -NoProfile -File scripts/govc.ps1 -Env '{{.ENV}}' about
+      - "{{.PS}} '& ./scripts/govc.ps1 -Env $env:T_ENV about'"
 
   # La contraseña la pide cmdkey por consola: nunca pasa por argumentos ni por el Taskfile.
   # Sin parámetros libres. Ninguna tarea de credenciales muestra contraseñas ni corre dentro de Claude Code.
@@ -54,11 +60,14 @@ tasks:
     desc: Registra o reemplaza la credencial de un entorno en Credential Manager (ENV=lab, ACCOUNT=<usuario> opcional)
     interactive: true
     requires: { vars: [ENV] }
+    env: { T_ENV: '{{.ENV}}', T_ACCOUNT: '{{.ACCOUNT}}' }
     preconditions:
-      - sh: '[ -z "$CLAUDECODE" ]'
+      - &not-claude-register
+        sh: '[ -z "$CLAUDECODE" ]'
         msg: 'La credencial la registra una persona en su propia terminal, no Claude.'
+      - *env-ok
     cmds:
-      - pwsh -NoProfile -File scripts/Set-GovcCredential.ps1 -Env '{{.ENV}}' {{if .ACCOUNT}}-UserName '{{.ACCOUNT}}'{{end}}
+      - "pwsh -NoProfile -Command '$p = @{ Env = $env:T_ENV }; if ($env:T_ACCOUNT) { $p.UserName = $env:T_ACCOUNT }; & ./scripts/Set-GovcCredential.ps1 @p'"
 
   credential:list:
     desc: Lista las credenciales de govc en Credential Manager por entorno (destino y usuario, sin contraseña)
@@ -73,11 +82,13 @@ tasks:
     interactive: true
     prompt: '¿Eliminar de Credential Manager la credencial del entorno {{.ENV}}?'
     requires: { vars: [ENV] }
+    env: { T_ENV: '{{.ENV}}' }
     preconditions:
       - sh: '[ -z "$CLAUDECODE" ]'
         msg: 'La credencial la elimina una persona en su propia terminal, no Claude.'
+      - *env-ok
     cmds:
-      - pwsh -NoProfile -File scripts/Set-GovcCredential.ps1 -Env '{{.ENV}}' -Remove
+      - "pwsh -NoProfile -Command '& ./scripts/Set-GovcCredential.ps1 -Env $env:T_ENV -Remove'"
 
   vcsim:
     desc: Inicia el simulador de vCenter en https://127.0.0.1:8989/sdk (instalar con task install -- -WithVcsim)
@@ -88,22 +99,23 @@ tasks:
       - ./tools/vcsim.exe -l 127.0.0.1:8989
 
   # --- Reportes y análisis (solo lectura) -----------------------------------------
-  # SRC: entorno en vivo (-Env) o datos ya recolectados (-FromRaw), sin volver a consultar vCenter.
+  # ENV consulta el entorno; FROM vuelve a analizar una carpeta ya recolectada (sin consultar vCenter).
 
   report:
     desc: Reporte HTML/Markdown (CSV con -- -Format csv) en reports/ (ENV=prod o FROM=<carpeta>; TYPE=all|inventory|snapshots|capacity|health)
-    vars:
-      TYPE: '{{.TYPE | default "all"}}'
-      SRC: '{{if .FROM}}-FromRaw ''{{.FROM}}''{{else}}-Env ''{{.ENV}}''{{end}}'
-    requires:
-      vars:
-        - name: TYPE
-          enum: [all, inventory, snapshots, capacity, health]
+    env: { T_ENV: '{{.ENV}}', T_FROM: '{{.FROM}}', T_TYPE: '{{.TYPE | default "all"}}' }
     preconditions:
-      - sh: '[ -n "{{.ENV}}{{.FROM}}" ]'
+      - &src-required
+        sh: '{{if not (or .ENV .FROM)}}exit 1{{end}}'
         msg: 'Indica ENV=<entorno> o FROM=<carpeta en reports/>'
+      - &src-one
+        sh: '{{if and .ENV .FROM}}exit 1{{end}}'
+        msg: 'Indica ENV o FROM, no ambos'
+      - *env-ok
+      - sh: '{{if and .TYPE (not (regexMatch "^(all|inventory|snapshots|capacity|health)$" .TYPE))}}exit 1{{end}}'
+        msg: 'TYPE admite all, inventory, snapshots, capacity o health'
     cmds:
-      - '{{.PS}} "./scripts/New-Report.ps1 {{.SRC}} -Type {{.TYPE}} {{.CLI_ARGS}}"'
+      - "{{.PS}} '$p = @{ Type = $env:T_TYPE }; if ($env:T_FROM) { $p.FromRaw = $env:T_FROM } else { $p.Env = $env:T_ENV }; & ./scripts/New-Report.ps1 @p {{.CLI_ARGS}}'"
 
   inventory:
     desc: Reporte de inventario (ENV=prod o FROM=<carpeta>)
@@ -118,7 +130,7 @@ tasks:
         vars: { ENV: '{{.ENV}}', FROM: '{{.FROM}}', TYPE: health }
 
   capacity:
-    desc: Capacidad por clúster y datastores (ENV=prod o FROM=<carpeta>)
+    desc: Capacidad por clúster (incluida la holgura N+1) y datastores (ENV=prod o FROM=<carpeta>)
     cmds:
       - task: report
         vars: { ENV: '{{.ENV}}', FROM: '{{.FROM}}', TYPE: capacity }
@@ -130,58 +142,65 @@ tasks:
         vars: { ENV: '{{.ENV}}', FROM: '{{.FROM}}', TYPE: snapshots }
 
   host-check:
-    desc: Revisión esxcli por host y detección de diferencias (ENV=prod CLUSTER=CL-PROD-01, o FROM=<carpeta>; CLUSTER solo con ENV)
-    vars:
-      SRC: '{{if .FROM}}-FromRaw ''{{.FROM}}''{{else}}-Env ''{{.ENV}}''{{end}}'
+    desc: Revisión de hosts y detección de diferencias (ENV=prod CLUSTER=CL-PROD-01, o FROM=<carpeta>; CLUSTER solo con ENV)
+    env: { T_ENV: '{{.ENV}}', T_FROM: '{{.FROM}}', T_CLUSTER: '{{.CLUSTER}}' }
     preconditions:
-      - sh: '[ -n "{{.ENV}}{{.FROM}}" ]'
-        msg: 'Indica ENV=<entorno> o FROM=<carpeta en reports/>'
+      - *src-required
+      - *src-one
+      - *env-ok
+      - &live-only
+        sh: '{{if and .FROM (or .CLUSTER .WINDOW)}}exit 1{{end}}'
+        msg: 'CLUSTER y WINDOW solo aplican con ENV (con FROM se usa lo ya recolectado)'
     cmds:
-      - '{{.PS}} "./scripts/Invoke-HostCheck.ps1 {{.SRC}} {{if .CLUSTER}}-Cluster ''{{.CLUSTER}}''{{end}} {{.CLI_ARGS}}"'
+      - "{{.PS}} '$p = @{}; if ($env:T_FROM) { $p.FromRaw = $env:T_FROM } else { $p.Env = $env:T_ENV; if ($env:T_CLUSTER) { $p.Cluster = $env:T_CLUSTER } }; & ./scripts/Invoke-HostCheck.ps1 @p {{.CLI_ARGS}}'"
+
+  perf:
+    desc: Revisión de rendimiento (CPU ready, latencia, CPU de hosts, memoria) (ENV=prod o FROM=<carpeta>; WINDOW=1h|24h|7d, 24h por defecto; CLUSTER solo con ENV)
+    env: { T_ENV: '{{.ENV}}', T_FROM: '{{.FROM}}', T_CLUSTER: '{{.CLUSTER}}', T_WINDOW: '{{.WINDOW}}' }
+    preconditions:
+      - *src-required
+      - *src-one
+      - *env-ok
+      - *live-only
+      - &window-ok
+        sh: '{{if and .WINDOW (not (regexMatch "^(1h|24h|7d)$" .WINDOW))}}exit 1{{end}}'
+        msg: 'WINDOW admite 1h, 24h o 7d'
+    cmds:
+      - "{{.PS}} '$p = @{}; if ($env:T_FROM) { $p.FromRaw = $env:T_FROM } else { $p.Env = $env:T_ENV; if ($env:T_CLUSTER) { $p.Cluster = $env:T_CLUSTER }; if ($env:T_WINDOW) { $p.Window = $env:T_WINDOW } }; & ./scripts/Invoke-PerfCheck.ps1 @p {{.CLI_ARGS}}'"
 
   # Sin SCOPE, el script usa full con ENV y conserva el alcance guardado con FROM.
   audit:
     desc: Auditoría técnica con informe formal (ENV=prod o FROM=<carpeta>; SCOPE=full|security|capacity|performance; WINDOW=1h|24h|7d y CLUSTER solo con ENV)
-    vars:
-      SRC: '{{if .FROM}}-FromRaw ''{{.FROM}}''{{else}}-Env ''{{.ENV}}''{{end}}'
+    env: { T_ENV: '{{.ENV}}', T_FROM: '{{.FROM}}', T_CLUSTER: '{{.CLUSTER}}', T_WINDOW: '{{.WINDOW}}', T_SCOPE: '{{.SCOPE}}' }
     preconditions:
-      - sh: '[ -n "{{.ENV}}{{.FROM}}" ]'
-        msg: 'Indica ENV=<entorno> o FROM=<carpeta en reports/>'
-      - sh: 'case "{{.SCOPE}}" in ""|full|security|capacity|performance) ;; *) exit 1;; esac'
+      - *src-required
+      - *src-one
+      - *env-ok
+      - *live-only
+      - *window-ok
+      - sh: '{{if and .SCOPE (not (regexMatch "^(full|security|capacity|performance)$" .SCOPE))}}exit 1{{end}}'
         msg: 'SCOPE admite full, security, capacity o performance'
-      - sh: 'case "{{.WINDOW}}" in ""|1h|24h|7d) ;; *) exit 1;; esac'
-        msg: 'WINDOW admite 1h, 24h o 7d'
     cmds:
-      - '{{.PS}} "./scripts/Invoke-Audit.ps1 {{.SRC}} {{if .SCOPE}}-Scope {{.SCOPE}}{{end}} {{if and .WINDOW (not .FROM)}}-PerfWindow {{.WINDOW}}{{end}} {{if .CLUSTER}}-Cluster ''{{.CLUSTER}}''{{end}} {{.CLI_ARGS}}"'
-
-  perf:
-    desc: Revisión de rendimiento (CPU ready, latencia, CPU de hosts, memoria) (ENV=prod o FROM=<carpeta>; WINDOW=1h|24h|7d, 24h por defecto; CLUSTER solo con ENV)
-    vars:
-      SRC: '{{if .FROM}}-FromRaw ''{{.FROM}}''{{else}}-Env ''{{.ENV}}''{{end}}'
-    preconditions:
-      - sh: '[ -n "{{.ENV}}{{.FROM}}" ]'
-        msg: 'Indica ENV=<entorno> o FROM=<carpeta en reports/>'
-      - sh: 'case "{{.WINDOW}}" in ""|1h|24h|7d) ;; *) exit 1;; esac'
-        msg: 'WINDOW admite 1h, 24h o 7d'
-    cmds:
-      - '{{.PS}} "./scripts/Invoke-PerfCheck.ps1 {{.SRC}} {{if and .WINDOW (not .FROM)}}-Window {{.WINDOW}}{{end}} {{if .CLUSTER}}-Cluster ''{{.CLUSTER}}''{{end}} {{.CLI_ARGS}}"'
+      - "{{.PS}} '$p = @{}; if ($env:T_SCOPE) { $p.Scope = $env:T_SCOPE }; if ($env:T_FROM) { $p.FromRaw = $env:T_FROM } else { $p.Env = $env:T_ENV; if ($env:T_CLUSTER) { $p.Cluster = $env:T_CLUSTER }; if ($env:T_WINDOW) { $p.PerfWindow = $env:T_WINDOW } }; & ./scripts/Invoke-Audit.ps1 @p {{.CLI_ARGS}}'"
 
   trend:
     desc: Tendencias entre las dos corridas más recientes (ENV=prod)
     requires: { vars: [ENV] }
+    env: { T_ENV: '{{.ENV}}' }
+    preconditions:
+      - *env-ok
     cmds:
-      - '{{.PS}} "./scripts/Compare-Report.ps1 -Env ''{{.ENV}}'' {{.CLI_ARGS}}"'
+      - "{{.PS}} '& ./scripts/Compare-Report.ps1 -Env $env:T_ENV {{.CLI_ARGS}}'"
 
   demo:
     desc: Genera datos ficticios con inventario y hosts (HTML) y auditoría (HTML y MD) en reports/demo/ (sin vCenter)
     vars:
-      OUT:
-        sh: pwsh -NoProfile -Command "'reports/demo/' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-auditoria'"
+      OUT: 'reports/demo/{{now | date "20060102-150405"}}-auditoria'
+    env: { T_OUT: '{{.OUT}}' }
     cmds:
-      - '{{.PS}} "./scripts/New-DemoData.ps1 -OutDir ''{{.OUT}}'' {{.CLI_ARGS}}" > /dev/null'
-      - '{{.PS}} "./scripts/Invoke-Audit.ps1 -FromRaw ''{{.OUT}}''" > /dev/null'
-      - echo "Datos y reportes en {{.OUT}} (inventario/, hosts/ y auditoria.html)."
-      - echo "Otros reportes sobre estos datos, p. ej. task health FROM={{.OUT}}/inventario"
+      - "{{.PS}} '& ./scripts/New-DemoData.ps1 -OutDir $env:T_OUT {{.CLI_ARGS}} | Out-Null; & ./scripts/Invoke-Audit.ps1 -FromRaw $env:T_OUT | Out-Null'"
+      - cmd: echo "Datos y reportes en {{.OUT}} (inventario/, hosts/, perf/ y auditoria.html). Otros reportes sobre estos datos, p. ej. task health FROM={{.OUT}}/inventario"
+        silent: true
 
   # --- Pruebas ---------------------------------------------------------------------
 
@@ -192,12 +211,12 @@ tasks:
       - task: test:reports
 
   test:guards:
-    desc: Pruebas de clasificación de operaciones y del hook
+    desc: Pruebas de clasificación de operaciones, hooks y filtro rápido (-- -Strict para no omitir grupos)
     cmds:
-      - pwsh -NoProfile -File scripts/Test-Guards.ps1
+      - pwsh -NoProfile -File scripts/Test-Guards.ps1 {{.CLI_ARGS}}
 
   test:reports:
-    desc: Pruebas de regresión de reportes, CSV, hosts, auditoría y tendencias
+    desc: Pruebas de regresión de reportes, CSV, hosts, rendimiento, auditoría, tendencias y bitácora
     cmds:
       - pwsh -NoProfile -File scripts/Test-Reports.ps1
 
@@ -211,8 +230,9 @@ tasks:
   docs:install:
     internal: true
     dir: docs
-    status:
-      - test -d node_modules
+    run: once
+    sources: [package-lock.json]
+    generates: [node_modules/.package-lock.json]
     cmds:
       - npm ci
 

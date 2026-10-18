@@ -12,6 +12,8 @@
   ./scripts/Test-Reports.ps1
   ./scripts/Test-Reports.ps1 -Keep     # conserva la carpeta temporal para inspeccionarla
 #>
+#Requires -Version 7.5
+[CmdletBinding(PositionalBinding = $false)]
 param([switch]$Keep)
 
 Set-StrictMode -Version Latest
@@ -27,10 +29,20 @@ function Check([string]$name, [bool]$ok, [string]$detail = '') {
 }
 function Json([string]$path) { Get-Content $path -Raw | ConvertFrom-Json -DateKind String }
 function Rules($findings) { @($findings | ForEach-Object { $_.rule }) }
-function HasRule($findings, [string]$rule, [string]$sev = '') {
-    [bool](@($findings | Where-Object { $_.rule -like $rule -and (-not $sev -or $_.severity -eq $sev) }).Count)
+function HasRule($findings, [string]$rule, [string]$sev = '', [string]$object = '*') {
+    [bool](@($findings | Where-Object { $_.rule -like $rule -and $_.object -like $object -and (-not $sev -or $_.severity -eq $sev) }).Count)
 }
-function Quiet([scriptblock]$sb) { & $sb 2>$null 3>$null | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] } }
+function Quiet([scriptblock]$sb) {
+    # Descarta errores y advertencias, salvo las de JSON truncado: esas son una falla (se perderían datos).
+    foreach ($o in @(& $sb 2>$null 3>&1)) {
+        if ($o -is [System.Management.Automation.WarningRecord]) { if ("$o" -match 'trunc') { $script:fail++; Write-Host "FALLA  advertencia de truncado: $o" -ForegroundColor Red } }
+        elseif ($o -isnot [System.Management.Automation.ErrorRecord]) { $o }
+    }
+}
+Import-Module (Join-Path $S 'lib/Common.psm1') -Force -DisableNameChecking
+Import-Module (Join-Path $S 'lib/Render.psm1') -Force -DisableNameChecking
+Import-Module (Join-Path $S 'lib/GovcJson.psm1') -Force
+Import-Module (Join-Path $S 'lib/GovcBatch.psm1') -Force
 
 try {
     # --- Datos ---------------------------------------------------------------------
@@ -48,13 +60,21 @@ try {
     $expected = @(
         @('ds-used', 'Crítico'), @('ds-thin', 'Advertencia'), @('cl-ha', 'Crítico'), @('cl-drs', 'Advertencia'),
         @('vm-consolidate', 'Advertencia'), @('vm-limits', 'Advertencia'), @('vm-iso', 'Info'), @('vm-hwversion', 'Info'),
-        @('cert-vc', 'Advertencia'), @('license-*', 'Advertencia'), @('tools-notrunning', 'Advertencia'), @('tools-old', 'Info'),
-        @('vm-off', 'Info'), @('host-maint', 'Info'), @('host-mem', 'Advertencia'), @('snap-age-pre-update-CHG-0912', 'Crítico'),
-        @('snap-age-VEEAM*', 'Advertencia'), @('alarm-*', 'Crítico'),
+        @('cert-vc', 'Advertencia'), @('license', 'Advertencia'), @('tools-notrunning', 'Advertencia'), @('tools-old', 'Info'),
+        @('vm-off', 'Info'), @('host-maint', 'Info'), @('host-mem', 'Advertencia'), @('alarm', 'Crítico'),
         @('cl-n1-mem', 'Crítico'), @('cl-ha-admission', 'Advertencia'), @('vm-balloon', 'Advertencia'), @('vm-swap', 'Advertencia'),
         @('vm-compressed', 'Info'), @('rp-limit', 'Advertencia')
     )
     foreach ($e in $expected) { Check "New-Report: regla $($e[0]) ($($e[1]))" (HasRule $nf $e[0] $e[1]) }
+    # Reglas fijas con el nombre en el objeto: dos snapshots con el mismo nombre ya no se confunden.
+    Check 'New-Report: snapshot crítico por VM y nombre' (HasRule $nf 'snap-age' 'Crítico' 'app-erp02 / pre-update-CHG-0912')
+    Check 'New-Report: snapshot de Veeam por VM y nombre' (HasRule $nf 'snap-age' 'Advertencia' 'db-core01 / VEEAM*')
+    Check 'New-Report: alarma por entidad y nombre' (HasRule $nf 'alarm' 'Crítico' 'DS-PROD-01 / Datastore usage on disk')
+    # Cadena de 8 snapshots (antes se truncaba al guardar con -Depth 12).
+    Check 'New-Report: cadena de 8 snapshots completa' (@($nf | Where-Object { $_.rule -eq 'snap-age' -and $_.object -like 'vm-cadena-larga / nivel-*' }).Count -eq 8)
+    # Comandos sugeridos con referencias Tipo:id: los nombres de vCenter nunca se interpolan.
+    Check 'New-Report: comandos sin nombres de VM con comillas' (-not @($nf | Where-Object { "$($_.command)" -match "O'Brien" }).Count)
+    Check 'New-Report: comando de snapshot por referencia' (@($nf | Where-Object { $_.object -eq "vm-O'Brien-$([char]0x2019)x / snap-quote" -and $_.command -match 'VirtualMachine:vm-3005' }).Count -eq 1)
     # N+1: CL-PROD-01 cabe sin su host mayor (sin hallazgo); el pool raíz «Resources» no se evalúa.
     Check 'New-Report: N+1 solo en el clúster sin holgura' (-not @($nf | Where-Object { $_.rule -like 'cl-n1-*' -and $_.object -eq 'CL-PROD-01' }).Count)
     Check 'New-Report: rp-limit no evalúa el pool raíz' (-not @($nf | Where-Object { $_.rule -eq 'rp-limit' -and $_.object -eq 'Resources' }).Count)
@@ -76,8 +96,28 @@ try {
     Check 'HTML: marcador en datos no se expande (una sola tabla de VMs)' (([regex]::Matches($html, '<h2>M(á|&#225;)quinas virtuales')).Count -eq 1)
     Check 'HTML: marcador en datos se muestra literal' ($html -match 'SO \{\{SECTIONS\}\} \{\{REMEDIATION\}\}')
     Check 'MD: marcador en datos se muestra literal' ($md -match 'vm\\?-\{\{ANNEXES\}\}\\?-x')
-    # Un nombre con comilla invertida dentro de un comando exige un delimitador doble (`` … ``).
-    Check 'MD: comando con comilla invertida bien delimitado' ($md -match ([regex]::Escape('`` ./scripts/govc.ps1 -Env demo snapshot.tree -vm ''vm-comilla`x'' -D -i ``')))
+    # Código en Markdown: el delimitador supera la mayor racha de comillas invertidas del texto.
+    Check 'MD: código sin comillas invertidas' ((Format-MdCode 'a b') -eq '`a b`')
+    Check 'MD: código con una comilla invertida' ((Format-MdCode 'a`b') -eq '`` a`b ``')
+    Check 'MD: código con racha de dos comillas invertidas' ((Format-MdCode 'a``b') -eq '``` a``b ```')
+    # Literales de PowerShell: comilla simple y comillas tipográficas escapadas (no rompen ni inyectan al pegar).
+    Check 'Comando: literal con comilla simple' ((Format-PsLiteral "O'Brien") -eq "'O''Brien'")
+    Check 'Comando: literal con comilla tipográfica' ((Format-PsLiteral ("a" + [char]0x2019 + "b")) -eq ("'a" + [char]0x2019 + [char]0x2019 + "b'"))
+    Check 'Comando: token simple sin comillas, texto riesgoso entre comillas' ((New-ReviewCommand -Env demo -Arguments @('vm.info', 'VirtualMachine:vm-1', 'a;b c')) -eq "./scripts/govc.ps1 -Env demo vm.info VirtualMachine:vm-1 'a;b c'")
+    # Certificados: comillas escapadas y \uXXXX (nombres con tilde).
+    $ct = ConvertFrom-CertJson '{"subject":"CN=Atl\u00e1ntida \"Q\"","issuer":"CN=CA","notAfter":"2030-01-01T00:00:00Z","status":"good","PublicKey":12345678901234567890123}'
+    Check 'Certificado: escapes y \u decodificados' ($ct.subject -eq 'CN=Atlántida "Q"' -and $ct.notAfter -eq '2030-01-01T00:00:00Z') "$($ct.subject)"
+    # object.collect: flujo de documentos JSON (forma real de govc) → objetos con _moref y propiedades.
+    $oc = @(ConvertFrom-GovcCollect ('{"kind":"enter","obj":{"type":"Datastore","value":"datastore-1"},"changeSet":[{"name":"name","op":"assign","val":"DS1"},{"name":"summary.capacity","op":"assign","val":100}]}' + "`n" + '{"kind":"enter","obj":{"type":"Datastore","value":"datastore-2"},"changeSet":[{"name":"name","op":"assign","val":"DS2"}]}'))
+    Check 'object.collect: flujo de documentos' ($oc.Count -eq 2 -and $oc[0]._moref -eq 'datastore-1' -and $oc[0].'summary.capacity' -eq 100 -and $oc[1].name -eq 'DS2')
+    # Errores del lote: mensaje legible desde una falla SOAP o desde stderr.
+    Check 'Lote: error SOAP legible' ((Get-GovcBatchError ([pscustomobject]@{ stderr = ''; stdout = '{"Fault":{"String":"NoPermission"}}' })) -eq 'NoPermission')
+    Check 'Lote: error de stderr limpio' ((Get-GovcBatchError ([pscustomobject]@{ stderr = 'govc: ServerFaultCode: no encontrado <detalle>'; stdout = '' })) -eq 'ServerFaultCode: no encontrado')
+    # Guardado sin truncar: un árbol de 12 niveles vuelve completo.
+    $deepObj = $null; foreach ($lvl in 12..1) { $deepObj = [pscustomobject]@{ n = $lvl; c = @($(if ($deepObj) { $deepObj })) } }
+    $deepFile = Join-Path $work 'profundo.json'; Save-RawJson $deepObj $deepFile
+    $back = Get-Content $deepFile -Raw | ConvertFrom-Json -Depth 200; $lvlN = 1; while ($back.c.Count) { $back = $back.c[0]; $lvlN++ }
+    Check 'Save-RawJson: 12 niveles sin truncar' ($lvlN -eq 12) "$lvlN niveles"
     Check 'HTML: codifica <script> de vCenter' (($html -notmatch '<script>alert') -and ($html -match '&lt;script&gt;alert'))
     Check 'HTML: incluye selector de tema' ($html -match 'id="theme-toggle"')
     # CSP: cada script en línea debe estar autorizado por su hash; nada más puede ejecutarse.
@@ -154,7 +194,11 @@ try {
     Quiet { & "$S/Invoke-PerfCheck.ps1" -FromRaw $pdir -Format html, md } | Out-Null
     # Funciones internas: estadísticas sin valores -1 y formatos de salida de metric.sample.
     $past = [System.Management.Automation.Language.Parser]::ParseFile("$S/Invoke-PerfCheck.ps1", [ref]$null, [ref]$null)
-    foreach ($fn in $past.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -in 'P', 'Q', 'Get-Stats', 'ConvertFrom-MetricSample' }, $true)) { . ([scriptblock]::Create($fn.Extent.Text)) }
+    foreach ($fn in $past.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -in 'Q', 'Get-Stats', 'ConvertFrom-MetricSample', 'ConvertFrom-IntervalInfo' }, $true)) { . ([scriptblock]::Create($fn.Extent.Text)) }
+    $iv = @(ConvertFrom-IntervalInfo "ID:                   300`n  Enabled:            true`n  Level:              1`nID:                   1800`n  Level:              2")
+    Check 'PerfCheck: niveles leídos del texto de metric.interval.info' ($iv.Count -eq 2 -and $iv[0].period -eq 300 -and $iv[0].level -eq 1 -and $iv[1].level -eq 2)
+    $sc = Get-Stats @(100, -1, 300) 0.5
+    Check 'PerfCheck: estadísticas con escala' ($sc.n -eq 2 -and $sc.max -eq 150 -and $sc.avg -eq 100)
     $st = Get-Stats @(-1, 10, 20, -1, 30, 40)
     Check 'PerfCheck: estadísticas descartan -1' ($st.n -eq 4 -and $st.avg -eq 25 -and $st.max -eq 40) ($st | ConvertTo-Json -Compress)
     Check 'PerfCheck: serie solo con -1 = sin datos' ($null -eq (Get-Stats @(-1, -1)))
@@ -169,6 +213,7 @@ try {
     $aj = Json (Join-Path $audit 'raw/audit.json')
     $ids = @($aj.findings | ForEach-Object { $_.id })
     Check 'Audit: IDs consecutivos AUD-001…' (($ids -join ',') -eq ((1..$ids.Count | ForEach-Object { 'AUD-{0:000}' -f $_ }) -join ','))
+    Check 'Audit: clave estable de 12 hex por hallazgo' (-not @($aj.findings | Where-Object { "$($_.key)" -notmatch '^[0-9a-f]{12}$' }).Count)
     $okScores = $true
     foreach ($p in $aj.scores.PSObject.Properties) {
         $v = $p.Value; $calc = [math]::Max(0, 100 - (15 * $v.crit + 5 * $v.warn + $v.info))
@@ -217,11 +262,14 @@ try {
     $gone = $bv[0].PSObject.Copy(); $gone._moref = 'vm-9999'; $gone.name = 'app-retirada01'
     $bv = @($bv | Select-Object -Skip 1) + $gone
     ($bv | Where-Object name -eq 'web-banca01').name = 'web-banca-anterior'
-    ConvertTo-Json -InputObject $bv -Depth 12 | Set-Content (Join-Path $base 'raw/vms.json') -Encoding utf8
+    ConvertTo-Json -InputObject $bv -Depth 100 | Set-Content (Join-Path $base 'raw/vms.json') -Encoding utf8
     $bd = @(Json (Join-Path $base 'raw/datastores.json')); $bd[0].'summary.freeSpace' = [long]$bd[0].'summary.freeSpace' + 200GB
-    ConvertTo-Json -InputObject $bd -Depth 12 | Set-Content (Join-Path $base 'raw/datastores.json') -Encoding utf8
-    $bf = @(Json (Join-Path $base 'raw/findings.json')) + [pscustomobject]@{ severity = 'Advertencia'; category = 'Snapshots'; object = 'app-retirada01'; evidence = 'x'; suggestion = ''; command = ''; rule = 'snap-age-x' }
-    ConvertTo-Json -InputObject $bf -Depth 6 | Set-Content (Join-Path $base 'raw/findings.json') -Encoding utf8
+    ConvertTo-Json -InputObject $bd -Depth 100 | Set-Content (Join-Path $base 'raw/datastores.json') -Encoding utf8
+    # La base simula una corrida anterior a 1.8: reglas con el nombre incluido (snap-age-<snapshot>, objeto = VM).
+    $bf = @(Json (Join-Path $base 'raw/findings.json') | ForEach-Object {
+            if ($_.rule -eq 'snap-age' -and $_.object -match '^(.+) / (.+)$') { $_.rule = "snap-age-$($Matches[2])"; $_.object = $Matches[1] }
+            $_ }) + [pscustomobject]@{ severity = 'Advertencia'; category = 'Snapshots'; object = 'app-retirada01'; evidence = 'x'; suggestion = ''; command = ''; rule = 'snap-age-x' }
+    ConvertTo-Json -InputObject $bf -Depth 100 | Set-Content (Join-Path $base 'raw/findings.json') -Encoding utf8
     $tdir = Join-Path $work 'tendencia'
     $c = Quiet { & "$S/Compare-Report.ps1" -Base $base -Current $rep -OutDir $tdir -Format md }
     Check 'Compare: termina sin error' ($null -ne $c)
@@ -230,9 +278,22 @@ try {
     Check 'Compare: VM eliminada' ($tmd -match '\| Eliminada \| app\\?-retirada01')
     Check 'Compare: VM renombrada' ($tmd -match 'Renombrada \| web\\?-banca01 \| antes: web\\?-banca\\?-anterior')
     Check 'Compare: hallazgo resuelto' ($tmd -match '\| Resuelto \|')
+    Check 'Compare: claves anteriores a 1.8 traducidas (snapshots sin cambios no aparecen)' ($tmd -notmatch 'pre\\?-update\\?-CHG\\?-0912')
     Check 'Compare: crecimiento de datastore (20 GB/día)' ($tmd -match '\| DS\\?-PROD\\?-01 \|[^\r\n]*\| 20 \|')
     Check 'Compare: sin filas vacías' ($tmd -notmatch '(?m)^\|(\s*\|)+\s*$')
     Check 'Compare: snapshots sin cambios = 0 filas' ($tmd -match '## Snapshots \(0\)')
+
+    # --- 5b. Test-AuditLog: cadena íntegra y ruptura detectada ----------------------------------------
+    $logT = Join-Path $work 'logs-test'; New-Item -ItemType Directory -Force $logT | Out-Null
+    $prevH = 'GENESIS'; $lines = foreach ($k in 1..3) {
+        $l = ([ordered]@{ prev = $prevH; ts = "2026-10-1$($k)T00:00:00Z"; command = "about $k"; result = 'ok' } | ConvertTo-Json -Compress)
+        $prevH = ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($l)))).ToLowerInvariant(); $l }
+    $logF = Join-Path $logT 'audit-20261018.jsonl'; [IO.File]::WriteAllLines($logF, [string[]]$lines)
+    $null = & pwsh -NoProfile -NonInteractive -File "$S/Test-AuditLog.ps1" -Path $logT; $okCode = $LASTEXITCODE
+    [IO.File]::WriteAllLines($logF, [string[]]@($lines[0], ($lines[1] -replace 'about 2', 'about X'), $lines[2]))
+    $null = & pwsh -NoProfile -NonInteractive -File "$S/Test-AuditLog.ps1" -Path $logT; $badCode = $LASTEXITCODE
+    Check 'Test-AuditLog: cadena íntegra (exit 0)' ($okCode -eq 0) "exit $okCode"
+    Check 'Test-AuditLog: línea editada detectada (exit 1)' ($badCode -eq 1) "exit $badCode"
 
     # --- 6. Lote del wrapper: rechaza escrituras antes de leer la credencial ----------------------------
     $wrapperText = Get-Content "$S/govc.ps1" -Raw

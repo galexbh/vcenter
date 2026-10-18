@@ -19,11 +19,13 @@
   ./scripts/Invoke-PerfCheck.ps1 -Env prod -Cluster CL-PROD-01 -Window 1h
   ./scripts/Invoke-PerfCheck.ps1 -FromRaw reports/prod/20261018-090000 -DsLatencyWarnMs 15
 #>
+#Requires -Version 7.5
+[CmdletBinding(PositionalBinding = $false)]
 param(
-    [string]$Env,
+    [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9_-]*$')][string]$Env,
     [string[]]$Cluster,
     [ValidateSet('1h', '24h', '7d')][string]$Window = '24h',
-    [ValidateSet('html', 'md')][string[]]$Format = @('html', 'md'),
+    [ValidateSet('html', 'md', 'csv')][string[]]$Format = @('html', 'md'),
     [string]$FromRaw,
     [string]$OutDir,
     # Carpeta de un inventario ya recolectado (New-Report.ps1): evita volver a consultar hosts, VMs y datastores.
@@ -43,6 +45,8 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 Import-Module (Join-Path $PSScriptRoot 'lib/GovcJson.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib/Render.psm1') -Force -DisableNameChecking
+Import-Module (Join-Path $PSScriptRoot 'lib/Common.psm1') -Force -DisableNameChecking
+Set-Alias -Name P -Value Get-Prop -Scope Script
 
 $windows = @{ '1h' = @{ i = 20; n = 180 }; '24h' = @{ i = 300; n = 288 }; '7d' = @{ i = 1800; n = 336 } }
 # Contadores por consulta. Las agregadas usan -instance= (instancia vacía = total de la entidad).
@@ -51,29 +55,41 @@ $hostDsCounters = @('datastore.totalReadLatency.average', 'datastore.totalWriteL
 $vmCounters = @('cpu.ready.summation', 'mem.vmmemctl.average', 'mem.swapinRate.average')
 $chunkSize = 50
 
-function P($obj, [string]$name, $default = $null) {
-    if ($null -ne $obj -and $obj.PSObject.Properties[$name] -and $null -ne $obj.$name) { return $obj.$name }
-    return $default
-}
 function Q($obj, [string[]]$names, $default = $null) {
     # Primera propiedad existente entre variantes de nombre (la salida JSON de govc cambia de mayúsculas entre versiones).
-    foreach ($n in $names) { $v = P $obj $n; if ($null -ne $v) { return $v } }
-    return $default
+    Get-FirstProp $obj $names $default -AllowEmpty
 }
-function Get-Stats([double[]]$values) {
-    # Promedio, p95 y máximo; los valores negativos (-1 = sin muestra) se descartan.
-    $v = @($values | Where-Object { $_ -ge 0 } | Sort-Object)
+function Get-Stats([double[]]$values, [double]$scale = 1.0) {
+    # Promedio, p95 y máximo (con escala opcional); los valores negativos (-1 = sin muestra) se descartan.
+    # Sin pipeline: con miles de VMs hay millones de muestras.
+    $v = [System.Collections.Generic.List[double]]::new($values.Count)
+    $sum = 0.0
+    foreach ($x in $values) { if ($x -ge 0) { $y = $x * $scale; $v.Add($y); $sum += $y } }
     if (-not $v.Count) { return $null }
+    $v.Sort()
     $idx = [math]::Max(0, [math]::Ceiling(0.95 * $v.Count) - 1)
-    [pscustomobject]@{ avg = [math]::Round(($v | Measure-Object -Average).Average, 2); p95 = [math]::Round($v[$idx], 2); max = [math]::Round($v[-1], 2); n = $v.Count }
+    [pscustomobject]@{ avg = [math]::Round($sum / $v.Count, 2); p95 = [math]::Round($v[$idx], 2); max = [math]::Round($v[$v.Count - 1], 2); n = $v.Count }
 }
 function Get-DsUuid([string]$url) {
     # ds:///vmfs/volumes/<uuid>/ → <uuid>
     if ($url -match 'volumes/([^/]+)/?$') { return $Matches[1] }
     return $null
 }
-function ConvertFrom-MetricSample([string]$Text) {
-    <# metric.sample -json → filas {entity, counter, instance, values[]}. Tolera variantes de forma y mayúsculas. #>
+function ConvertFrom-IntervalInfo([string]$Text) {
+    <# metric.interval.info imprime texto aunque reciba -json (govc 0.56): bloques "ID: 300 … Level: 1". #>
+    foreach ($blk in ($Text -split '(?m)^(?=\s*ID:)')) {
+        if ($blk -match '(?m)^\s*ID:\s*(\d+)') {
+            $period = [int]$Matches[1]
+            $lv = if ($blk -match '(?m)^\s*Level:\s*(\d+)') { [int]$Matches[1] } else { $null }
+            [pscustomobject]@{ period = $period; level = $lv }
+        }
+    }
+}
+function ConvertFrom-MetricSample([string]$Text, [string]$Kind = '') {
+    <#
+    .SYNOPSIS  metric.sample -json → filas {kind, entity, counter, instance, values[], valid}.
+    .NOTES     Tolera variantes de forma y mayúsculas. 'valid' = muestras ≥ 0 (calculado una vez aquí).
+    #>
     if (-not $Text.Trim()) { return }
     # -NoEnumerate: un arreglo de un solo elemento no se desenvuelve.
     $o = $Text | ConvertFrom-Json -Depth 30 -NoEnumerate
@@ -82,31 +98,28 @@ function ConvertFrom-MetricSample([string]$Text) {
         $ent = Q $em @('entity', 'Entity')
         $id = "$(Q $ent @('value', 'Value') '')"
         foreach ($s in @(Q $em @('value', 'Value') @())) {
+            [double[]]$vals = @(Q $s @('value', 'Value') @())
+            $valid = 0; foreach ($x in $vals) { if ($x -ge 0) { $valid++ } }
             [pscustomobject]@{
+                kind     = $Kind
                 entity   = $id
                 counter  = "$(Q $s @('name', 'Name') '')"
                 instance = "$(Q $s @('instance', 'Instance') '')"
-                values   = @(Q $s @('value', 'Value') @() | ForEach-Object { [double]$_ })
+                values   = $vals
+                valid    = $valid
             }
         }
     }
 }
 
 # --- Recolección --------------------------------------------------------------------
-if ($FromRaw) {
-    $outDir = (Resolve-Path $FromRaw).Path
-    $rawDir = Join-Path $outDir 'raw'
-    $meta = Get-Content (Join-Path $rawDir 'meta-perf.json') -Raw | ConvertFrom-Json
-    $Env = $meta.env; $generated = [datetime]$meta.generated; $Window = $meta.window
-    $load = { param($n) $f = Join-Path $rawDir "$n.json"; if (Test-Path $f) { @(Get-Content $f -Raw | ConvertFrom-Json) } else { @() } }
+$ctx = Initialize-RunContext -Env $Env -FromRaw $FromRaw -OutDir $OutDir -Root $root -MetaFile 'meta-perf.json'
+$Env = $ctx.env; $outDir = $ctx.outDir; $rawDir = $ctx.rawDir; $generated = $ctx.generated
+if ($ctx.fromRaw) {
+    $meta = $ctx.meta; $Window = $meta.window
+    $load = { param($n) Read-JsonFile (Join-Path $rawDir "$n.json") @() -AsArray }
     $hostPerf = & $load 'perf-host'; $vmPerf = & $load 'perf-vm'; $dsPerf = & $load 'perf-datastore'; $errors = & $load 'perf-errors'
 } else {
-    if (-not $Env) { throw 'Indica -Env <entorno> o -FromRaw <carpeta>.' }
-    $Env = $Env.ToLowerInvariant()
-    $generated = Get-Date
-    $outDir = if ($OutDir) { $OutDir } else { Join-Path $root ("reports/{0}/{1:yyyyMMdd-HHmmss}" -f $Env, $generated) }
-    $rawDir = Join-Path $outDir 'raw'
-    New-Item -ItemType Directory -Force -Path $rawDir | Out-Null
     Import-Module (Join-Path $PSScriptRoot 'lib/GovcBatch.psm1') -Force
     $win = $windows[$Window]
 
@@ -122,17 +135,7 @@ if ($FromRaw) {
     }
     [Console]::Error.WriteLine('Listando entidades e intervalos de estadísticas...')
     $r1 = Invoke-GovcBatch -Env $Env -Commands $cmds
-    # metric.interval.info imprime texto aunque reciba -json (govc 0.56): bloques "ID: 300 … Level: 1".
-    $levels = @()
-    if ($r1[0].exitCode -eq 0) {
-        foreach ($blk in ("$($r1[0].stdout)" -split '(?m)^(?=\s*ID:)')) {
-            if ($blk -match '(?m)^\s*ID:\s*(\d+)' ) {
-                $period = [int]$Matches[1]
-                $lv = if ($blk -match '(?m)^\s*Level:\s*(\d+)') { [int]$Matches[1] } else { $null }
-                $levels += [pscustomobject]@{ period = $period; level = $lv }
-            }
-        }
-    }
+    $levels = if ($r1[0].exitCode -eq 0) { @(ConvertFrom-IntervalInfo "$($r1[0].stdout)") } else { @() }
     if ($useInv) {
         $rd = { param($n) $f = Join-Path $invRaw "$n.json"; if (Test-Path $f) { @(Get-Content $f -Raw | ConvertFrom-Json -DateKind String) } else { @() } }
         $hRaw = & $rd 'hosts'; $vRaw = & $rd 'vms'; $cRaw = & $rd 'compute'; $sRaw = & $rd 'datastores'
@@ -168,12 +171,18 @@ if ($FromRaw) {
     # Segundo lote: muestras por trozos (límite de consultas de vCenter y largo de la línea de comandos).
     $sampleArgs = @('metric.sample', '-json', '-i', "$($win.i)", '-n', "$($win.n)")
     $jobs = New-Object System.Collections.Generic.List[object]
-    $chunks = { param($ids) for ($k = 0; $k -lt $ids.Count; $k += $chunkSize) { , @($ids[$k..([math]::Min($k + $chunkSize, $ids.Count) - 1)]) } }
-    foreach ($ch in (& $chunks @($hostOk | ForEach-Object { "HostSystem:$($_.id)" }))) {
+    function Split-Chunk([string[]]$ids) {
+        # Siempre una lista de trozos: con un solo trozo, PowerShell desenvolvería el arreglo y se
+        # haría una consulta por entidad en lugar de una por trozo.
+        $out = New-Object System.Collections.Generic.List[object]
+        for ($k = 0; $k -lt $ids.Count; $k += $chunkSize) { $out.Add([string[]]$ids[$k..([math]::Min($k + $chunkSize, $ids.Count) - 1)]) }
+        return , $out.ToArray()
+    }
+    foreach ($ch in (Split-Chunk @($hostOk | ForEach-Object { "HostSystem:$($_.id)" }))) {
         $jobs.Add([pscustomobject]@{ kind = 'host'; ids = $ch; argv = $sampleArgs + @('-instance=') + $ch + $hostAggCounters })
         $jobs.Add([pscustomobject]@{ kind = 'hostds'; ids = $ch; argv = $sampleArgs + @('-instance=*') + $ch + $hostDsCounters })
     }
-    foreach ($ch in (& $chunks @($vmInfo.Keys | Sort-Object | ForEach-Object { "VirtualMachine:$_" }))) {
+    foreach ($ch in (Split-Chunk @($vmInfo.Keys | Sort-Object | ForEach-Object { "VirtualMachine:$_" }))) {
         $jobs.Add([pscustomobject]@{ kind = 'vm'; ids = $ch; argv = $sampleArgs + @('-instance=') + $ch + $vmCounters })
     }
     [Console]::Error.WriteLine("Consultando métricas ($Window, intervalo $($win.i) s): $($hostOk.Count) hosts y $($vmInfo.Count) VMs en $($jobs.Count) consultas, una sesión...")
@@ -184,13 +193,13 @@ if ($FromRaw) {
     for ($k = 0; $k -lt $jobs.Count; $k++) {
         $r = $out[$k]
         if ($r.exitCode -ne 0) { $errors.Add([pscustomobject]@{ kind = $jobs[$k].kind; entities = $jobs[$k].ids.Count; error = (Get-GovcBatchError $r) }); continue }
-        try { foreach ($row in @(ConvertFrom-MetricSample "$($r.stdout)")) { $row | Add-Member kind $jobs[$k].kind; $series.Add($row) } }
+        try { foreach ($row in @(ConvertFrom-MetricSample "$($r.stdout)" $jobs[$k].kind)) { $series.Add($row) } }
         catch { $errors.Add([pscustomobject]@{ kind = $jobs[$k].kind; entities = $jobs[$k].ids.Count; error = "salida no reconocida: $($_.Exception.Message)" }) }
     }
     # Índice por tipo|entidad|contador|instancia (evita recorrer todas las series por cada VM).
     $idx = @{}; foreach ($s in $series) { $key = "$($s.kind)|$($s.entity)|$($s.counter)|$($s.instance)"; if (-not $idx.ContainsKey($key)) { $idx[$key] = $s } }
     $find = { param($kind, $id, $counter, $inst = '') $idx["$kind|$id|$counter|$inst"] }
-    $statsOf = { param($s, $scale = 1.0) if ($s) { Get-Stats @($s.values | ForEach-Object { if ($_ -ge 0) { $_ * $scale } else { -1 } }) } else { $null } }
+    $statsOf = { param($s, $scale = 1.0) if ($s -and $s.valid) { Get-Stats $s.values $scale } else { $null } }
 
     $hostPerf = @(foreach ($h in $hostSel) {
             $ok = $h.state -eq 'connected'
@@ -213,7 +222,7 @@ if ($FromRaw) {
                 swapinKBps = & $statsOf (& $find 'vm' $v.id 'mem.swapinRate.average')
             } })
     # Instancia = UUID del datastore. Se ignoran '*' y las series vacías (p. ej. el simulador vcsim no publica latencias).
-    $dsPerf = @(foreach ($g in @($series | Where-Object { $_.kind -eq 'hostds' -and $_.instance -and $_.instance -ne '*' -and @($_.values | Where-Object { $_ -ge 0 }).Count } | Group-Object entity, instance)) {
+    $dsPerf = @(foreach ($g in @($series | Where-Object { $_.kind -eq 'hostds' -and $_.instance -and $_.instance -ne '*' -and $_.valid -gt 0 } | Group-Object entity, instance)) {
             $f = $g.Group[0]; $h = $hostInfo[$f.entity]
             $rd = $g.Group | Where-Object counter -eq 'datastore.totalReadLatency.average' | Select-Object -First 1
             $wr = $g.Group | Where-Object counter -eq 'datastore.totalWriteLatency.average' | Select-Object -First 1
@@ -223,22 +232,20 @@ if ($FromRaw) {
             } })
 
     # Contadores sin ningún dato en la ventana (nivel de estadísticas del intervalo u otra causa).
-    $present = @{}; foreach ($s in $series) { if (@($s.values | Where-Object { $_ -ge 0 }).Count) { $present["$($s.kind)|$($s.counter)"] = $true } }
+    $present = @{}; foreach ($s in $series) { if ($s.valid -gt 0) { $present["$($s.kind)|$($s.counter)"] = $true } }
     $expected = @($hostAggCounters | ForEach-Object { "host|$_" }) + @($hostDsCounters | ForEach-Object { "hostds|$_" }) + @($vmCounters | ForEach-Object { "vm|$_" })
     $kindsRun = @($jobs.kind | Sort-Object -Unique)
     $kindLabel = @{ host = 'hosts'; hostds = 'hosts'; vm = 'VMs' }
     $missing = @($expected | Where-Object { ($_ -split '\|')[0] -in $kindsRun -and -not $present[$_] } |
         ForEach-Object { $k, $c = $_ -split '\|'; "$c ($($kindLabel[$k]))" } | Sort-Object -Unique)
     $lvl = @($levels | Where-Object { $_.period -eq $win.i } | Select-Object -First 1)
-    $meta = [pscustomobject]@{
-        env = $Env; generated = $generated.ToString('o'); user = "$env:USERDOMAIN\$env:USERNAME"; window = $Window; interval = $win.i; samples = $win.n
-        intervalLevel = $(if ($lvl) { $lvl[0].level } else { $null }); cluster = @($Cluster); missing = $missing
-    }
-    $meta | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $rawDir 'meta-perf.json') -Encoding utf8
-    ConvertTo-Json -InputObject $hostPerf -Depth 6 | Set-Content (Join-Path $rawDir 'perf-host.json') -Encoding utf8
-    ConvertTo-Json -InputObject $vmPerf -Depth 6 | Set-Content (Join-Path $rawDir 'perf-vm.json') -Encoding utf8
-    ConvertTo-Json -InputObject $dsPerf -Depth 6 | Set-Content (Join-Path $rawDir 'perf-datastore.json') -Encoding utf8
-    ConvertTo-Json -InputObject $errors.ToArray() -Depth 4 | Set-Content (Join-Path $rawDir 'perf-errors.json') -Encoding utf8
+    $extra = [ordered]@{ window = $Window; interval = $win.i; samples = $win.n; intervalLevel = $(if ($lvl) { $lvl[0].level } else { $null }); cluster = @($Cluster); missing = $missing }
+    Write-RunMeta (Join-Path $rawDir 'meta-perf.json') $Env $generated $extra
+    $meta = [pscustomobject]$extra
+    Save-RawJson $hostPerf (Join-Path $rawDir 'perf-host.json')
+    Save-RawJson $vmPerf (Join-Path $rawDir 'perf-vm.json')
+    Save-RawJson $dsPerf (Join-Path $rawDir 'perf-datastore.json')
+    Save-RawJson $errors (Join-Path $rawDir 'perf-errors.json')
 }
 
 # --- Análisis ---------------------------------------------------------------------------
@@ -247,10 +254,7 @@ $review = "./scripts/Invoke-PerfCheck.ps1 -Env $Env -Window 1h"
 $intervalS = [int](P $meta 'interval' 0)
 $nOrNull = { param($s, $k) if ($s -and $null -ne (P $s $k)) { [double]$s.$k } else { $null } }
 function Add-Group($sev, $hit, $label, $tip, $rule) {
-    if (-not $hit.Count) { return }
-    $list = (($hit | Select-Object -First 15) | ForEach-Object { $_.text }) -join ', '
-    $obj = if ($hit.Count -eq 1) { $hit[0].name } else { "$($hit.Count) VMs" }
-    Add-ReportFinding -Rule $rule $findings $sev 'Rendimiento' $obj "${label}: $list$(if ($hit.Count -gt 15) { '…' })" $tip $review
+    Add-GroupedFinding -List $findings -Severity $sev -Category 'Rendimiento' -Items $hit -Label $label -Suggestion $tip -Command $review -Rule $rule
 }
 
 # CPU ready por vCPU (p95).
@@ -324,14 +328,8 @@ $kpis = [ordered]@{
     'Intervalo (s)' = $intervalS
     'Hosts'         = @($hostPerf | Where-Object ok).Count
     'VMs evaluadas' = $vmPerf.Count
-    'Críticos'      = @($sorted | Where-Object severity -eq 'Crítico').Count
-    'Advertencias'  = @($sorted | Where-Object severity -eq 'Advertencia').Count
-    'Sin cobertura' = @($sorted | Where-Object category -eq 'Cobertura').Count
 }
-Export-ReportFinding $sorted (Join-Path $rawDir 'findings.json')
-$kpis | ConvertTo-Json | Set-Content (Join-Path $rawDir 'summary.json') -Encoding utf8
-$written = Write-GovcReport -Root $root -OutDir $outDir -BaseName 'perf-check' -Title "Revisión de rendimiento — $($Env.ToUpper()) — $Window" `
-    -Env $Env -Generated $generated -Kpis $kpis -Sections $sections.ToArray() -Format $Format -MdMaxRows $MdMaxRows `
+Add-SeverityKpis $kpis $sorted -Coverage
+Complete-Report -Root $root -OutDir $outDir -RawDir $rawDir -BaseName 'perf-check' -Title "Revisión de rendimiento — $($Env.ToUpper()) — $Window" `
+    -Env $Env -Generated $generated -Kpis $kpis -Sorted $sorted -Sections $sections.ToArray() -Format $Format -MdMaxRows $MdMaxRows `
     -Source 'govc metric.sample (solo lectura)'
-
-[pscustomobject]@{ Carpeta = $outDir; Archivos = $written; Criticos = $kpis['Críticos']; Advertencias = $kpis['Advertencias'] }

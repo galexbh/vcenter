@@ -13,6 +13,8 @@
   ./scripts/Test-AuditLog.ps1
   ./scripts/Test-AuditLog.ps1 -Path C:\copia\logs
 #>
+#Requires -Version 7.5
+[CmdletBinding(PositionalBinding = $false)]
 param([string]$Path)
 
 Set-StrictMode -Version Latest

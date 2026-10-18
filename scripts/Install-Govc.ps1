@@ -14,6 +14,8 @@
   ./scripts/Install-Govc.ps1 -WithVcsim       # simulador para pruebas locales
   ./scripts/Install-Govc.ps1 -Version v0.56.0 # versión fijada
 #>
+#Requires -Version 7.5
+[CmdletBinding(PositionalBinding = $false)]
 param(
     [ValidatePattern('^(latest|v\d+\.\d+\.\d+)$')][string]$Version = 'latest',
     [ValidateSet('x86_64', 'arm64')][string]$Arch = 'x86_64',

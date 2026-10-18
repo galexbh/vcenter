@@ -15,13 +15,15 @@
   ./scripts/Compare-Report.ps1 -Env prod                      # las dos corridas más recientes
   ./scripts/Compare-Report.ps1 -Base reports/prod/20261001-080000 -Current reports/prod/20261017-080000
 #>
+#Requires -Version 7.5
+[CmdletBinding(PositionalBinding = $false)]
 param(
-    [string]$Env,
+    [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9_-]*$')][string]$Env,
     [string]$Base,
     [string]$Current,
     [string]$OutDir,
-    [ValidateSet('html', 'md')][string[]]$Format = @('html', 'md'),
-    [int]$MdMaxRows = 200
+    [ValidateSet('html', 'md', 'csv')][string[]]$Format = @('html', 'md'),
+    [ValidateRange(1, 100000)][int]$MdMaxRows = 200
 )
 
 Set-StrictMode -Version Latest
@@ -29,11 +31,10 @@ $ErrorActionPreference = 'Stop'
 
 $root = Split-Path -Parent $PSScriptRoot
 Import-Module (Join-Path $PSScriptRoot 'lib/Render.psm1') -Force -DisableNameChecking
-
-function P($obj, [string]$name, $default = $null) {
-    if ($null -ne $obj -and $obj.PSObject.Properties[$name] -and $null -ne $obj.$name) { return $obj.$name }
-    return $default
-}
+Import-Module (Join-Path $PSScriptRoot 'lib/Common.psm1') -Force -DisableNameChecking
+Set-Alias -Name P -Value Get-Prop -Scope Script
+$inv = [Globalization.CultureInfo]::InvariantCulture
+$fmt = { param([string]$f, $v) [string]::Format($inv, $f, $v) }
 function Resolve-Run([string]$dir) {
     # Acepta una corrida de New-Report o una auditoría (subcarpeta inventario/).
     $d = (Resolve-Path $dir).Path
@@ -43,8 +44,9 @@ function Resolve-Run([string]$dir) {
 }
 function Load-Run([string]$dir) {
     $raw = Join-Path $dir 'raw'
-    $j = { param($n) $f = Join-Path $raw "$n.json"; if (Test-Path $f) { @(Get-Content $f -Raw | ConvertFrom-Json -DateKind String) } else { @() } }
-    $meta = Get-Content (Join-Path $raw 'meta.json') -Raw | ConvertFrom-Json
+    $j = { param($n) Read-JsonFile (Join-Path $raw "$n.json") @() -AsArray }
+    $meta = Get-Content -LiteralPath (Join-Path $raw 'meta.json') -Raw | ConvertFrom-Json
+    Assert-EnvName "$($meta.env)"
     [pscustomobject]@{ dir = $dir; env = $meta.env; generated = [datetime]$meta.generated; vms = (& $j 'vms'); hosts = (& $j 'hosts'); compute = (& $j 'compute'); datastores = (& $j 'datastores'); findings = (& $j 'findings') }
 }
 
@@ -64,7 +66,7 @@ if ($a.env -ne $b.env) { throw "Las corridas son de entornos distintos ($($a.env
 if ($b.generated -le $a.generated) { $t = $a; $a = $b; $b = $t }   # base siempre la más antigua
 $days = [math]::Round(($b.generated - $a.generated).TotalDays, 2)
 $Env = $b.env
-$w = "./scripts/govc.ps1 -Env $Env"
+$rc = { param([string[]]$a) New-ReviewCommand -Env $Env -Arguments $a }
 
 # --- VMs ---------------------------------------------------------------------------
 $vmA = @{}; foreach ($v in $a.vms) { if (-not [bool](P $v 'config.template' $false)) { $vmA[$v._moref] = $v } }
@@ -77,7 +79,7 @@ foreach ($k in $vmB.Keys) {
     if ($o.name -ne $v.name) { $vmChanges.Add([pscustomobject]@{ change = 'Renombrada'; vm = $v.name; detail = "antes: $($o.name)" }) }
     if ((P $o 'runtime.powerState') -ne (P $v 'runtime.powerState')) { $vmChanges.Add([pscustomobject]@{ change = 'Estado'; vm = $v.name; detail = "$(P $o 'runtime.powerState') → $(P $v 'runtime.powerState')" }) }
     $dc = [int](P $v 'summary.config.numCpu' 0) - [int](P $o 'summary.config.numCpu' 0); $dm = [int](P $v 'summary.config.memorySizeMB' 0) - [int](P $o 'summary.config.memorySizeMB' 0)
-    if ($dc -or $dm) { $vmChanges.Add([pscustomobject]@{ change = 'Recursos'; vm = $v.name; detail = "vCPU $('{0:+0;-0;0}' -f $dc) · RAM $('{0:+0;-0;0}' -f $dm) MB" }) }
+    if ($dc -or $dm) { $vmChanges.Add([pscustomobject]@{ change = 'Recursos'; vm = $v.name; detail = "vCPU $(& $fmt '{0:+0;-0;0}' $dc) · RAM $(& $fmt '{0:+0;-0;0}' $dm) MB" }) }
 }
 foreach ($k in $vmA.Keys) { if (-not $vmB.ContainsKey($k)) { $vmChanges.Add([pscustomobject]@{ change = 'Eliminada'; vm = $vmA[$k].name; detail = '' }) } }
 $order = @{ 'Nueva' = 0; 'Eliminada' = 1; 'Renombrada' = 2; 'Estado' = 3; 'Recursos' = 4 }
@@ -102,7 +104,7 @@ $clusterRows = @(@($ca.Keys) + @($cb.Keys) | Sort-Object -Unique | ForEach-Objec
         $x = $ca[$_]; $y = $cb[$_]
         $v0 = if ($x) { $x.vcpu } else { 0 }; $v1 = if ($y) { $y.vcpu } else { 0 }
         $m0 = if ($x) { [math]::Round($x.mem, 1) } else { 0 }; $m1 = if ($y) { [math]::Round($y.mem, 1) } else { 0 }
-        [pscustomobject]@{ cluster = $_; vcpuBase = $v0; vcpuNow = $v1; vcpuDelta = '{0:+0;-0;0}' -f ($v1 - $v0); memBase = $m0; memNow = $m1; memDelta = '{0:+0.0;-0.0;0}' -f ($m1 - $m0) } })
+        [pscustomobject]@{ cluster = $_; vcpuBase = $v0; vcpuNow = $v1; vcpuDelta = (& $fmt '{0:+0;-0;0}' ($v1 - $v0)); memBase = $m0; memNow = $m1; memDelta = (& $fmt '{0:+0.0;-0.0;0}' ($m1 - $m0)) } })
 
 # --- Datastores ------------------------------------------------------------------------
 $dsA = @{}; foreach ($d in $a.datastores) { $dsA[$d._moref] = $d }
@@ -118,7 +120,7 @@ $dsRows = @(foreach ($d in $b.datastores) {
         $to100 = if ($rate -gt 0) { [math]::Max(0, [math]::Floor(($capGB - $used1) / $rate)) } else { $null }
         if ($null -ne $to90 -and $to90 -le 30) {
             $sev = if ($to90 -le 7) { 'Crítico' } else { 'Advertencia' }
-            Add-ReportFinding $findings $sev 'Almacenamiento' $d.name "Al ritmo actual ($([math]::Round($rate,1)) GB/día) llega al 90 % en ~$to90 días" 'Planificar liberación de espacio o ampliación antes de la fecha estimada.' "$w datastore.info '$($d.name)'" -Rule 'ds-trend'
+            Add-ReportFinding $findings $sev 'Almacenamiento' $d.name "Al ritmo actual ($([math]::Round($rate,1)) GB/día) llega al 90 % en ~$to90 días" 'Planificar liberación de espacio o ampliación antes de la fecha estimada.' (& $rc 'datastore.info', "Datastore:$($d._moref)") -Rule 'ds-trend'
         }
         [pscustomobject]@{
             name = $d.name; capGB = [math]::Round($capGB, 0); usedBase = $(if ($null -ne $used0) { [math]::Round($used0, 1) } else { 'nuevo' }); usedNow = [math]::Round($used1, 1)
@@ -131,12 +133,9 @@ $dsRows = @($dsRows | Sort-Object { if ($_.to90 -is [int] -or $_.to90 -is [doubl
 function Get-Snaps($run) {
     $out = @{}
     foreach ($v in $run.vms) {
-        $stack = New-Object System.Collections.Stack
-        foreach ($s in @(P $v 'snapshot.rootSnapshotList' @())) { $stack.Push($s) }
-        while ($stack.Count) {
-            $s = $stack.Pop()
-            $out["$($v._moref)|$(P $s.snapshot 'value' $s.name)"] = [pscustomobject]@{ vm = $v.name; name = $s.name; created = ([datetimeoffset]::Parse($s.createTime)).LocalDateTime.ToString('yyyy-MM-dd HH:mm') }
-            foreach ($c in @(P $s 'childSnapshotList' @())) { $stack.Push($c) }
+        foreach ($s in (Get-SnapshotList (P $v 'snapshot.rootSnapshotList' @()))) {
+            $id = if ($s.moref) { $s.moref } else { $s.name }
+            $out["$($v._moref)|$id"] = [pscustomobject]@{ vm = $v.name; name = $s.name; created = $(if ($s.created) { $s.created.LocalDateTime.ToString('yyyy-MM-dd HH:mm') } else { '' }) }
         }
     }
     return $out
@@ -148,7 +147,16 @@ $snapRows = @(@(
 ) | Sort-Object change, vm)
 
 # --- Hallazgos ------------------------------------------------------------------------------
-$key = { param($f) "$(P $f 'rule' (P $f 'category' ''))|$($f.object)" }
+# Clave regla|objeto. Las corridas anteriores a 1.8 usaban reglas con el nombre incluido
+# (snap-age-<snapshot>, alarm-<alarma>, license-<edición>): se traducen a la forma actual.
+$key = {
+    param($f)
+    $r = "$(P $f 'rule' (P $f 'category' ''))"; $o = "$($f.object)"
+    if ($r -like 'snap-age-*' -and $o -notmatch ' / ') { return "snap-age|$o / $($r.Substring(9))" }
+    if ($r -like 'alarm-*' -and $o -notmatch ' / ') { return "alarm|$o / $($r.Substring(6))" }
+    if ($r -like 'license-*') { return "license|$o" }
+    "$r|$o"
+}
 $fa = @{}; foreach ($f in $a.findings) { $fa[(& $key $f)] = $f }
 $fb = @{}; foreach ($f in $b.findings) { $fb[(& $key $f)] = $f }
 $findRows = @(@(
@@ -161,10 +169,10 @@ $hasFindings = ($a.findings.Count + $b.findings.Count) -gt 0
 # --- Salida -----------------------------------------------------------------------------------
 $generated = Get-Date
 $outDir = if ($OutDir) { $OutDir } else { Join-Path $root ("reports/{0}/{1:yyyyMMdd-HHmmss}-tendencia" -f $Env, $generated) }
-New-Item -ItemType Directory -Force -Path (Join-Path $outDir 'raw') | Out-Null
+$rawDir = Join-Path $outDir 'raw'
+New-Item -ItemType Directory -Force -Path $rawDir | Out-Null
 $sorted = Sort-ReportFinding $findings
-Export-ReportFinding $sorted (Join-Path $outDir 'raw/findings.json')
-@{ env = $Env; generated = $generated.ToString('o'); base = $a.dir; current = $b.dir; days = $days } | ConvertTo-Json | Set-Content (Join-Path $outDir 'raw/meta.json') -Encoding utf8
+Write-RunMeta (Join-Path $rawDir 'meta.json') $Env $generated ([ordered]@{ base = $a.dir; current = $b.dir; days = $days })
 
 $note = "Base: $($a.generated.ToString('yyyy-MM-dd HH:mm')) · Actual: $($b.generated.ToString('yyyy-MM-dd HH:mm')) · Intervalo: $days días."
 $projNote = 'Proyección lineal con dos puntos: es una estimación. ' + $(if ($days -lt 7) { 'Con menos de 7 días entre corridas la proyección es poco confiable.' } else { 'Conviene confirmarla con más corridas.' })
@@ -186,7 +194,7 @@ $kpis = [ordered]@{
     'Hallazgos resueltos' = @($findRows | Where-Object change -eq 'Resuelto').Count
     'Alertas'             = $sorted.Count
 }
-$written = Write-GovcReport -Root $root -OutDir $outDir -BaseName 'tendencia' -Title "Tendencias — $($Env.ToUpper())" -Env $Env -Generated $generated `
-    -Kpis $kpis -Sections $sections -Format $Format -MdMaxRows $MdMaxRows -Source 'comparación de corridas (sin consultar vCenter)'
+$res = Complete-Report -Root $root -OutDir $outDir -RawDir $rawDir -BaseName 'tendencia' -Title "Tendencias — $($Env.ToUpper())" -Env $Env -Generated $generated `
+    -Kpis $kpis -Sorted $sorted -Sections $sections -Format $Format -MdMaxRows $MdMaxRows -Source 'comparación de corridas (sin consultar vCenter)'
 
-[pscustomobject]@{ Carpeta = $outDir; Archivos = $written; Base = $a.dir; Actual = $b.dir; Dias = $days }
+[pscustomobject]@{ Carpeta = $outDir; Archivos = $res.Archivos; Base = $a.dir; Actual = $b.dir; Dias = $days }

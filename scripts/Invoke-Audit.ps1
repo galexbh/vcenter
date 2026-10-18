@@ -22,15 +22,17 @@
   ./scripts/Invoke-Audit.ps1 -Env prod -Scope performance -PerfWindow 7d
   ./scripts/Invoke-Audit.ps1 -FromRaw reports/prod/20261017-090000-auditoria
 #>
+#Requires -Version 7.5
+[CmdletBinding(PositionalBinding = $false)]
 param(
-    [string]$Env,
+    [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9_-]*$')][string]$Env,
     [string[]]$Cluster,
     [ValidateSet('full', 'security', 'capacity', 'performance')][string]$Scope = 'full',
     [ValidateSet('1h', '24h', '7d')][string]$PerfWindow = '24h',
     [switch]$SkipPerf,         # omite la fuente de rendimiento (queda declarada como cobertura)
     [ValidateSet('html', 'md')][string[]]$Format = @('html', 'md'),
     [string]$FromRaw,
-    [int]$MaxRootAdmins = 5,
+    [ValidateRange(0, 10000)][int]$MaxRootAdmins = 5,
     [switch]$SkipDeviceScan,   # se pasa a New-Report.ps1 (recomendado con miles de VMs)
     [string]$Version = '1.0'
 )
@@ -41,15 +43,25 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 Import-Module (Join-Path $PSScriptRoot 'lib/GovcJson.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib/Render.psm1') -Force -DisableNameChecking
-$wrapper = Join-Path $PSScriptRoot 'govc.ps1'
+Import-Module (Join-Path $PSScriptRoot 'lib/Common.psm1') -Force -DisableNameChecking
+Set-Alias -Name P -Value Get-Prop -Scope Script
+Set-Alias -Name Read-Json -Value Read-JsonFile -Scope Script
 $enc = { param($s) ConvertTo-HtmlText $s }
+$scripts = $PSScriptRoot
 
-function P($obj, [string]$name, $default = $null) {
-    if ($null -ne $obj -and $obj.PSObject.Properties[$name] -and $null -ne $obj.$name) { return $obj.$name }
-    return $default
-}
-function Read-Json([string]$path, $default = @()) {
-    if (Test-Path $path) { return (Get-Content $path -Raw | ConvertFrom-Json -DateKind String) } else { return $default }
+function Wait-SourceJob($Jobs) {
+    # Espera las fuentes en paralelo; propaga la primera falla y nunca deja hilos vivos.
+    $Jobs = @($Jobs | Where-Object { $_ })
+    try {
+        $null = $Jobs | Wait-Job
+        foreach ($j in $Jobs) {
+            if ($j.State -eq 'Failed') { throw "Falló '$($j.Name)': $($j.ChildJobs[0].JobStateInfo.Reason.Message)" }
+            $null = Receive-Job $j -ErrorAction Stop
+        }
+    } finally {
+        $Jobs | Stop-Job -ErrorAction SilentlyContinue
+        $Jobs | Remove-Job -Force -ErrorAction SilentlyContinue
+    }
 }
 
 # --- Taxonomía de auditoría -----------------------------------------------------
@@ -97,58 +109,62 @@ $refOf = @{
     'Drift VIBs/drivers' = "$scg · $cis — nivel de aceptación e integridad de VIBs"
 }
 # --- Ejecución de las fuentes ---------------------------------------------------
-if ($FromRaw) {
-    $outDir = (Resolve-Path $FromRaw).Path
-    $meta = Read-Json (Join-Path $outDir 'raw/meta-audit.json') $null
-    if (-not $meta) { throw "No es una carpeta de auditoría: falta raw/meta-audit.json en $outDir" }
-    $Env = $meta.env; $generated = [datetime]$meta.generated; $Cluster = @($meta.cluster | Where-Object { $_ })
+$ctx = Initialize-RunContext -Env $Env -FromRaw $FromRaw -Root $root -MetaFile 'meta-audit.json' -Suffix '-auditoria'
+$Env = $ctx.env; $outDir = $ctx.outDir; $generated = $ctx.generated
+if ($ctx.fromRaw) {
+    $meta = $ctx.meta; $Cluster = @($meta.cluster | Where-Object { $_ })
     if (-not $PSBoundParameters.ContainsKey('Scope')) { $Scope = $meta.scope }
-    & (Join-Path $PSScriptRoot 'New-Report.ps1') -FromRaw (Join-Path $outDir 'inventario') -Format html | Out-Null
-    & (Join-Path $PSScriptRoot 'Invoke-HostCheck.ps1') -FromRaw (Join-Path $outDir 'hosts') -Format html | Out-Null
-    # Auditorías anteriores a la fuente de rendimiento no tienen perf/: se declaran como cobertura más abajo.
-    if (Test-Path (Join-Path $outDir 'perf/raw/meta-perf.json')) { & (Join-Path $PSScriptRoot 'Invoke-PerfCheck.ps1') -FromRaw (Join-Path $outDir 'perf') -Format html | Out-Null }
+    # Re-render en paralelo: solo CPU y cada fuente en su carpeta. Auditorías anteriores a la fuente de
+    # rendimiento no tienen perf/: se declaran como cobertura más abajo.
+    Wait-SourceJob @(
+        Start-ThreadJob -Name 'inventario' { & (Join-Path $using:scripts 'New-Report.ps1') -FromRaw (Join-Path $using:outDir 'inventario') -Format html | Out-Null }
+        Start-ThreadJob -Name 'hosts' { & (Join-Path $using:scripts 'Invoke-HostCheck.ps1') -FromRaw (Join-Path $using:outDir 'hosts') -Format html | Out-Null }
+        if (Test-Path -LiteralPath (Join-Path $outDir 'perf/raw/meta-perf.json')) {
+            Start-ThreadJob -Name 'rendimiento' { & (Join-Path $using:scripts 'Invoke-PerfCheck.ps1') -FromRaw (Join-Path $using:outDir 'perf') -Format html | Out-Null }
+        })
 } else {
-    if (-not $Env) { throw 'Indica -Env <entorno> o -FromRaw <carpeta>.' }
-    $Env = $Env.ToLowerInvariant()
-    $generated = Get-Date
-    $outDir = Join-Path $root ("reports/{0}/{1:yyyyMMdd-HHmmss}-auditoria" -f $Env, $generated)
-    New-Item -ItemType Directory -Force -Path (Join-Path $outDir 'raw') | Out-Null
-
-    [Console]::Error.WriteLine('== 1/4 Inventario, capacidad y configuración ==')
-    & (Join-Path $PSScriptRoot 'New-Report.ps1') -Env $Env -Type all -Format html -OutDir (Join-Path $outDir 'inventario') -SkipDeviceScan:$SkipDeviceScan | Out-Null
-    [Console]::Error.WriteLine('== 2/4 Configuración de hosts (esxcli) ==')
-    $hcArgs = @{ Env = $Env; Format = 'html'; OutDir = (Join-Path $outDir 'hosts') }
-    if ($Cluster) { $hcArgs.Cluster = $Cluster }
-    & (Join-Path $PSScriptRoot 'Invoke-HostCheck.ps1') @hcArgs | Out-Null
-
-    $perfError = ''
-    if ($SkipPerf) {
-        [Console]::Error.WriteLine('== 3/4 Rendimiento: omitido (-SkipPerf) ==')
-    } else {
-        [Console]::Error.WriteLine("== 3/4 Rendimiento (ventana $PerfWindow) ==")
-        # Reutiliza el inventario recién recolectado; una falla aquí no detiene la auditoría (queda como cobertura).
-        $pcArgs = @{ Env = $Env; Window = $PerfWindow; Format = 'html'; OutDir = (Join-Path $outDir 'perf'); InventoryDir = (Join-Path $outDir 'inventario') }
-        if ($Cluster) { $pcArgs.Cluster = $Cluster }
-        try { & (Join-Path $PSScriptRoot 'Invoke-PerfCheck.ps1') @pcArgs | Out-Null }
-        catch { $perfError = $_.Exception.Message; [Console]::Error.WriteLine("Rendimiento no disponible: $perfError") }
-    }
-
-    [Console]::Error.WriteLine('== 4/4 Controles de acceso ==')
+    # 1) Controles de acceso primero, en este hilo: verifica la credencial antes de lanzar lo demás y
+    #    carga una sola vez el tipo de Credential Manager para todo el proceso.
+    [Console]::Error.WriteLine('== Controles de acceso ==')
     $perm = @(); $roles = @()
     Import-Module (Join-Path $PSScriptRoot 'lib/GovcBatch.psm1') -Force
-    $acc = Invoke-GovcBatch -Env $Env -Commands @(
-        , @('permissions.ls', '-json', '/')
-        , @('role.ls', '-json'))
+    $acc = Invoke-GovcBatch -Env $Env -Commands @(@('permissions.ls', '-json', '/'), @('role.ls', '-json'))
     if ($acc[0].exitCode -eq 0 -and $acc[0].stdout) { $perm = @($acc[0].stdout | ConvertFrom-Json) }
     if ($acc[1].exitCode -eq 0 -and $acc[1].stdout) { $roles = @($acc[1].stdout | ConvertFrom-Json) }
-    ConvertTo-Json -InputObject @{ permissions = $perm; roles = $roles; ok = ($perm.Count -gt 0) } -Depth 10 |
-        Set-Content (Join-Path $outDir 'raw/vcenter-access.json') -Encoding utf8
+    Save-RawJson ([pscustomobject]@{ permissions = $perm; roles = $roles; ok = ($perm.Count -gt 0) }) (Join-Path $ctx.rawDir 'vcenter-access.json')
 
-    @{ env = $Env; generated = $generated.ToString('o'); scope = $Scope; cluster = @($Cluster); user = "$env:USERDOMAIN\$env:USERNAME"; version = $Version
-        perfWindow = $(if ($SkipPerf) { $null } else { $PerfWindow }); perfSkipped = [bool]$SkipPerf; perfError = $perfError } |
-        ConvertTo-Json | Set-Content (Join-Path $outDir 'raw/meta-audit.json') -Encoding utf8
+    # 2) En paralelo: [inventario -> rendimiento] y revisión de hosts (no dependen entre sí).
+    $perfLabel = if ($SkipPerf) { ' (rendimiento omitido)' } else { " (rendimiento $PerfWindow)" }
+    [Console]::Error.WriteLine("== Inventario y rendimiento$perfLabel, en paralelo con la revisión de hosts ==")
+    $invArgs = @{ Env = $Env; Type = 'all'; Format = 'html'; OutDir = (Join-Path $outDir 'inventario'); SkipDeviceScan = [bool]$SkipDeviceScan }
+    $hcArgs = @{ Env = $Env; Format = 'html'; OutDir = (Join-Path $outDir 'hosts') }
+    $pcArgs = @{ Env = $Env; Window = $PerfWindow; Format = 'html'; OutDir = (Join-Path $outDir 'perf'); InventoryDir = (Join-Path $outDir 'inventario') }
+    if ($Cluster) { $hcArgs.Cluster = $Cluster; $pcArgs.Cluster = $Cluster }
+    $skip = [bool]$SkipPerf
+    $invJob = Start-ThreadJob -Name 'inventario+rendimiento' {
+        $s = $using:scripts; $ia = $using:invArgs; $pa = $using:pcArgs
+        & (Join-Path $s 'New-Report.ps1') @ia | Out-Null
+        if ($using:skip) { return '' }
+        # Una falla de rendimiento no detiene la auditoría: queda como cobertura.
+        try { & (Join-Path $s 'Invoke-PerfCheck.ps1') @pa | Out-Null; '' } catch { "$($_.Exception.Message)" }
+    }
+    $hcJob = Start-ThreadJob -Name 'hosts' { $s = $using:scripts; $ha = $using:hcArgs; & (Join-Path $s 'Invoke-HostCheck.ps1') @ha | Out-Null }
+    $perfError = ''
+    try {
+        $null = $invJob, $hcJob | Wait-Job
+        foreach ($j in $invJob, $hcJob) { if ($j.State -eq 'Failed') { throw "Falló '$($j.Name)': $($j.ChildJobs[0].JobStateInfo.Reason.Message)" } }
+        $perfError = "$(@(Receive-Job $invJob -ErrorAction Stop)[-1])"
+        $null = Receive-Job $hcJob -ErrorAction Stop
+    } finally {
+        $invJob, $hcJob | Stop-Job -ErrorAction SilentlyContinue
+        $invJob, $hcJob | Remove-Job -Force -ErrorAction SilentlyContinue
+    }
+    if ($perfError) { [Console]::Error.WriteLine("Rendimiento no disponible: $perfError") }
+
+    Write-RunMeta (Join-Path $ctx.rawDir 'meta-audit.json') $Env $generated ([ordered]@{
+            scope = $Scope; cluster = @($Cluster); version = $Version
+            perfWindow = $(if ($SkipPerf) { $null } else { $PerfWindow }); perfSkipped = [bool]$SkipPerf; perfError = $perfError })
 }
-
 $meta = Read-Json (Join-Path $outDir 'raw/meta-audit.json') $null
 $scopeDomains = switch ($Scope) {
     'security'    { @('Seguridad', 'Configuración') }
@@ -211,7 +227,11 @@ $scored = @($all | Where-Object { $_.category -ne 'Cobertura' } |
         $_ } |
     Where-Object { $_.domain -in $scopeDomains } |
     Sort-Object { $sevOrder[$_.severity] }, { [array]::IndexOf($domains, $_.domain) }, category, object)
-$i = 0; foreach ($f in $scored) { $i++; $f | Add-Member id ('AUD-{0:000}' -f $i) -Force }
+$i = 0; foreach ($f in $scored) {
+    $i++; $f | Add-Member id ('AUD-{0:000}' -f $i) -Force
+    # Clave estable (regla + objeto) para seguir un hallazgo entre auditorías; el AUD-NNN depende del orden.
+    $f | Add-Member key ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes("$($f.rule)|$($f.object)"))).Substring(0, 12).ToLowerInvariant()) -Force
+}
 
 $scores = [ordered]@{}
 foreach ($d in $scopeDomains) {
@@ -227,7 +247,8 @@ $auditId = 'AUD-{0}-{1:yyyyMMdd-HHmm}' -f $Env.ToUpper(), $generated
 $preparedBy = P $meta 'user' "$env:USERDOMAIN\$env:USERNAME"
 $classification = 'Uso interno — Confidencial'
 $stamp = $generated.ToString('yyyy-MM-dd HH:mm')
-$clusterLabel = if ($Cluster) { " · clúster(es): $($Cluster -join ', ')" } else { '' }
+# Con -Cluster se limitan la revisión de hosts y el rendimiento; el inventario y la capacidad son de todo vCenter.
+$clusterLabel = if ($Cluster) { " · hosts y rendimiento del clúster(es): $($Cluster -join ', ') (inventario completo)" } else { '' }
 
 # --- Textos ----------------------------------------------------------------------
 $nVm = if ($invSum) { P $invSum 'VMs' 0 } else { 0 }

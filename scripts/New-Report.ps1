@@ -16,8 +16,10 @@
   ./scripts/New-Report.ps1 -FromRaw reports/prod/20261016-0900 -Type health
   ./scripts/New-Report.ps1 -Env prod -Type inventory -Format csv          # un CSV por tabla, para Excel
 #>
+#Requires -Version 7.5
+[CmdletBinding(PositionalBinding = $false)]
 param(
-    [string]$Env,
+    [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9_-]*$')][string]$Env,
     [ValidateSet('all', 'inventory', 'snapshots', 'capacity', 'health')][string]$Type = 'all',
     [ValidateSet('html', 'md', 'csv')][string[]]$Format = @('html', 'md'),
     # Separador CSV. Por defecto, el separador de listas de Windows (el que usa Excel al abrir el archivo).
@@ -49,21 +51,9 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 Import-Module (Join-Path $PSScriptRoot 'lib/GovcJson.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib/Render.psm1') -Force -DisableNameChecking
-$wrapper = Join-Path $PSScriptRoot 'govc.ps1'
-
-function P($obj, [string]$name, $default = $null) {
-    # Lectura tolerante de propiedades (las rutas de vSphere contienen puntos).
-    if ($null -ne $obj -and $obj.PSObject.Properties[$name] -and $null -ne $obj.$name) { return $obj.$name }
-    return $default
-}
-
-function Get-CertSummary([string]$Text) {
-    # about.cert / host.cert.info -json: campos de primer nivel en minúscula (los de la cadena van en mayúscula).
-    $get = { param($k) $m = [regex]::Match($Text, '"' + $k + '"\s*:\s*"([^"]*)"'); if ($m.Success) { $m.Groups[1].Value } else { '' } }
-    $na = & $get 'notAfter'
-    if (-not $na) { return $null }
-    [pscustomobject]@{ subject = & $get 'subject'; issuer = & $get 'issuer'; notAfter = $na; status = & $get 'status' }
-}
+Import-Module (Join-Path $PSScriptRoot 'lib/Common.psm1') -Force -DisableNameChecking
+# Lectura tolerante de propiedades (las rutas de vSphere contienen puntos).
+Set-Alias -Name P -Value Get-Prop -Scope Script
 
 # --- Recolección --------------------------------------------------------------
 $queries = [ordered]@{
@@ -94,27 +84,13 @@ function Get-IsoDevices($devices) {
         })
 }
 
-if ($FromRaw) {
-    $outDir = (Resolve-Path $FromRaw).Path
-    $rawDir = Join-Path $outDir 'raw'
-    $meta = Get-Content (Join-Path $rawDir 'meta.json') -Raw | ConvertFrom-Json
-    $Env = $meta.env
+$ctx = Initialize-RunContext -Env $Env -FromRaw $FromRaw -OutDir $OutDir -Root $root -MetaFile 'meta.json'
+$Env = $ctx.env; $outDir = $ctx.outDir; $rawDir = $ctx.rawDir; $generated = $ctx.generated; $meta = $ctx.meta
+if ($ctx.fromRaw) {
     $data = @{}
-    foreach ($k in @($queries.Keys) + 'alarms') {
-        $f = Join-Path $rawDir "$k.json"
-        $data[$k] = if (Test-Path $f) { @(Get-Content $f -Raw | ConvertFrom-Json -DateKind String) } else { @() }
-    }
-    $vcFile = Join-Path $rawDir 'vcenter.json'
-    $vcenter = if (Test-Path $vcFile) { Get-Content $vcFile -Raw | ConvertFrom-Json -DateKind String } else { $null }
-    $generated = [datetime]$meta.generated
+    foreach ($k in @($queries.Keys) + 'alarms') { $data[$k] = Read-JsonFile (Join-Path $rawDir "$k.json") @() -AsArray }
+    $vcenter = Read-JsonFile (Join-Path $rawDir 'vcenter.json') $null
 } else {
-    if (-not $Env) { throw 'Indica -Env <entorno> o -FromRaw <carpeta>.' }
-    $Env = $Env.ToLowerInvariant()
-    $generated = Get-Date
-    $outDir = if ($OutDir) { $OutDir } else { Join-Path $root ("reports/{0}/{1:yyyyMMdd-HHmmss}" -f $Env, $generated) }
-    $rawDir = Join-Path $outDir 'raw'
-    New-Item -ItemType Directory -Force -Path $rawDir | Out-Null
-
     # Una sola sesión para toda la recolección (modo -Batch del wrapper: solo lecturas).
     Import-Module (Join-Path $PSScriptRoot 'lib/GovcBatch.psm1') -Force
     if ($SkipDeviceScan) { $queries.vms = @($queries.vms | Where-Object { $_ -ne 'config.hardware.device' }) }
@@ -156,8 +132,7 @@ if ($FromRaw) {
 
     # Certificado de vCenter y licencias (sin claves de licencia).
     $rc = $res[$keys.Count + 1]; $rl = $res[$keys.Count + 2]
-    # La salida incluye la clave pública como entero gigante (no parseable): se extraen solo los campos de primer nivel.
-    $cert = if ($rc.exitCode -eq 0 -and $rc.stdout) { Get-CertSummary $rc.stdout } else { $null }
+    $cert = if ($rc.exitCode -eq 0 -and $rc.stdout) { ConvertFrom-CertJson $rc.stdout } else { $null }
     $lics = @()
     if ($rl.exitCode -eq 0 -and $rl.stdout) {
         $lics = @($rl.stdout | ConvertFrom-Json -DateKind String | ForEach-Object { $_ } | ForEach-Object {
@@ -168,11 +143,9 @@ if ($FromRaw) {
         cert     = $cert
         licenses = $lics
     }
-    ConvertTo-Json -InputObject $vcenter -Depth 6 | Set-Content (Join-Path $rawDir 'vcenter.json') -Encoding utf8
-
-    foreach ($k in $data.Keys) { ConvertTo-Json -InputObject @($data[$k]) -Depth 12 | Set-Content (Join-Path $rawDir "$k.json") -Encoding utf8 }
-    @{ env = $Env; generated = $generated.ToString('o'); user = "$env:USERDOMAIN\$env:USERNAME"; deviceScan = (-not $SkipDeviceScan) } |
-        ConvertTo-Json | Set-Content (Join-Path $rawDir 'meta.json') -Encoding utf8
+    Save-RawJson $vcenter (Join-Path $rawDir 'vcenter.json')
+    foreach ($k in $data.Keys) { Save-RawJson @($data[$k]) (Join-Path $rawDir "$k.json") }
+    Write-RunMeta (Join-Path $rawDir 'meta.json') $Env $generated @{ deviceScan = (-not $SkipDeviceScan) }
 }
 
 # --- Modelo -------------------------------------------------------------------
@@ -191,17 +164,10 @@ function Get-ClusterOfHost($hostId) {
 $vms = foreach ($v in $data.vms) {
     # Una VM huérfana o inaccesible puede no tener host.
     $rh = P $v 'runtime.host'; $hostId = if ($rh) { P $rh 'value' } else { $null }
-    $snaps = New-Object System.Collections.Generic.List[object]
-    $stack = New-Object System.Collections.Stack
-    foreach ($s in @(P $v 'snapshot.rootSnapshotList' @())) { $stack.Push($s) }
-    while ($stack.Count) {
-        $s = $stack.Pop()
-        $created = [datetimeoffset]::Parse($s.createTime)
-        $snaps.Add([pscustomobject]@{ name = $s.name; created = $created; ageDays = [math]::Floor(($now - $created.LocalDateTime).TotalDays); description = $s.description })
-        foreach ($c in @(P $s 'childSnapshotList' @())) { $stack.Push($c) }
-    }
+    $snaps = Get-SnapshotList (P $v 'snapshot.rootSnapshotList' @()) $now
     $hw = "$(P $v 'config.version' '')"
     [pscustomobject]@{
+        id        = $v._moref
         name      = $v.name
         power     = P $v 'runtime.powerState' 'unknown'
         template  = [bool](P $v 'config.template' $false)
@@ -254,9 +220,14 @@ foreach ($h in $data.hosts) {
         memUsed   = [double](P $h 'summary.quickStats.overallMemoryUsage' 0)
     }
 }
+# Índices por clúster en una sola pasada (antes se recorrían todos los hosts y VMs por cada clúster).
+$hostsByCl = @{}; $capByCl = @{}; $onByCl = @{}
+foreach ($h in $data.hosts) { $par = P $h 'parent'; if ($par) { $k = $par.value; if (-not $hostsByCl[$k]) { $hostsByCl[$k] = New-Object System.Collections.Generic.List[object] }; $hostsByCl[$k].Add($h) } }
+foreach ($hc in $hostCap.Values) { if ($hc.clusterId -and $hc.active) { if (-not $capByCl[$hc.clusterId]) { $capByCl[$hc.clusterId] = New-Object System.Collections.Generic.List[object] }; $capByCl[$hc.clusterId].Add($hc) } }
+foreach ($v in $realVms) { if ($v.clusterId -and $v.power -eq 'poweredOn') { if (-not $onByCl[$v.clusterId]) { $onByCl[$v.clusterId] = New-Object System.Collections.Generic.List[object] }; $onByCl[$v.clusterId].Add($v) } }
 function Get-N1($clusterId, [string]$res) {
     # Uso actual frente a la capacidad que queda al perder el host de mayor capacidad del clúster.
-    $act = @($hostCap.Values | Where-Object { $_.clusterId -eq $clusterId -and $_.active })
+    $act = if ($capByCl[$clusterId]) { $capByCl[$clusterId].ToArray() } else { @() }
     if ($act.Count -lt 2) { return [pscustomobject]@{ hosts = $act.Count; pct = $null; used = 0; left = 0 } }
     $cap = ($act | Measure-Object "${res}Cap" -Sum).Sum; $max = ($act | Measure-Object "${res}Cap" -Maximum).Maximum
     $used = ($act | Measure-Object "${res}Used" -Sum).Sum; $left = $cap - $max
@@ -264,8 +235,8 @@ function Get-N1($clusterId, [string]$res) {
 }
 
 $clusters = foreach ($c in $data.compute) {
-    $members = @($data.hosts | Where-Object { (P $_ 'parent') -and $_.parent.value -eq $c._moref })
-    $on = @($realVms | Where-Object { $_.clusterId -eq $c._moref -and $_.power -eq 'poweredOn' })
+    $members = if ($hostsByCl[$c._moref]) { $hostsByCl[$c._moref].ToArray() } else { @() }
+    $on = if ($onByCl[$c._moref]) { $onByCl[$c._moref].ToArray() } else { @() }
     $cores = [int](P $c 'summary.numCpuCores' 0)
     $memGB = [math]::Round([double](P $c 'summary.totalMemory' 0) / $GB, 1)
     $vcpu = ($on | Measure-Object vcpu -Sum).Sum
@@ -273,6 +244,7 @@ $clusters = foreach ($c in $data.compute) {
     $cc = $clusterCfg[$c._moref]
     $n1m = Get-N1 $c._moref 'mem'; $n1c = Get-N1 $c._moref 'cpu'
     [pscustomobject]@{
+        id        = $c._moref
         name      = $c.name
         isCluster = [bool]$cc
         admission = $(if ($cc) { $cc.admission } else { $null })
@@ -299,6 +271,7 @@ $hosts = @($data.hosts | ForEach-Object {
         $cores = [int](P $_ 'summary.hardware.numCpuCores' 0); $mhz = [int](P $_ 'summary.hardware.cpuMhz' 0)
         $memMB = [double](P $_ 'summary.hardware.memorySize' 0) / 1MB
         [pscustomobject]@{
+            id      = $_._moref
             name    = $_.name
             cluster = $(if ((P $_ 'parent')) { $nameById[$_.parent.value] } else { '' })
             state   = P $_ 'runtime.connectionState' ''
@@ -313,6 +286,7 @@ $hosts = @($data.hosts | ForEach-Object {
 $datastores = @($data.datastores | ForEach-Object {
         $cap = [double](P $_ 'summary.capacity' 0); $free = [double](P $_ 'summary.freeSpace' 0); $unc = [double](P $_ 'summary.uncommitted' 0)
         [pscustomobject]@{
+            id         = $_._moref
             name       = $_.name
             type       = P $_ 'summary.type' ''
             accessible = [bool](P $_ 'summary.accessible' $true)
@@ -326,6 +300,7 @@ $datastores = @($data.datastores | ForEach-Object {
 $pools = @($data.pools | Where-Object { $_.name -ne 'Resources' } | ForEach-Object {
         $ca = P $_ 'config.cpuAllocation'; $ma = P $_ 'config.memoryAllocation'
         [pscustomobject]@{
+            id         = $_._moref
             name       = $_.name
             parent     = $(if ((P $_ 'parent')) { $nameById[$_.parent.value] } else { '' })
             cpuLimit   = [long](P $ca 'limit' -1)
@@ -335,7 +310,7 @@ $pools = @($data.pools | Where-Object { $_.name -ne 'Resources' } | ForEach-Obje
         } } | Sort-Object name)
 
 $snapRows = @($realVms | ForEach-Object { $vm = $_; $_.snapshots | ForEach-Object {
-            [pscustomobject]@{ vm = $vm.name; name = $_.name; created = $_.created.LocalDateTime.ToString('yyyy-MM-dd HH:mm'); ageDays = $_.ageDays; description = $_.description } } } |
+            [pscustomobject]@{ vm = $vm.name; vmId = $vm.id; name = $_.name; created = $(if ($_.created) { $_.created.LocalDateTime.ToString('yyyy-MM-dd HH:mm') } else { '' }); ageDays = $_.ageDays; depth = $_.depth; description = $_.description } } } |
     Sort-Object ageDays -Descending)
 
 # --- Hallazgos ------------------------------------------------------------------
@@ -344,32 +319,30 @@ function Add-Finding($sev, $cat, $obj, $evidence, $suggestion, $command = '', $r
     Add-ReportFinding -List $findings -Severity $sev -Category $cat -Object $obj -Evidence $evidence -Suggestion $suggestion -Command $command -Rule $rule
 }
 function Add-GroupFinding($sev, $cat, $hit, $label, $tip, $command, $rule) {
-    # Un hallazgo agregado por condición (evita cientos de filas repetidas).
-    if (-not $hit.Count) { return }
-    $list = (($hit | Select-Object -First 15).name) -join ', '
-    $obj = if ($hit.Count -eq 1) { $hit[0].name } else { "$($hit.Count) VMs" }
-    Add-Finding $sev $cat $obj "${label}: $list$(if ($hit.Count -gt 15) { '…' })" $tip $command $rule
+    Add-GroupedFinding -List $findings -Severity $sev -Category $cat -Items $hit -Label $label -Suggestion $tip -Command $command -Rule $rule
 }
-$w = "./scripts/govc.ps1 -Env $Env"
+# Comandos de revisión: referencias Tipo:id (inequívocas, sin caracteres que escapar) y argumentos
+# escapados por New-ReviewCommand; los nombres vienen de vCenter y nunca se interpolan sin escapar.
+$rc = { param([string[]]$a) New-ReviewCommand -Env $Env -Arguments $a }
 
 foreach ($d in $datastores) {
-    if (-not $d.accessible) { Add-Finding 'Crítico' 'Almacenamiento' $d.name 'Datastore no accesible' 'Revisar conectividad de almacenamiento/paths con el equipo de storage.' "$w datastore.info '$($d.name)'" 'ds-inaccessible' }
-    elseif ($d.usedPct -ge $DatastoreCritPct) { Add-Finding 'Crítico' 'Almacenamiento' $d.name "Uso $($d.usedPct)% (libre $($d.freeGB) GB)" 'Liberar espacio (snapshots, ISOs, VMs huérfanas) o ampliar/migrar con Storage vMotion.' "$w datastore.info '$($d.name)'" 'ds-used' }
-    elseif ($d.usedPct -ge $DatastoreWarnPct) { Add-Finding 'Advertencia' 'Almacenamiento' $d.name "Uso $($d.usedPct)% (libre $($d.freeGB) GB)" 'Planificar capacidad antes de llegar al umbral crítico.' "$w datastore.info '$($d.name)'" 'ds-used' }
+    if (-not $d.accessible) { Add-Finding 'Crítico' 'Almacenamiento' $d.name 'Datastore no accesible' 'Revisar conectividad de almacenamiento/paths con el equipo de storage.' (& $rc 'datastore.info', "Datastore:$($d.id)") 'ds-inaccessible' }
+    elseif ($d.usedPct -ge $DatastoreCritPct) { Add-Finding 'Crítico' 'Almacenamiento' $d.name "Uso $($d.usedPct)% (libre $($d.freeGB) GB)" 'Liberar espacio (snapshots, ISOs, VMs huérfanas) o ampliar/migrar con Storage vMotion.' (& $rc 'datastore.info', "Datastore:$($d.id)") 'ds-used' }
+    elseif ($d.usedPct -ge $DatastoreWarnPct) { Add-Finding 'Advertencia' 'Almacenamiento' $d.name "Uso $($d.usedPct)% (libre $($d.freeGB) GB)" 'Planificar capacidad antes de llegar al umbral crítico.' (& $rc 'datastore.info', "Datastore:$($d.id)") 'ds-used' }
     if ($d.accessible -and $d.provPct -gt 150) { Add-Finding 'Advertencia' 'Almacenamiento' $d.name "Aprovisionado $($d.provPct)% de la capacidad (thin)" 'Riesgo de llenado si los discos thin crecen; revisar sobreaprovisionamiento.' '' 'ds-thin' }
 }
 foreach ($s in $snapRows) {
-    $cmd = "$w snapshot.tree -vm '$($s.vm)' -D -i"
-    if ($s.ageDays -ge $SnapshotCritDays) { Add-Finding 'Crítico' 'Snapshots' $s.vm "Snapshot '$($s.name)' con $($s.ageDays) días" 'Validar con el dueño de la VM y consolidar/eliminar mediante cambio aprobado (degrada rendimiento y consume datastore).' $cmd "snap-age-$($s.name)" }
-    elseif ($s.ageDays -ge $SnapshotWarnDays) { Add-Finding 'Advertencia' 'Snapshots' $s.vm "Snapshot '$($s.name)' con $($s.ageDays) días" 'Los snapshots no son respaldo; confirmar si aún se necesita.' $cmd "snap-age-$($s.name)" }
+    $cmd = & $rc 'snapshot.tree', '-vm', "VirtualMachine:$($s.vmId)", '-D', '-i'
+    if ($s.ageDays -ge $SnapshotCritDays) { Add-Finding 'Crítico' 'Snapshots' "$($s.vm) / $($s.name)" "Snapshot '$($s.name)' con $($s.ageDays) días" 'Validar con el dueño de la VM y consolidar/eliminar mediante cambio aprobado (degrada rendimiento y consume datastore).' $cmd 'snap-age' }
+    elseif ($s.ageDays -ge $SnapshotWarnDays) { Add-Finding 'Advertencia' 'Snapshots' "$($s.vm) / $($s.name)" "Snapshot '$($s.name)' con $($s.ageDays) días" 'Los snapshots no son respaldo; confirmar si aún se necesita.' $cmd 'snap-age' }
 }
 foreach ($h in $hosts) {
-    if ($h.state -ne 'connected') { Add-Finding 'Crítico' 'Hosts' $h.name "Estado: $($h.state)" 'Revisar conectividad del host con vCenter (management network, servicios hostd/vpxa).' "$w host.info -host '$($h.name)'" 'host-state' }
+    if ($h.state -ne 'connected') { Add-Finding 'Crítico' 'Hosts' $h.name "Estado: $($h.state)" 'Revisar conectividad del host con vCenter (management network, servicios hostd/vpxa).' (& $rc 'host.info', '-host', "HostSystem:$($h.id)") 'host-state' }
     elseif ($h.maint) { Add-Finding 'Info' 'Hosts' $h.name 'En modo mantenimiento' 'Confirmar que corresponde a una ventana activa; si no, reintegrarlo al clúster.' '' 'host-maint' }
     if ($h.memPct -ge $HostMemWarnPct) { Add-Finding 'Advertencia' 'Capacidad' $h.name "Memoria en uso $($h.memPct)%" 'Revisar balanceo DRS o redistribuir cargas.' '' 'host-mem' }
 }
 foreach ($c in $clusters | Where-Object { $_.cores -gt 0 }) {
-    $perf = "./scripts/Invoke-PerfCheck.ps1 -Env $Env -Cluster '$($c.name)'"
+    $perf = "./scripts/Invoke-PerfCheck.ps1 -Env $Env -Cluster $(Format-PsLiteral $c.name)"
     if ($c.vcpuRatio -ge $VcpuRatioCrit) { Add-Finding 'Crítico' 'Capacidad' $c.name "vCPU:pCore $($c.vcpuRatio):1" 'Sobresuscripción de CPU alta; revisar CPU Ready y right-sizing de VMs.' $perf 'cl-vcpu' }
     elseif ($c.vcpuRatio -ge $VcpuRatioWarn) { Add-Finding 'Advertencia' 'Capacidad' $c.name "vCPU:pCore $($c.vcpuRatio):1" 'Monitorear CPU Ready; considerar right-sizing.' $perf 'cl-vcpu' }
     if ($c.memRatio -gt $MemRatioWarn) { Add-Finding 'Advertencia' 'Capacidad' $c.name "RAM asignada/física $($c.memRatio)" 'Sobrecompromiso de memoria; revisar ballooning/swap y reservas de HA.' '' 'cl-mem' }
@@ -386,14 +359,14 @@ foreach ($c in $clusters | Where-Object { $_.isCluster }) {
             elseif ($n.pct -ge $N1WarnPct) { Add-Finding 'Advertencia' 'Capacidad' $c.name $ev 'Holgura N+1 escasa; planificar capacidad antes de que la falla de un host deje VMs sin recursos.' '' "cl-n1-$($r.k)" }
         }
     }
-    if ($c.ha -eq 'Sí' -and $c.admission -eq $false) { Add-Finding 'Advertencia' 'Clúster' $c.name 'HA activo con el control de admisión desactivado' 'Sin control de admisión, vSphere permite encender VMs aunque ya no haya capacidad para reiniciarlas ante una falla; evaluar habilitarlo (cambio aprobado).' "$w object.collect -json -type c / name configurationEx.dasConfig.admissionControlEnabled" 'cl-ha-admission' }
-    if ($c.ha -eq 'No') { Add-Finding 'Crítico' 'Clúster' $c.name 'vSphere HA deshabilitado' 'Habilitar HA para que las VMs se reinicien ante la falla de un host (cambio aprobado).' "$w object.collect -s '$($c.name)' configurationEx.dasConfig.enabled" 'cl-ha' }
+    if ($c.ha -eq 'Sí' -and $c.admission -eq $false) { Add-Finding 'Advertencia' 'Clúster' $c.name 'HA activo con el control de admisión desactivado' 'Sin control de admisión, vSphere permite encender VMs aunque ya no haya capacidad para reiniciarlas ante una falla; evaluar habilitarlo (cambio aprobado).' (& $rc 'object.collect', '-s', "ClusterComputeResource:$($c.id)", 'configurationEx.dasConfig.admissionControlEnabled') 'cl-ha-admission' }
+    if ($c.ha -eq 'No') { Add-Finding 'Crítico' 'Clúster' $c.name 'vSphere HA deshabilitado' 'Habilitar HA para que las VMs se reinicien ante la falla de un host (cambio aprobado).' (& $rc 'object.collect', '-s', "ClusterComputeResource:$($c.id)", 'configurationEx.dasConfig.enabled') 'cl-ha' }
     if ($c.drs -eq 'No') { Add-Finding 'Advertencia' 'Clúster' $c.name 'DRS deshabilitado' 'Evaluar habilitar DRS para balanceo automático y mantenimiento sin interrupción.' '' 'cl-drs' }
     elseif ($c.drs -eq 'manual') { Add-Finding 'Advertencia' 'Clúster' $c.name 'DRS en modo manual' 'En modo manual DRS solo recomienda; considerar partiallyAutomated o fullyAutomated.' '' 'cl-drs' }
 }
 
 $off = @($realVms | Where-Object power -eq 'poweredOff')
-if ($off.Count) { Add-Finding 'Info' 'Higiene' "$($off.Count) VMs" "VMs apagadas: $((($off | Select-Object -First 10).name) -join ', ')$(if ($off.Count -gt 10) { '…' })" 'Validar con dueños si pueden darse de baja (consumen almacenamiento y licencias).' "$w find / -type m -runtime.powerState poweredOff" 'vm-off' }
+if ($off.Count) { Add-Finding 'Info' 'Higiene' "$($off.Count) VMs" "VMs apagadas: $((($off | Select-Object -First 10).name) -join ', ')$(if ($off.Count -gt 10) { '…' })" 'Validar con dueños si pueden darse de baja (consumen almacenamiento y licencias).' (& $rc 'find', '/', '-type', 'm', '-runtime.powerState', 'poweredOff') 'vm-off' }
 
 $onVms = @($realVms | Where-Object power -eq 'poweredOn')
 Add-GroupFinding 'Advertencia' 'VMware Tools' @($onVms | Where-Object { $_.toolsVer -eq 'guestToolsNotInstalled' }) 'VMware Tools no instalado' 'Instalar open-vm-tools/VMware Tools (apagado ordenado, quiesce de backups, métricas).' '' 'tools-missing'
@@ -410,7 +383,7 @@ Add-GroupFinding 'Advertencia' 'Capacidad' @($onVms | Where-Object { $_.swapMB -
 Add-GroupFinding 'Info' 'Capacidad' @($onVms | Where-Object { $_.compMB -gt 0 }) 'Memoria comprimida por el host' 'Señal temprana de presión de memoria; revisar junto con balloon y swap.' '' 'vm-compressed'
 foreach ($p in $pools | Where-Object { $_.cpuLimit -ge 0 -or $_.memLimit -ge 0 }) {
     $lim = @($(if ($p.cpuLimit -ge 0) { "CPU $($p.cpuLimit) MHz" }), $(if ($p.memLimit -ge 0) { "memoria $($p.memLimit) MB" }) | Where-Object { $_ }) -join ', '
-    Add-Finding 'Advertencia' 'Capacidad' $p.name "Resource pool con límite: $lim" 'Un límite en el pool provoca contención para todas sus VMs aunque el clúster tenga recursos; confirmar que es intencional.' "$w pool.info '$($p.name)'" 'rp-limit'
+    Add-Finding 'Advertencia' 'Capacidad' $p.name "Resource pool con límite: $lim" 'Un límite en el pool provoca contención para todas sus VMs aunque el clúster tenga recursos; confirmar que es intencional.' (& $rc 'pool.info', "ResourcePool:$($p.id)") 'rp-limit'
 }
 
 $deviceScanned = if ($FromRaw) { [bool](P $meta 'deviceScan' $true) } else { -not $SkipDeviceScan }
@@ -425,26 +398,26 @@ Add-GroupFinding 'Info' 'Configuración VM' @($realVms | Where-Object { $_.hwNum
 foreach ($a in $data.alarms) {
     $sev = switch ($a.status) { 'red' { 'Crítico' } 'yellow' { 'Advertencia' } default { 'Info' } }
     $obj = if ($nameById[$a.entity]) { $nameById[$a.entity] } else { "$($a.entityType):$($a.entity)" }
-    Add-Finding $sev 'Alarmas' $obj "$($a.alarm) ($($a.status))$(if ($a.acknowledged) { ', reconocida' })" 'Atender según el runbook de la alarma.' "$w events -n 20 '$obj'" "alarm-$($a.alarm)"
+    Add-Finding $sev 'Alarmas' "$obj / $($a.alarm)" "$($a.alarm) ($($a.status))$(if ($a.acknowledged) { ', reconocida' })" 'Atender según el runbook de la alarma.' (& $rc 'events', '-n', '20', "$($a.entityType):$($a.entity)") 'alarm'
 }
 
 # Certificado de vCenter y licencias.
 $certRow = $null; $licRows = @()
 if ($vcenter) {
     if ($vcenter.cert -and $vcenter.cert.notAfter) {
-        $na = ([datetimeoffset]::Parse("$($vcenter.cert.notAfter)")).LocalDateTime
+        $na = ([datetimeoffset]::Parse("$($vcenter.cert.notAfter)", [Globalization.CultureInfo]::InvariantCulture)).LocalDateTime
         $left = [math]::Floor(($na - $now).TotalDays)
         $certRow = [pscustomobject]@{ item = 'Certificado de vCenter'; detail = $vcenter.cert.subject; expires = $na.ToString('yyyy-MM-dd'); days = $left }
-        if ($left -lt 0) { Add-Finding 'Crítico' 'Certificados' 'vCenter' "Certificado vencido el $($na.ToString('yyyy-MM-dd'))" 'Renovar el certificado de vCenter (VMCA o CA interna) mediante cambio aprobado.' "$w about.cert" 'cert-vc' }
-        elseif ($left -le $CertWarnDays) { Add-Finding 'Advertencia' 'Certificados' 'vCenter' "Certificado vence en $left días ($($na.ToString('yyyy-MM-dd')))" 'Planificar la renovación antes del vencimiento.' "$w about.cert" 'cert-vc' }
+        if ($left -lt 0) { Add-Finding 'Crítico' 'Certificados' 'vCenter' "Certificado vencido el $($na.ToString('yyyy-MM-dd'))" 'Renovar el certificado de vCenter (VMCA o CA interna) mediante cambio aprobado.' (& $rc 'about.cert') 'cert-vc' }
+        elseif ($left -le $CertWarnDays) { Add-Finding 'Advertencia' 'Certificados' 'vCenter' "Certificado vence en $left días ($($na.ToString('yyyy-MM-dd')))" 'Planificar la renovación antes del vencimiento.' (& $rc 'about.cert') 'cert-vc' }
     }
     foreach ($l in @($vcenter.licenses)) {
-        $exp = $null; if ($l.expiration) { try { $exp = ([datetimeoffset]::Parse("$($l.expiration)")).LocalDateTime } catch { } }
+        $exp = $null; if ($l.expiration) { try { $exp = ([datetimeoffset]::Parse("$($l.expiration)", [Globalization.CultureInfo]::InvariantCulture)).LocalDateTime } catch { } }
         $left = if ($exp) { [math]::Floor(($exp - $now).TotalDays) } else { $null }
         $licRows += [pscustomobject]@{ item = $l.name; detail = "$($l.edition) · uso $($l.used)/$($l.total)"; expires = $(if ($exp) { $exp.ToString('yyyy-MM-dd') } else { 'sin vencimiento' }); days = $left }
         if ($null -ne $left -and $left -le $LicenseWarnDays) {
             $sev = if ($left -lt 0) { 'Crítico' } else { 'Advertencia' }
-            Add-Finding $sev 'Licencias' $l.name "$(if ($left -lt 0) { 'Vencida' } else { "Vence en $left días" }) ($($exp.ToString('yyyy-MM-dd')))" 'Gestionar la renovación con el área de licenciamiento.' "$w license.ls" "license-$($l.edition)"
+            Add-Finding $sev 'Licencias' $l.name "$(if ($left -lt 0) { 'Vencida' } else { "Vence en $left días" }) ($($exp.ToString('yyyy-MM-dd')))" 'Gestionar la renovación con el área de licenciamiento.' (& $rc 'license.ls') 'license'
         }
     }
 }
@@ -490,53 +463,5 @@ if (& $want 'inventory') {
 }
 
 # --- Salida -----------------------------------------------------------------------
-Export-ReportFinding $sorted (Join-Path $rawDir 'findings.json')
-$kpis | ConvertTo-Json | Set-Content (Join-Path $rawDir 'summary.json') -Encoding utf8
-
-$written = @()
-$docFormats = @($Format | Where-Object { $_ -ne 'csv' })
-if ($docFormats.Count) {
-    $written += Write-GovcReport -Root $root -OutDir $outDir -BaseName "reporte-$Type" -Title "Reporte vCenter — $($Env.ToUpper()) — $Type" `
-        -Env $Env -Generated $generated -Kpis $kpis -Sections $sections.ToArray() -Format $docFormats -MdMaxRows $MdMaxRows
-}
-
-if ('csv' -in $Format) {
-    # Un CSV por tabla (encabezados en español), UTF-8 con BOM para que Excel respete los acentos.
-    $sep = if ($CsvDelimiter) { $CsvDelimiter } else { (Get-Culture).TextInfo.ListSeparator }
-    $culture = Get-Culture
-    $slug = {
-        param($t)
-        $n = $t.Normalize([Text.NormalizationForm]::FormD) -replace '\p{Mn}', ''
-        ($n.ToLowerInvariant() -replace '[^a-z0-9]+', '-').Trim('-')
-    }
-    $cell = {
-        param($v)
-        if ($null -eq $v) { return '' }
-        if ($v -is [double] -or $v -is [decimal] -or $v -is [single]) { return $v.ToString($culture) }
-        if ($v -is [int] -or $v -is [long]) { return "$v" }
-        if ($v -is [bool]) { return $(if ($v) { 'Sí' } else { 'No' }) }
-        if ($v -is [array]) { $v = ($v | ForEach-Object { "$_" }) -join ', ' }
-        $t = "$v" -replace "`r?`n", ' '
-        # Los textos vienen de vCenter: se neutraliza la inyección de fórmulas al abrir en Excel.
-        if ($t -match '^[=+\-@\t]') { $t = "'" + $t }
-        return $t
-    }
-    $csvSections = @(@{ title = 'Resumen'; columns = @('k:Indicador', 'v:Valor'); rows = @($kpis.GetEnumerator() | ForEach-Object { [pscustomobject]@{ k = $_.Key; v = $_.Value } }) }) + $sections.ToArray()
-    foreach ($s in $csvSections) {
-        $cols = @($s.columns | ForEach-Object { , ($_ -split ':', 2) })
-        $f = Join-Path $outDir ("reporte-$Type-{0}.csv" -f (& $slug $s.title))
-        $lines = New-Object System.Collections.Generic.List[string]
-        $q = { param($x) '"' + ("$x" -replace '"', '""') + '"' }
-        $lines.Add((($cols | ForEach-Object { & $q $_[1] }) -join $sep))
-        foreach ($r in @($s.rows)) { $lines.Add((($cols | ForEach-Object { & $q (& $cell $r.($_[0])) }) -join $sep)) }
-        [IO.File]::WriteAllLines($f, $lines, [Text.UTF8Encoding]::new($true))
-        $written += $f
-    }
-}
-
-[pscustomobject]@{
-    Carpeta      = $outDir
-    Archivos     = $written
-    Criticos     = $kpis['Críticos']
-    Advertencias = $kpis['Advertencias']
-}
+Complete-Report -Root $root -OutDir $outDir -RawDir $rawDir -BaseName "reporte-$Type" -Title "Reporte vCenter — $($Env.ToUpper()) — $Type" `
+    -Env $Env -Generated $generated -Kpis $kpis -Sorted $sorted -Sections $sections.ToArray() -Format $Format -MdMaxRows $MdMaxRows -CsvDelimiter $CsvDelimiter
