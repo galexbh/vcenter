@@ -9,6 +9,8 @@ import { Badge } from '@astrojs/starlight/components';
 
 Cada hallazgo incluye **severidad**, **categoría**, **objeto**, **evidencia**, **sugerencia**, un **comando de verificación** (solo lectura, no se ejecuta) y un **código de regla** que permite seguirlo entre corridas.
 
+**VMs expuestas** (`impact`): VMs encendidas afectadas por el riesgo. Un datastore cuenta sus VMs; un host o un clúster, las suyas; un hallazgo agrupado, sus elementos; un snapshot, 1. Certificados y licencias no tienen dato. La sección **Prioridades**, al inicio de cada reporte, agrupa críticos y advertencias por regla y los ordena por severidad × VMs expuestas: `peso × (1 + ln(1 + VMs))`, con peso 100 para Crítico y 30 para Advertencia.
+
 **Severidades:** <Badge text="Crítico" variant="danger" /> requiere atención inmediata · <Badge text="Advertencia" variant="caution" /> debe planificarse · <Badge text="Info" variant="note" /> oportunidad de mejora.
 
 ## Reglas del reporte de salud
@@ -99,6 +101,7 @@ Plataforma, servicios, NTP y certificados provienen de vCenter (`object.collect`
 | `perf-balloon` | Ballooning en la ventana | Advertencia |
 | `perf-swap` | Swap-in sostenido (p95 > 0) / solo puntual (máximo > 0) | Advertencia / Info |
 | `perf-net-drops` | Paquetes descartados en el host | Advertencia |
+| `perf-oversized` | VMs sobredimensionadas según CPU p95 y RAM activa p95 (24h o 7d) | Info (Capacidad) |
 | `coverage-perf-counters`, `coverage-perf-hosts`, `coverage-perf-error` | Contadores sin datos, hosts sin métricas o consultas fallidas | Info (Cobertura) |
 
 | Parámetro | Valor por defecto |
@@ -106,6 +109,7 @@ Plataforma, servicios, NTP y certificados provienen de vCenter (`object.collect`
 | `-CpuReadyWarnPct` / `-CpuReadyCritPct` | 5 / 10 |
 | `-DsLatencyWarnMs` / `-DsLatencyCritMs` | 20 / 30 |
 | `-HostCpuWarnPct` / `-HostCpuCritPct` | 85 / 95 |
+| `-RightSizeCpuPct` / `-RightSizeMemPct` | 30 / 40 |
 
 Fórmulas, ventanas, nivel de estadísticas y cobertura en [Revisión de rendimiento](/vcenter/reportes/rendimiento/).
 
@@ -150,7 +154,7 @@ Las sugerencias de cada regla, el riesgo y la referencia de cada categoría de l
 - **Formato:** archivo de datos de PowerShell, leído con `Import-PowerShellDataFile` (lenguaje restringido: no ejecuta código). Se carga una vez por proceso (`Get-FindingText`, `Get-CategoryText` y `Get-NoteText` en `Common.psm1`).
 - **Marcadores:** `{label}` o `{window}` se reemplazan como texto literal; nunca se evalúan.
 - **Estilo:** acción en imperativo, motivo breve y «cambio aprobado» cuando la acción modifica la plataforma. Sin «validar con…» ni «escalar a…»: el equipo que ejecuta la herramienta es el que decide.
-- **Menciones a otras áreas:** solo cuando cambian la acción. Storage en `path-dead` y el dueño de la VM en `snap-age` y `vm-off` (antes de eliminar).
+- **Menciones a otras áreas:** solo cuando cambian la acción. Storage en `path-dead` y el dueño de la VM en `snap-age`, `vm-off` y `perf-oversized` (antes de eliminar o reducir).
 - **Control:** `Test-Reports.ps1` falla si un hallazgo queda sin sugerencia, si una entrada no se usa, si un texto está vacío o si un texto menciona un área fuera de esas excepciones.
 
 ## Del hallazgo a la acción

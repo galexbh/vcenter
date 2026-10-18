@@ -62,7 +62,7 @@ $queries = [ordered]@{
                    'guest.toolsRunningStatus', 'guest.toolsVersionStatus2', 'guest.ipAddress', 'config.template',
                    'snapshot.rootSnapshotList', 'runtime.consolidationNeeded', 'config.version',
                    'config.cpuAllocation.limit', 'config.memoryAllocation.limit', 'config.hardware.device',
-                   'summary.quickStats.balloonedMemory', 'summary.quickStats.swappedMemory', 'summary.quickStats.compressedMemory')
+                   'summary.quickStats.balloonedMemory', 'summary.quickStats.swappedMemory', 'summary.quickStats.compressedMemory', 'datastore')
     hosts      = @('h', 'name', 'parent', 'summary.hardware.numCpuCores', 'summary.hardware.cpuMhz', 'summary.hardware.memorySize',
                    'summary.quickStats.overallCpuUsage', 'summary.quickStats.overallMemoryUsage', 'runtime.connectionState',
                    'runtime.inMaintenanceMode', 'summary.config.product.fullName')
@@ -86,6 +86,7 @@ function Get-IsoDevices($devices) {
 
 $ctx = Initialize-RunContext -Env $Env -FromRaw $FromRaw -OutDir $OutDir -Root $root -MetaFile 'meta.json'
 $Env = $ctx.env; $outDir = $ctx.outDir; $rawDir = $ctx.rawDir; $generated = $ctx.generated; $meta = $ctx.meta
+if ($ctx.fromRaw -and -not $PSBoundParameters.ContainsKey('Type') -and (P $meta 'type')) { $Type = "$($meta.type)" }
 if ($ctx.fromRaw) {
     $data = @{}
     foreach ($k in @($queries.Keys) + 'alarms') { $data[$k] = Read-JsonFile (Join-Path $rawDir "$k.json") @() -AsArray }
@@ -145,7 +146,7 @@ if ($ctx.fromRaw) {
     }
     Save-RawJson $vcenter (Join-Path $rawDir 'vcenter.json')
     foreach ($k in $data.Keys) { Save-RawJson @($data[$k]) (Join-Path $rawDir "$k.json") }
-    Write-RunMeta (Join-Path $rawDir 'meta.json') $Env $generated @{ deviceScan = (-not $SkipDeviceScan) }
+    Write-RunMeta (Join-Path $rawDir 'meta.json') $Env $generated @{ deviceScan = (-not $SkipDeviceScan); type = $Type }
 }
 
 # --- Modelo -------------------------------------------------------------------
@@ -191,6 +192,7 @@ $vms = foreach ($v in $data.vms) {
         balloonMB = [long](P $v 'summary.quickStats.balloonedMemory' 0)
         swapMB    = [long](P $v 'summary.quickStats.swappedMemory' 0)
         compMB    = [math]::Round([double](P $v 'summary.quickStats.compressedMemory' 0) / 1024, 1)
+        dsIds     = @(P $v 'datastore' @() | ForEach-Object { "$(P $_ 'value' '')" })
     }
 }
 $vms = @($vms | Sort-Object name)
@@ -229,9 +231,9 @@ function Get-N1($clusterId, [string]$res) {
     # Uso actual frente a la capacidad que queda al perder el host de mayor capacidad del clúster.
     $act = if ($capByCl[$clusterId]) { $capByCl[$clusterId].ToArray() } else { @() }
     if ($act.Count -lt 2) { return [pscustomobject]@{ hosts = $act.Count; pct = $null; used = 0; left = 0 } }
-    $cap = ($act | Measure-Object "${res}Cap" -Sum).Sum; $max = ($act | Measure-Object "${res}Cap" -Maximum).Maximum
-    $used = ($act | Measure-Object "${res}Used" -Sum).Sum; $left = $cap - $max
-    [pscustomobject]@{ hosts = $act.Count; pct = $(if ($left -gt 0) { [math]::Round(100 * $used / $left, 1) } else { $null }); used = $used; left = $left }
+    $cap = (Get-Sum $act "${res}Cap"); $max = ($act | Measure-Object "${res}Cap" -Maximum).Maximum
+    $used = (Get-Sum $act "${res}Used"); $left = $cap - $max
+    [pscustomobject]@{ hosts = $act.Count; pct = $(if ($left -gt 0) { Get-Percent $used $left } else { $null }); used = $used; left = $left }
 }
 
 $clusters = foreach ($c in $data.compute) {
@@ -239,8 +241,8 @@ $clusters = foreach ($c in $data.compute) {
     $on = if ($onByCl[$c._moref]) { $onByCl[$c._moref].ToArray() } else { @() }
     $cores = [int](P $c 'summary.numCpuCores' 0)
     $memGB = [math]::Round([double](P $c 'summary.totalMemory' 0) / $GB, 1)
-    $vcpu = ($on | Measure-Object vcpu -Sum).Sum
-    $vmem = [math]::Round((($on | Measure-Object memMB -Sum).Sum) / 1024, 1)
+    $vcpu = (Get-Sum $on 'vcpu')
+    $vmem = [math]::Round(((Get-Sum $on 'memMB')) / 1024, 1)
     $cc = $clusterCfg[$c._moref]
     $n1m = Get-N1 $c._moref 'mem'; $n1c = Get-N1 $c._moref 'cpu'
     [pscustomobject]@{
@@ -263,6 +265,7 @@ $clusters = foreach ($c in $data.compute) {
         vcpuRatio = if ($cores) { [math]::Round($vcpu / $cores, 2) } else { 0 }
         vmemGB    = $vmem
         memRatio  = if ($memGB) { [math]::Round($vmem / $memGB, 2) } else { 0 }
+        avgVmMB   = if ($on.Count) { [double]($on | Measure-Object memMB -Average).Average } else { 0 }
     }
 }
 $clusters = @($clusters | Sort-Object name)
@@ -279,8 +282,8 @@ $hosts = @($data.hosts | ForEach-Object {
             version = P $_ 'summary.config.product.fullName' ''
             cores   = $cores
             memGB   = [math]::Round($memMB / 1024, 1)
-            cpuPct  = if ($cores * $mhz) { [math]::Round(100 * [double](P $_ 'summary.quickStats.overallCpuUsage' 0) / ($cores * $mhz), 1) } else { 0 }
-            memPct  = if ($memMB) { [math]::Round(100 * [double](P $_ 'summary.quickStats.overallMemoryUsage' 0) / $memMB, 1) } else { 0 }
+            cpuPct  = (Get-Percent (P $_ 'summary.quickStats.overallCpuUsage' 0) ($cores * $mhz)) ?? 0
+            memPct  = (Get-Percent (P $_ 'summary.quickStats.overallMemoryUsage' 0) $memMB) ?? 0
         } } | Sort-Object name)
 
 $datastores = @($data.datastores | ForEach-Object {
@@ -292,8 +295,8 @@ $datastores = @($data.datastores | ForEach-Object {
             accessible = [bool](P $_ 'summary.accessible' $true)
             capGB      = [math]::Round($cap / $GB, 1)
             freeGB     = [math]::Round($free / $GB, 1)
-            usedPct    = if ($cap) { [math]::Round(100 * ($cap - $free) / $cap, 1) } else { 0 }
-            provPct    = if ($cap) { [math]::Round(100 * ($cap - $free + $unc) / $cap, 1) } else { 0 }
+            usedPct    = (Get-Percent ($cap - $free) $cap) ?? 0
+            provPct    = (Get-Percent ($cap - $free + $unc) $cap) ?? 0
         } } | Sort-Object usedPct -Descending)
 
 # Resource pools con límite (se excluye el pool raíz «Resources» de cada clúster o host).
@@ -356,6 +359,7 @@ foreach ($c in $clusters | Where-Object { $_.isCluster }) {
         foreach ($r in @(@{ k = 'mem'; n = $c.n1Mem; label = 'Memoria'; fmt = { param($x) "$([math]::Round($x / 1024)) GB" } }, @{ k = 'cpu'; n = $c.n1Cpu; label = 'CPU'; fmt = { param($x) "$([math]::Round($x / 1000)) GHz" } })) {
             $n = $r.n; if ($null -eq $n.pct) { continue }
             $ev = "$($r.label) en uso $(& $r.fmt $n.used); sin el host mayor quedan $(& $r.fmt $n.left) ($($n.pct)% de uso) con $($n.hosts) hosts activos"
+            if ($r.k -eq 'mem' -and $n.pct -gt 100 -and $c.avgVmMB -gt 0) { $ev += "; ~$([math]::Ceiling(($n.used - $n.left) / $c.avgVmMB)) VMs sin capacidad para reiniciarse" }
             if ($n.pct -gt 100) { Add-Finding 'Crítico' 'Capacidad' $c.name $ev '' "cl-n1-$($r.k)" }
             elseif ($n.pct -ge $N1WarnPct) { Add-Finding 'Advertencia' 'Capacidad' $c.name $ev '' "cl-n1-$($r.k)" }
         }
@@ -423,6 +427,18 @@ if ($vcenter) {
     }
 }
 
+# VMs encendidas expuestas por entidad (VM, datastore, host, clúster), para el impacto de cada hallazgo.
+$exposed = @{}
+foreach ($v in $realVms) { $exposed[$v.name] = 1 }
+if (@($onVms | Where-Object { $_.dsIds.Count }).Count) {
+    $onByDs = @{}; foreach ($v in $onVms) { foreach ($id in $v.dsIds) { $onByDs[$id] = 1 + [int]$onByDs[$id] } }
+    foreach ($d in $datastores) { $exposed[$d.name] = [int]$onByDs[$d.id] }
+}
+$onByHost = @{}; foreach ($v in $onVms) { if ($v.host) { $onByHost[$v.host] = 1 + [int]$onByHost[$v.host] } }
+foreach ($h in $hosts) { $exposed[$h.name] = [int]$onByHost[$h.name] }
+foreach ($c in $clusters) { $exposed[$c.name] = $c.vmsOn }
+Set-FindingImpact $findings $exposed -SkipRules 'cert-vc', 'license', 'vm-off', 'rp-limit'
+
 $sorted = Sort-ReportFinding $findings
 
 # --- Secciones -------------------------------------------------------------------
@@ -440,26 +456,22 @@ $kpis = [ordered]@{
 }
 
 # --- Métricas (paneles) -----------------------------------------------------------
-$pctOf = { param($a, $b) if ($b) { [math]::Round(100 * $a / $b, 1) } else { $null } }
-$fmtPct = { param($v) if ($null -eq $v) { '—' } else { '{0:0.#} %' -f $v } }
-
 # Capacidad y holgura por clúster: uso físico (quickStats), uso tras perder el host mayor y VMs que aún caben.
 $capCards = foreach ($c in @($clusters | Where-Object { $_.hosts -gt 0 })) {
     $act = if ($capByCl[$c.id]) { $capByCl[$c.id].ToArray() } else { @() }
-    $cpuCap = [double]($act | Measure-Object cpuCap -Sum).Sum; $cpuUsed = [double]($act | Measure-Object cpuUsed -Sum).Sum
-    $memCap = [double]($act | Measure-Object memCap -Sum).Sum; $memUsed = [double]($act | Measure-Object memUsed -Sum).Sum
-    $cpuP = & $pctOf $cpuUsed $cpuCap; $memP = & $pctOf $memUsed $memCap
-    New-PanelCard -Group $c.name -Key 'cl-cpu-used' -Label 'CPU en uso' -Value (& $fmtPct $cpuP) -Number $cpuP -Pct $cpuP -Level (Get-MetricLevel $cpuP 70 85) -Note ('{0:0.#} de {1:0.#} GHz' -f ($cpuUsed / 1000), ($cpuCap / 1000))
-    New-PanelCard -Group $c.name -Key 'cl-mem-used' -Label 'RAM en uso' -Value (& $fmtPct $memP) -Number $memP -Pct $memP -Level (Get-MetricLevel $memP 75 90) -Note ('{0:0.#} de {1:0.#} GB' -f ($memUsed / 1024), ($memCap / 1024))
+    $cpuCap = [double](Get-Sum $act 'cpuCap'); $cpuUsed = [double](Get-Sum $act 'cpuUsed')
+    $memCap = [double](Get-Sum $act 'memCap'); $memUsed = [double](Get-Sum $act 'memUsed')
+    $cpuP = Get-Percent $cpuUsed $cpuCap; $memP = Get-Percent $memUsed $memCap
+    New-PanelCard -Group $c.name -Key 'cl-cpu-used' -Label 'CPU en uso' -Value (Format-Percent $cpuP) -Number $cpuP -Pct $cpuP -Level (Get-MetricLevel $cpuP 70 85) -Note ('{0:0.#} de {1:0.#} GHz' -f ($cpuUsed / 1000), ($cpuCap / 1000))
+    New-PanelCard -Group $c.name -Key 'cl-mem-used' -Label 'RAM en uso' -Value (Format-Percent $memP) -Number $memP -Pct $memP -Level (Get-MetricLevel $memP 75 90) -Note ('{0:0.#} de {1:0.#} GB' -f ($memUsed / 1024), ($memCap / 1024))
     if ($null -ne $c.n1MemPct) {
         $cpuN1 = if ($null -ne $c.n1CpuPct) { [double]$c.n1CpuPct } else { 0 }
         $n1 = [math]::Max([double]$c.n1MemPct, $cpuN1)
         $res = if ($cpuN1 -gt [double]$c.n1MemPct) { 'CPU' } else { 'RAM' }
-        New-PanelCard -Group $c.name -Key 'cl-n1' -Label 'Uso si falla el host mayor' -Value (& $fmtPct $n1) -Number $n1 -Pct $n1 -Level (Get-MetricLevel $n1 $N1WarnPct 100) `
+        New-PanelCard -Group $c.name -Key 'cl-n1' -Label 'Uso si falla el host mayor' -Value (Format-Percent $n1) -Number $n1 -Pct $n1 -Level (Get-MetricLevel $n1 $N1WarnPct 100) `
             -Note $(if ($n1 -gt 100) { "No cabe ($res): HA no reinicia todo" } else { "Recurso limitante: $res" })
         # VMs que aún caben con N+1, por RAM, con el tamaño medio de las VMs encendidas del clúster.
-        $on = if ($onByCl[$c.id]) { $onByCl[$c.id].ToArray() } else { @() }
-        $avgMB = if ($on.Count) { [double]($on | Measure-Object memMB -Average).Average } else { 0 }
+        $avgMB = $c.avgVmMB
         if ($avgMB -gt 0) {
             $fit = [int][math]::Max(0, [math]::Floor(($c.n1Mem.left - $c.n1Mem.used) / $avgMB))
             New-PanelCard -Group $c.name -Key 'cl-fit' -Label 'VMs que aún caben (N+1)' -Value "$fit" -Number $fit -Level $(if ($fit -eq 0) { 'crit' } elseif ($fit -lt 3) { 'warn' } else { 'ok' }) `
@@ -475,47 +487,35 @@ $capCards = foreach ($c in @($clusters | Where-Object { $_.hosts -gt 0 })) {
 
 # Datastores: totales y los más llenos, con los días hasta el 90 % según la corrida anterior del entorno.
 # Historial: carpetas hermanas de la salida (reports/<env>/); dentro de una auditoría, las de la auditoría.
-$prevDs = $null; $prevAt = $null
-$here = (Resolve-Path -LiteralPath $outDir).Path
-$envDir = Split-Path $here -Parent
-if (Test-Path -LiteralPath (Join-Path $envDir 'raw/meta-audit.json')) { $envDir = Split-Path $envDir -Parent }
-if ($envDir -and (Test-Path -LiteralPath $envDir)) {
-    $cands = foreach ($d in Get-ChildItem -LiteralPath $envDir -Directory) {
-        foreach ($r in @((Join-Path $d.FullName 'raw'), (Join-Path $d.FullName 'inventario/raw'))) {
-            $mf = Join-Path $r 'meta.json'; $df = Join-Path $r 'datastores.json'
-            if ((Split-Path $r -Parent) -ne $here -and (Test-Path -LiteralPath $mf) -and (Test-Path -LiteralPath $df)) {
-                $g = $null; try { $pm = Get-Content -LiteralPath $mf -Raw | ConvertFrom-Json; if ("$(P $pm 'env' '')" -eq $Env) { $g = [datetime]$pm.generated } } catch { }
-                # Al menos una hora antes: dos corridas seguidas no muestran crecimiento útil.
-                if ($g -and $g -lt $generated.AddHours(-1)) { [pscustomobject]@{ at = $g; file = $df } }
-            }
-        }
-    }
-    $last = @($cands | Sort-Object at -Descending | Select-Object -First 1)
-    if ($last.Count) { $prevAt = $last[0].at; $prevDs = @{}; foreach ($x in (Read-JsonFile $last[0].file @() -AsArray)) { $prevDs["$(P $x '_moref' '')"] = $x } }
-}
+# Al menos una hora antes: dos corridas seguidas no muestran crecimiento útil.
+$prev = Find-PreviousRun -OutDir $outDir -Env $Env -Before $generated -RawFile 'datastores.json' -SubDirs '', 'inventario' -MinGapHours 1
+$prevAt = if ($prev) { $prev.at } else { $null }
+$prevDs = @{}; if ($prev) { foreach ($x in (Read-JsonFile (Join-Path $prev.rawDir 'datastores.json') @() -AsArray)) { $prevDs["$(P $x '_moref' '')"] = $x } }
 $daysTo90 = {
     param($d)
-    if (-not $prevDs) { return $null }
     $p = $prevDs[$d.id]; if (-not $p) { return $null }
     $usedPrev = ([double](P $p 'summary.capacity' 0) - [double](P $p 'summary.freeSpace' 0)) / $GB
     $usedNow = $d.capGB - $d.freeGB
-    $perDay = ($usedNow - $usedPrev) / [math]::Max(0.04, ($generated - $prevAt).TotalDays)
-    if ($perDay -le 0) { return [double]::PositiveInfinity }
-    [math]::Max([double]0, [math]::Floor((0.9 * $d.capGB - $usedNow) / $perDay))
+    Get-DaysToPct -CapGB $d.capGB -UsedGB $usedNow -RatePerDay (($usedNow - $usedPrev) / [math]::Max(0.04, ($generated - $prevAt).TotalDays))
 }
 $okDs = @($datastores | Where-Object accessible)
-$capTB = [math]::Round([double]($okDs | Measure-Object capGB -Sum).Sum / 1024, 2); $freeTB = [math]::Round([double]($okDs | Measure-Object freeGB -Sum).Sum / 1024, 2)
-$dsUsedP = & $pctOf ($capTB - $freeTB) $capTB
+$capTB = [math]::Round([double](Get-Sum $okDs 'capGB') / 1024, 2); $freeTB = [math]::Round([double](Get-Sum $okDs 'freeGB') / 1024, 2)
+$dsUsedP = Get-Percent ($capTB - $freeTB) $capTB
 $overN = @($okDs | Where-Object { $_.usedPct -ge $DatastoreWarnPct }).Count
 $critN = @($okDs | Where-Object { $_.usedPct -ge $DatastoreCritPct }).Count
 $dsCards = @(
-    New-PanelCard -Key 'ds-total' -Label 'Almacenamiento en uso' -Value (& $fmtPct $dsUsedP) -Number $dsUsedP -Pct $dsUsedP -Level (Get-MetricLevel $dsUsedP $DatastoreWarnPct $DatastoreCritPct) -Note ('{0:0.##} TB libres de {1:0.##} TB' -f $freeTB, $capTB)
+    New-PanelCard -Key 'ds-total' -Label 'Almacenamiento en uso' -Value (Format-Percent $dsUsedP) -Number $dsUsedP -Pct $dsUsedP -Level (Get-MetricLevel $dsUsedP $DatastoreWarnPct $DatastoreCritPct) -Note ('{0:0.##} TB libres de {1:0.##} TB' -f $freeTB, $capTB)
     New-PanelCard -Key 'ds-over' -Label "Datastores ≥ $DatastoreWarnPct %" -Value "$overN de $($okDs.Count)" -Number $overN -Level $(if ($critN) { 'crit' } elseif ($overN) { 'warn' } else { 'ok' }) `
         -Note $(if (@($datastores).Count -ne $okDs.Count) { "$(@($datastores).Count - $okDs.Count) no accesibles" } else { '' })
+    # Disco y recursos asignados a VMs apagadas: capacidad que se recupera dándolas de baja.
+    $offGB = [math]::Round([double](Get-Sum $off 'usedGB'), 1)
+    $offP = Get-Percent $offGB (($capTB - $freeTB) * 1024)
+    New-PanelCard -Key 'off-disk' -Label 'Disco en VMs apagadas' -Value ('{0:0.#} GB' -f $offGB) -Number $offGB -Pct $offP -Level $(if ($offP -ge 10) { 'warn' } else { '' }) `
+        -Note "$(Format-Percent $offP) del usado · $($off.Count) VMs, $((Get-Sum $off 'vcpu')) vCPU y $([math]::Round([double](Get-Sum $off 'memMB') / 1024, 1)) GB de RAM asignados"
     foreach ($d in @($okDs | Select-Object -First 5)) {
         $dd = & $daysTo90 $d
         $eta = if ($d.usedPct -ge 90) { ' · ya supera el 90 %' } elseif ($null -eq $dd) { '' } elseif ([double]::IsPositiveInfinity($dd)) { ' · sin crecimiento' } elseif ($dd -gt 3650) { ' · más de 10 años al 90 %' } else { " · 90 % en ~$dd días" }
-        New-PanelCard -Group 'Más llenos' -Key "ds-used:$($d.id)" -Label $d.name -Value (& $fmtPct $d.usedPct) -Number $d.usedPct -Pct $d.usedPct -Level (Get-MetricLevel $d.usedPct $DatastoreWarnPct $DatastoreCritPct) `
+        New-PanelCard -Group 'Más llenos' -Key "ds-used:$($d.id)" -Label $d.name -Value (Format-Percent $d.usedPct) -Number $d.usedPct -Pct $d.usedPct -Level (Get-MetricLevel $d.usedPct $DatastoreWarnPct $DatastoreCritPct) `
             -Note (('libre {0:0.#} GB' -f $d.freeGB) + $eta)
     }
 )
@@ -523,20 +523,20 @@ $dsNote = if ($prevAt) { "Crecimiento calculado contra la corrida del $($prevAt.
 
 # Salud e higiene en %.
 $toolsOk = @($onVms | Where-Object { $_.toolsVer -in 'guestToolsCurrent', 'guestToolsUnmanaged' }).Count
-$toolsP = & $pctOf $toolsOk $onVms.Count
+$toolsP = Get-Percent $toolsOk $onVms.Count
 $hwKnown = @($realVms | Where-Object hwNum -gt 0); $hwOk = @($hwKnown | Where-Object hwNum -ge $MinHwVersion).Count
-$hwP = & $pctOf $hwOk $hwKnown.Count
-$onP = & $pctOf $onVms.Count $realVms.Count
-$conn = @($hosts | Where-Object state -eq 'connected').Count; $connP = & $pctOf $conn $hosts.Count
+$hwP = Get-Percent $hwOk $hwKnown.Count
+$onP = Get-Percent $onVms.Count $realVms.Count
+$conn = @($hosts | Where-Object state -eq 'connected').Count; $connP = Get-Percent $conn $hosts.Count
 $maintN = @($hosts | Where-Object maint).Count
 $snapVms = @($snapRows | Select-Object -ExpandProperty vm -Unique).Count
 $oldest = if ($snapRows.Count) { [int]$snapRows[0].ageDays } else { $null }
 $healthCards = @(
-    New-PanelCard -Key 'hosts-connected' -Label 'Hosts conectados' -Value (& $fmtPct $connP) -Number $connP -Pct $connP -Level $(if ($null -eq $connP) { '' } elseif ($connP -lt 100) { 'crit' } else { 'ok' }) `
+    New-PanelCard -Key 'hosts-connected' -Label 'Hosts conectados' -Value (Format-Percent $connP) -Number $connP -Pct $connP -Level $(if ($null -eq $connP) { '' } elseif ($connP -lt 100) { 'crit' } else { 'ok' }) `
         -Note "$conn de $($hosts.Count)$(if ($maintN) { " · $maintN en mantenimiento" })"
-    New-PanelCard -Key 'tools-current' -Label 'VMware Tools al día' -Value (& $fmtPct $toolsP) -Number $toolsP -Pct $toolsP -Level (Get-MetricLevel $toolsP 90 75 -LowerIsWorse) -Note "$toolsOk de $($onVms.Count) VMs encendidas"
-    New-PanelCard -Key 'hw-current' -Label "Hardware virtual ≥ vmx-$MinHwVersion" -Value (& $fmtPct $hwP) -Number $hwP -Pct $hwP -Level (Get-MetricLevel $hwP 90 75 -LowerIsWorse) -Note "$hwOk de $($hwKnown.Count) VMs"
-    New-PanelCard -Key 'vms-on' -Label 'VMs encendidas' -Value (& $fmtPct $onP) -Number $onP -Pct $onP -Note "$($off.Count) apagadas"
+    New-PanelCard -Key 'tools-current' -Label 'VMware Tools al día' -Value (Format-Percent $toolsP) -Number $toolsP -Pct $toolsP -Level (Get-MetricLevel $toolsP 90 75 -LowerIsWorse) -Note "$toolsOk de $($onVms.Count) VMs encendidas"
+    New-PanelCard -Key 'hw-current' -Label "Hardware virtual ≥ vmx-$MinHwVersion" -Value (Format-Percent $hwP) -Number $hwP -Pct $hwP -Level (Get-MetricLevel $hwP 90 75 -LowerIsWorse) -Note "$hwOk de $($hwKnown.Count) VMs"
+    New-PanelCard -Key 'vms-on' -Label 'VMs encendidas' -Value (Format-Percent $onP) -Number $onP -Pct $onP -Note "$($off.Count) apagadas"
     New-PanelCard -Key 'snap-vms' -Label 'VMs con snapshot' -Value "$snapVms" -Number $snapVms -Level $(if ($null -eq $oldest) { 'ok' } elseif ($oldest -ge $SnapshotCritDays) { 'crit' } elseif ($oldest -ge $SnapshotWarnDays) { 'warn' } else { 'ok' }) `
         -Note $(if ($null -ne $oldest) { "el más antiguo: $oldest días" } else { 'sin snapshots' })
 )

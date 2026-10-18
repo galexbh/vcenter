@@ -121,15 +121,25 @@ if ($ctx.fromRaw) {
     [Console]::Error.WriteLine('Listando hosts y su configuración conocida por vCenter...')
     $inv = Invoke-GovcBatch -Env $Env -Commands @(
         , (@('object.collect', '-json', '-type', 'h', '/') + $hostProps)
-        , @('object.collect', '-json', '-type', 'r', '/', 'name'))
+        , @('object.collect', '-json', '-type', 'r', '/', 'name')
+        , @('object.collect', '-json', '-type', 'm', '/', 'runtime.host', 'runtime.powerState'))
     if ($inv[0].exitCode -ne 0) { throw "Falló object.collect de hosts: $(Get-GovcBatchError $inv[0])" }
     $hRaw = @($inv[0].stdout | ConvertFrom-GovcCollect)
     $crName = @{}; foreach ($c in @($inv[1].stdout | ConvertFrom-GovcCollect)) { $crName[$c._moref] = $c.name }
+    # VMs encendidas por host: VMs expuestas de cada hallazgo (si la consulta falla, el impacto queda sin dato).
+    $vmOn = @{}
+    if ($inv[2].exitCode -eq 0) {
+        foreach ($v in @($inv[2].stdout | ConvertFrom-GovcCollect)) {
+            $rh = P $v 'runtime.host'
+            if ($rh -and (P $v 'runtime.powerState') -eq 'poweredOn') { $vmOn[$rh.value] = 1 + [int]$vmOn[$rh.value] }
+        }
+    }
 
     $byName = @{}
     $hostList = @($hRaw | ForEach-Object {
             $byName[$_.name] = $_
-            [pscustomobject]@{ id = $_._moref; name = $_.name; cluster = $crName[$_.parent.value]; state = P $_ 'runtime.connectionState' '' } } |
+            [pscustomobject]@{ id = $_._moref; name = $_.name; cluster = $crName[$_.parent.value]; state = P $_ 'runtime.connectionState' ''
+                vmCount = $(if ($inv[2].exitCode -eq 0) { [int]$vmOn[$_._moref] } else { $null }) } } |
         Where-Object { (-not $Cluster -or $_.cluster -in $Cluster) -and (-not $Hosts -or $_.name -in $Hosts) } |
         Sort-Object cluster, name)
     if (-not $hostList.Count) { throw 'Ningún host coincide con el filtro.' }
@@ -329,12 +339,19 @@ if ($sysRows.Count) {
     $sections.Add((New-ReportTable 'Configuración del sistema' @('cluster:Clúster', 'host:Host', 'ntp:NTP', 'ntpServers:Servidores NTP', 'syslog:Syslog remoto', 'coredump:Coredump', 'platform:Plataforma', 'ssh:SSH', 'shell:Shell') (@($sysRows.Values | ForEach-Object { [pscustomobject]$_ } | Sort-Object cluster, host))))
 }
 
+# VMs expuestas: hallazgos de host (VMs del host) y de clúster (suma de sus hosts).
+$exposed = @{}
+foreach ($h in @($hostList | Where-Object { $null -ne (P $_ 'vmCount') })) {
+    $exposed[$h.name] = [int]$h.vmCount
+    if ($h.cluster) { $exposed["$($h.cluster)"] = [int]$exposed["$($h.cluster)"] + [int]$h.vmCount }
+}
+Set-FindingImpact $findings $exposed
+
 $sorted = Sort-ReportFinding $findings
 
 # Panel: cobertura de los chequeos y hosts/clústeres sin hallazgos (homogeneidad).
-$pctOf = { param($a, $b) if ($b) { [math]::Round(100 * $a / $b, 1) } else { $null } }
 $cells = 0; $okCells = 0; foreach ($c in $Checks) { $cells += $results[$c].Count; $okCells += $okBy[$c].Count }
-$covP = & $pctOf $okCells $cells
+$covP = Get-Percent $okCells $cells
 $real = @($sorted | Where-Object category -ne 'Cobertura')
 $hitObj = @($real | Where-Object severity -ne 'Info' | ForEach-Object { ("$($_.object)" -split ' / ', 2)[0] } | Sort-Object -Unique)
 $hostNames = @($hostList.name); $clNames = @($hostList.cluster | Where-Object { $_ } | Sort-Object -Unique)
@@ -342,14 +359,14 @@ $cleanHosts = @($hostNames | Where-Object { $_ -notin $hitObj }).Count
 $driftRules = 'vib-drift', 'nic-speed', 'nic-mtu', 'ntp-servers', 'platform-mixed'
 $driftCl = @($real | Where-Object rule -in $driftRules | ForEach-Object { ("$($_.object)" -split ' / ', 2)[0] } | Sort-Object -Unique)
 $cleanCl = @($clNames | Where-Object { $_ -notin $driftCl }).Count
-$hostP = & $pctOf $cleanHosts $hostNames.Count; $clP = & $pctOf $cleanCl $clNames.Count
+$hostP = Get-Percent $cleanHosts $hostNames.Count; $clP = Get-Percent $cleanCl $clNames.Count
 $hcCards = @(
-    New-PanelCard -Key 'hc-coverage' -Label 'Cobertura de los chequeos' -Value ('{0:0.#} %' -f $covP) -Number $covP -Pct $covP -Level (Get-MetricLevel $covP 95 80 -LowerIsWorse) -Note "$okCells de $cells (chequeo × host)"
-    New-PanelCard -Key 'hc-clean-hosts' -Label 'Hosts sin críticos ni advertencias' -Value ('{0:0.#} %' -f $hostP) -Number $hostP -Pct $hostP -Level (Get-MetricLevel $hostP 80 50 -LowerIsWorse) -Note "$cleanHosts de $($hostNames.Count) hosts"
-    New-PanelCard -Key 'hc-no-drift' -Label 'Clústeres homogéneos' -Value ('{0:0.#} %' -f $clP) -Number $clP -Pct $clP -Level $(if ($null -eq $clP) { '' } elseif ($clP -lt 100) { 'warn' } else { 'ok' }) -Note "$cleanCl de $($clNames.Count) sin drift de VIBs, NIC, NTP o modelo"
+    New-PanelCard -Key 'hc-coverage' -Label 'Cobertura de los chequeos' -Value (Format-Percent $covP) -Number $covP -Pct $covP -Level (Get-MetricLevel $covP 95 80 -LowerIsWorse) -Note "$okCells de $cells (chequeo × host)"
+    New-PanelCard -Key 'hc-clean-hosts' -Label 'Hosts sin críticos ni advertencias' -Value (Format-Percent $hostP) -Number $hostP -Pct $hostP -Level (Get-MetricLevel $hostP 80 50 -LowerIsWorse) -Note "$cleanHosts de $($hostNames.Count) hosts"
+    New-PanelCard -Key 'hc-no-drift' -Label 'Clústeres homogéneos' -Value (Format-Percent $clP) -Number $clP -Pct $clP -Level $(if ($null -eq $clP) { '' } elseif ($clP -lt 100) { 'warn' } else { 'ok' }) -Note "$cleanCl de $($clNames.Count) sin drift de VIBs, NIC, NTP o modelo"
     foreach ($c in $Checks) {
-        $n = $results[$c].Count; $p = & $pctOf $okBy[$c].Count $n
-        New-PanelCard -Group 'Cobertura por chequeo' -Key "hc-check:$c" -Label $c -Value ('{0:0.#} %' -f $p) -Number $p -Pct $p -Level (Get-MetricLevel $p 95 80 -LowerIsWorse) -Note "$($okBy[$c].Count) de $n hosts"
+        $n = $results[$c].Count; $p = Get-Percent $okBy[$c].Count $n
+        New-PanelCard -Group 'Cobertura por chequeo' -Key "hc-check:$c" -Label $c -Value (Format-Percent $p) -Number $p -Pct $p -Level (Get-MetricLevel $p 95 80 -LowerIsWorse) -Note "$($okBy[$c].Count) de $n hosts"
     }
 )
 $sections.Insert(0, (New-ReportPanel 'Cobertura y homogeneidad' $hcCards))

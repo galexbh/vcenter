@@ -13,4 +13,5 @@ Sigue la skill `govc-esxcli`:
    - Críticos (paths muertos) y advertencias agrupadas: drift de VIBs/drivers, red física, NTP, syslog, SSH/Shell.
    - Hosts sin cobertura y su causa.
 4. Para cada grupo, da la acción sugerida y el comando de revisión. Los cambios en hosts son destructivos: solo propuestas, con cambio aprobado.
-5. Entrega las rutas completas del reporte (uso interno, no se versiona).
+5. Redacta el análisis (skill `govc-report`, *Análisis de Claude*) y regenera con `-FromRaw`.
+6. Entrega las rutas completas del reporte (uso interno, no se versiona).

@@ -12,7 +12,8 @@ Sigue la skill `govc-health` (umbrales en `govc-report`):
    Si no, `./scripts/Invoke-PerfCheck.ps1 -Env <entorno> [-Cluster '<clúster>'] [-Window <ventana>]`.
    Para recalcular con otros umbrales sin consultar vCenter: `./scripts/Invoke-PerfCheck.ps1 -FromRaw <carpeta de una revisión anterior> [-CpuReadyWarnPct …]` (conserva la ventana y el alcance originales).
 2. Resume desde `raw/summary.json` (ventana, intervalo, hosts, VMs evaluadas, conteos) y `raw/findings.json` (ya ordenado) de la carpeta generada; abre `perf-check.md` solo para una tabla concreta.
-   - Reglas: `perf-cpu-ready`, `perf-ds-latency`, `perf-host-cpu`, `perf-balloon`, `perf-swap`, `perf-net-drops`.
+   - Reglas: `perf-cpu-ready`, `perf-ds-latency`, `perf-host-cpu`, `perf-balloon`, `perf-swap`, `perf-net-drops` y `perf-oversized` (right-sizing, solo 24h y 7d; tabla *Right-sizing* y panel *Capacidad recuperable*).
    - Cobertura (`coverage-perf-counters`, `coverage-perf-hosts`, `coverage-perf-error`): un contador sin datos es una limitación (nivel de estadísticas del intervalo), **no** «sin problema». Sugiere `-Window 1h` (tiempo real) para cubrirlo.
 3. Entrega: hallazgos priorizados con objeto, evidencia (p95/máx.), acción y comando de revisión; ruta de la carpeta.
 4. Usa el panel *Rendimiento* (`raw/metrics.json`: `perf-ready-worst`, `perf-ds-worst`, `perf-host-worst`) y prioriza por impacto. Los umbrales son práctica común, no política interna; ajústalos con los parámetros del script. Cambiar el nivel de estadísticas es una escritura: solo como propuesta.
+5. Redacta el análisis (skill `govc-report`, *Análisis de Claude*) y regenera con `-FromRaw`.

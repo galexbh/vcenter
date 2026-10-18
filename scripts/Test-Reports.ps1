@@ -1,7 +1,8 @@
 <#
 .SYNOPSIS
   Pruebas de regresión de los reportes: New-Report, CSV, métricas, Invoke-HostCheck, Invoke-PerfCheck,
-  Invoke-Audit (con evolución), catálogo de textos y Compare-Report, sobre datos demo generados con New-DemoData.ps1 -EdgeCases. No contacta vCenter.
+  Invoke-Audit (con evolución), impacto y prioridades, right-sizing, análisis de Claude, catálogo de textos,
+  ausencia de helpers duplicados y Compare-Report, sobre datos demo generados con New-DemoData.ps1 -EdgeCases. No contacta vCenter.
 
 .DESCRIPTION
   Trabaja en una carpeta temporal (%TEMP%\govc-tests-<guid>) que se elimina al terminar.
@@ -103,6 +104,64 @@ try {
     Check 'HTML: ancho de barra entre 0 y 100' (-not @([regex]::Matches($html, 'style="width:(\d+)%"') | Where-Object { [int]$_.Groups[1].Value -gt 100 }).Count)
     Check 'MD: paneles con barra de texto' ($md -match '## Capacidad y holgura' -and $md -match '█')
     Check 'CSV: panel exportado' (Test-Path (Join-Path $rep 'reporte-all-capacidad-y-holgura.csv'))
+    # VMs expuestas (impacto) con valores conocidos de los datos demo.
+    $rawHosts = @(Json (Join-Path $rep 'raw/hosts.json'))
+    $onRawVms = @($realVms | Where-Object { $_.'runtime.powerState' -eq 'poweredOn' })
+    $ds01Vms = @($onRawVms | Where-Object { @($_.datastore | ForEach-Object { $_.value }) -contains 'datastore-11' }).Count
+    $cl02Hosts = @($rawHosts | Where-Object { $_.parent.value -eq 'domain-c20' } | ForEach-Object { $_._moref })
+    $cl02Vms = @($onRawVms | Where-Object { $_.PSObject.Properties['runtime.host'] -and $_.'runtime.host'.value -in $cl02Hosts }).Count
+    $fDs = $nf | Where-Object { $_.rule -eq 'ds-used' -and $_.object -eq 'DS-PROD-01' }
+    $fN1 = $nf | Where-Object { $_.rule -eq 'cl-n1-mem' -and $_.object -eq 'CL-PROD-02' }
+    Check 'Impacto: VMs encendidas de DS-PROD-01' ($fDs.impact -eq $ds01Vms -and $ds01Vms -gt 0) "$($fDs.impact) vs $ds01Vms"
+    Check 'Impacto: VMs encendidas de CL-PROD-02 (N+1)' ($fN1.impact -eq $cl02Vms -and $cl02Vms -gt 0) "$($fN1.impact) vs $cl02Vms"
+    Check 'Impacto: N+1 estima las VMs sin capacidad para reiniciarse' ("$($fN1.evidence)" -match '~\d+ VMs sin capacidad para reiniciarse')
+    Check 'Impacto: snapshot = 1 VM; certificado sin dato' ((@($nf | Where-Object rule -eq 'snap-age')[0].impact -eq 1) -and $null -eq ($nf | Where-Object rule -eq 'cert-vc').impact)
+    Check 'HTML: columna VMs expuestas' ($html -match '<th>VMs expuestas</th>')
+    # Prioridades: primera sección; el crítico con más VMs va antes que el crítico con una.
+    Check 'HTML: Prioridades es la primera sección' (([regex]::Match($html, '<h2>([^<]+)')).Groups[1].Value -match '^Prioridades')
+    $pr = @(Get-ReportPriority @(
+            [pscustomobject]@{ severity = 'Crítico'; category = 'A'; object = 'uno'; evidence = 'e'; suggestion = 's1'; command = ''; rule = 'r1'; impact = 1 }
+            [pscustomobject]@{ severity = 'Crítico'; category = 'A'; object = 'cuarenta'; evidence = 'e'; suggestion = 's2'; command = ''; rule = 'r2'; impact = 40 }
+            [pscustomobject]@{ severity = 'Info'; category = 'A'; object = 'info'; evidence = 'e'; suggestion = 's3'; command = ''; rule = 'r3'; impact = 900 }))
+    Check 'Prioridades: el crítico con más VMs primero; Info no entra' ($pr.Count -eq 2 -and $pr[0].action -eq 's2' -and $pr[0].n -eq 1 -and $pr[1].action -eq 's1')
+    Check 'Prioridades: agrupa por regla (DS-PROD-01 con su alarma aparte)' (@(Get-ReportPriority $nf 50 | Where-Object { $_.why -like 'Almacenamiento:*DS-PROD-01*' }).Count -ge 1)
+    # Disco en VMs apagadas = suma del disco usado de las VMs apagadas.
+    $offExp = [math]::Round((@($realVms | Where-Object { $_.'runtime.powerState' -eq 'poweredOff' } | ForEach-Object { [math]::Round([double]$_.'summary.storage.committed' / 1GB, 1) }) | Measure-Object -Sum).Sum, 1)
+    Check 'Métricas: disco en VMs apagadas' ([math]::Abs((& $metric $mt 'off-disk').number - $offExp) -lt 0.2) "$((& $metric $mt 'off-disk').number) vs $offExp"
+    # Cálculos compartidos.
+    Check 'Get-DaysToPct: ritmo, sin crecimiento, sin dato y ya superado' ((Get-DaysToPct 1000 800 10) -eq 10 -and [double]::IsPositiveInfinity((Get-DaysToPct 1000 800 0)) -and $null -eq (Get-DaysToPct 1000 800 $null) -and (Get-DaysToPct 1000 950 5) -eq 0)
+    # Colecciones vacías (vcsim: sin alarmas, sin críticos): sin elementos nulos ni errores en StrictMode.
+    $emptyF = Join-Path $work 'vacio.json'; Set-Content $emptyF '[]' -Encoding utf8
+    $emptyArr = Read-JsonFile $emptyF @() -AsArray
+    Check 'Vacíos: [] se lee como arreglo vacío, sin prioridades ni filas nulas' ($emptyArr.Count -eq 0 -and @(Get-ReportPriority @()).Count -eq 0 -and (New-ReportTable 't' @('a:A') $null).rows.Count -eq 0 -and (Get-Sum @() 'x') -eq 0)
+    Check 'Get-Percent / Format-Percent' ((Get-Percent 1 3) -eq 33.3 -and $null -eq (Get-Percent 1 0) -and (Format-Percent $null) -eq '—')
+    # Formato anterior (sin 'impact'): se renderiza y se exporta sin error en StrictMode.
+    $oldRow = [pscustomobject]@{ severity = 'Info'; category = 'c'; object = 'o'; evidence = 'e'; suggestion = 's'; command = ''; rule = 'r' }
+    $oldDir = Join-Path $work 'formato-anterior'; New-Item -ItemType Directory -Force $oldDir | Out-Null
+    $oldOk = $true
+    try {
+        $null = Write-GovcReport -Root $root -OutDir $oldDir -BaseName 'x' -Title 't' -Env 'demo' -Generated (Get-Date) -Kpis ([ordered]@{ a = 1 }) -Sections @(New-ReportTable 'Hallazgos' (Get-FindingColumns) @($oldRow))
+        $null = Export-GovcCsv -OutDir $oldDir -BaseName 'x' -Kpis ([ordered]@{ a = 1 }) -Sections @(New-ReportTable 'Hallazgos' (Get-FindingColumns) @($oldRow))
+    } catch { $oldOk = $false }
+    Check 'Formato anterior sin impact: render y CSV sin error' $oldOk
+    # Análisis de Claude: subconjunto seguro de Markdown (sin HTML ni enlaces).
+    Set-Content (Join-Path $rep 'raw/analysis.md') "# Diagnóstico`n`nTexto **clave**, *nota* y ``cmd <x>``. <script>alert(2)</script> [enlace](http://x)`n`n- uno`n- dos" -Encoding utf8
+    Quiet { & "$S/New-Report.ps1" -FromRaw $rep -Format html, md } | Out-Null
+    $ah2 = Get-Content (Join-Path $rep 'reporte-all.html') -Raw; $am2 = Get-Content (Join-Path $rep 'reporte-all.md') -Raw
+    Check 'Análisis: sección después de Prioridades' ($ah2 -match '<h2>Prioridades[\s\S]*?<section class="analysis"><h2>An')
+    Check 'Análisis: formato permitido (h3, strong, code, ul)' ($ah2 -match '<h3>Diagn' -and $ah2 -match '<strong>clave</strong>' -and $ah2 -match '<em>nota</em>' -and $ah2 -match '<code>cmd &lt;x&gt;</code>' -and $ah2 -match '<ul><li>uno</li><li>dos</li></ul>')
+    Check 'Análisis: sin HTML ni enlaces inyectados' ($ah2 -notmatch '<script>alert\(2\)' -and $ah2 -notmatch '<a href="http://x' -and $am2 -notmatch '<script>alert\(2\)' -and $am2 -match '\\\[enlace\\\]')
+    Check 'Análisis: títulos en Markdown como ###' ($am2 -match '(?m)^### Diagn')
+    Remove-Item -LiteralPath (Join-Path $rep 'raw/analysis.md')
+    # -FromRaw sin -Type usa el tipo guardado en meta.json.
+    $typed = Join-Path $work 'tipo-capacidad'
+    New-Item -ItemType Directory -Force (Join-Path $typed 'raw') | Out-Null
+    foreach ($f in [IO.Directory]::GetFiles((Join-Path $rep 'raw'))) { [IO.File]::Copy($f, (Join-Path $typed "raw/$([IO.Path]::GetFileName($f))")) }
+    $tm = Json (Join-Path $typed 'raw/meta.json'); $tm.type = 'capacity'; $tm | ConvertTo-Json | Set-Content (Join-Path $typed 'raw/meta.json') -Encoding utf8
+    Quiet { & "$S/New-Report.ps1" -FromRaw $typed -Format md } | Out-Null
+    Check '-FromRaw sin -Type respeta el tipo original' ((Test-Path (Join-Path $typed 'reporte-capacity.md')) -and -not (Test-Path (Join-Path $typed 'reporte-all.md')))
+    Remove-Item -LiteralPath $typed -Recurse -Force
+    Quiet { & "$S/New-Report.ps1" -FromRaw $rep -Format html, md, csv } | Out-Null
     # Días hasta el 90 %: corrida hermana de hace 10 días con DS-PROD-02 100 GB más libre (10 GB/día).
     $hist = Join-Path $work 'historial-anterior'
     New-Item -ItemType Directory -Force (Join-Path $hist 'raw') | Out-Null
@@ -203,6 +262,10 @@ try {
     Check 'HostCheck: no marca discos locales (mpx) como un solo path' (-not @($hf | Where-Object { $_.rule -eq 'path-single' -and $_.object -match 'mpx\.' }).Count)
     $hm3 = @(Json (Join-Path $hdir 'raw/metrics.json'))
     Check 'HostCheck: panel de cobertura (un % por chequeo)' (@($hm3 | Where-Object { "$($_.key)" -like 'hc-check:*' }).Count -eq 9 -and $null -ne ($hm3 | Where-Object key -eq 'hc-coverage').number)
+    $hh = @(Json (Join-Path $hdir 'raw/esxcli-hosts.json'))
+    $pd = $hf | Where-Object rule -eq 'path-dead' | Select-Object -First 1
+    Check 'HostCheck: impacto = VMs encendidas del host' ($pd.impact -eq ($hh | Where-Object name -eq 'esx01.demo.local').vmCount -and $pd.impact -gt 0) "$($pd.impact)"
+    Check 'HostCheck: drift de clúster = VMs de sus hosts' ((@($hf | Where-Object { $_.rule -eq 'vib-drift' -and $_.object -like 'CL-PROD-02 / *' })[0].impact) -eq (($hh | Where-Object cluster -eq 'CL-PROD-02' | Measure-Object vmCount -Sum).Sum))
     $cov = @($hf | Where-Object rule -eq 'coverage-coredump')
     Check 'HostCheck: cobertura agrupada por chequeo' ($cov.Count -eq 1 -and $cov[0].object -eq '2 hosts') "$($cov.Count) hallazgos"
 
@@ -217,12 +280,22 @@ try {
         @('coverage-perf-counters', 'Info'), @('coverage-perf-hosts', 'Info'), @('coverage-perf-error', 'Info')
     )
     foreach ($e in $perfRules) { Check "PerfCheck: regla $($e[0]) ($($e[1]))" (HasRule $pf $e[0] $e[1]) }
-    Check 'PerfCheck: hallazgos en categoría Rendimiento o Cobertura' (-not @($pf | Where-Object { $_.category -notin 'Rendimiento', 'Cobertura' }).Count)
+    Check 'PerfCheck: hallazgos en categoría Rendimiento, Capacidad (right-sizing) o Cobertura' (-not @($pf | Where-Object { $_.category -notin 'Rendimiento', 'Capacidad', 'Cobertura' }).Count)
     Check 'PerfCheck: latencia por datastore (un hallazgo por datastore)' (@($pf | Where-Object { $_.rule -eq 'perf-ds-latency' -and $_.object -eq 'DS-PROD-01' }).Count -eq 1)
     $pm3 = @(Json (Join-Path $pdir 'raw/metrics.json'))
     $worstDs = $pm3 | Where-Object key -eq 'perf-ds-worst'
     Check 'PerfCheck: peor latencia p95 = 35,2 ms en DS-PROD-01' ($worstDs.number -eq 35.2 -and "$($worstDs.note)" -like 'DS-PROD-01*') "$($worstDs.number) $($worstDs.note)"
+    $ph = Get-Content (Join-Path $pdir 'perf-check.html') -Raw
+    Check 'Paneles: grupos en el orden definido (no alfabético)' ($ph.IndexOf((ConvertTo-HtmlText 'Más CPU ready (p95)')) -ge 0 -and $ph.IndexOf((ConvertTo-HtmlText 'Más CPU ready (p95)')) -lt $ph.IndexOf((ConvertTo-HtmlText 'Más CPU de host (p95)')))
     Check 'PerfCheck: top 5 por métrica' (@($pm3 | Where-Object group -eq 'Más CPU ready (p95)').Count -eq 5)
+    $ov = $pf | Where-Object rule -eq 'perf-oversized'
+    Check 'Right-sizing: mon-obs sobredimensionadas (8→2 vCPU, 32→8 GB)' ($ov -and $ov.category -eq 'Capacidad' -and $ov.impact -eq 3 -and "$($ov.evidence)" -match 'mon-obs01 \(8→2 vCPU, 32→8 GB\)') "$($ov.evidence)"
+    Check 'Right-sizing: capacidad recuperable en el panel' ((($pm3 | Where-Object key -eq 'perf-reclaim-vcpu').number -eq 18) -and (($pm3 | Where-Object key -eq 'perf-reclaim-mem').number -eq 72))
+    $p1h = Join-Path $work 'perf-1h'; Copy-Item -LiteralPath $pdir -Destination $p1h -Recurse
+    $pm1 = Json (Join-Path $p1h 'raw/meta-perf.json'); $pm1.window = '1h'; $pm1 | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $p1h 'raw/meta-perf.json') -Encoding utf8
+    Quiet { & "$S/Invoke-PerfCheck.ps1" -FromRaw $p1h -Format md } | Out-Null
+    Check 'Right-sizing: omitido con ventana 1h' (-not (HasRule @(Json (Join-Path $p1h 'raw/findings.json')) 'perf-oversized') -and "$((@(Json (Join-Path $p1h 'raw/metrics.json')) | Where-Object key -eq 'perf-reclaim-vcpu').note)" -match '24h o 7d')
+    Remove-Item -LiteralPath $p1h -Recurse -Force
     Check 'PerfCheck: host sin métricas no se evalúa' (-not @($pf | Where-Object { $_.rule -eq 'perf-host-cpu' -and $_.object -eq 'esx07.demo.local' }).Count)
     # -FromRaw recalcula con otros umbrales sin volver a consultar.
     Quiet { & "$S/Invoke-PerfCheck.ps1" -FromRaw $pdir -Format md -DsLatencyWarnMs 40 -DsLatencyCritMs 50 } | Out-Null
@@ -267,11 +340,21 @@ try {
     Check 'Audit HTML: marcador en datos no se expande (una sola sección de anexos)' (([regex]::Matches($ah, '<h3>A\. Resumen de inventario')).Count -eq 1)
     Check 'Audit HTML: marcador en datos se muestra literal' ($ah -match 'vm-\{\{ANNEXES\}\}-x')
     $amd = Get-Content (Join-Path $audit 'auditoria.md') -Raw
-    Check 'Audit MD: marcador en datos no se expande (un solo plan de remediación)' (([regex]::Matches($amd, '\| ID \| Severidad \| Objeto \| Acción')).Count -eq 1)
+    Check 'Audit MD: marcador en datos no se expande (un solo plan de remediación)' (([regex]::Matches($amd, '\| Prioridad \| ID \| Severidad \| Objeto \| VMs \| Acción')).Count -eq 1)
     Check 'Audit HTML: codifica contenido de vCenter' ($ah -notmatch '<script>alert')
     Check 'Audit: métricas clave en audit.json' (@($aj.metrics | Where-Object key -eq 'cl-n1').Count -eq 1 -and @($aj.metrics).Count -ge 6)
     Check 'Audit: primera auditoría sin evolución' ($null -eq $aj.evolution -and $ah -match [regex]::Escape([System.Net.WebUtility]::HtmlEncode('Primera auditoría del entorno')))
     Check 'Audit HTML: firma de Arquitectura' ($ah -match '<div class="role">Revisado por</div><div>Arquitectura</div>')
+    $pri = @($aj.findings | Where-Object { $_.priority -gt 0 } | Sort-Object priority -Descending)
+    Check 'Audit: prioridad por hallazgo y principales riesgos en ese orden' ($pri.Count -and $ah -match ('<td>' + [regex]::Escape($pri[0].id) + '</td>') -and ([regex]::Match($ah, 'Principales riesgos[\s\S]*?<td>(AUD-\d+)</td>')).Groups[1].Value -eq $pri[0].id)
+    Check 'Audit: plan de remediación con prioridad y VMs' ($ah -match '<th class="n">Prioridad</th>' -and $amd -match '\| Prioridad \| ID \|')
+    Check 'Get-FindingKey: igual a la clave de audit.json' ((Get-FindingKey ([pscustomobject]@{ rule = $aj.findings[0].rule; object = $aj.findings[0].object })) -eq $aj.findings[0].key)
+    Set-Content (Join-Path $audit 'raw/analysis.md') "## Diagnóstico`n`nTexto de prueba <b>x</b>." -Encoding utf8
+    Quiet { & "$S/Invoke-Audit.ps1" -FromRaw $audit -Format html, md } | Out-Null
+    $ah3 = Get-Content (Join-Path $audit 'auditoria.html') -Raw
+    Check 'Audit: análisis de Claude en el resumen ejecutivo, escapado' ($ah3 -match '<div class="analysis"><h3>Diagn' -and $ah3 -match '&lt;b&gt;x&lt;/b&gt;' -and (Get-Content (Join-Path $audit 'auditoria.md') -Raw) -match '### An')
+    Remove-Item -LiteralPath (Join-Path $audit 'raw/analysis.md')
+    Quiet { & "$S/Invoke-Audit.ps1" -FromRaw $audit -Format html, md } | Out-Null
     # Evolución: auditoría hermana de hace 7 días con un hallazgo menos, uno ya resuelto y Disponibilidad +10.
     $prevA = Join-Path $work 'auditoria-anterior'
     New-Item -ItemType Directory -Force (Join-Path $prevA 'raw') | Out-Null
@@ -294,7 +377,7 @@ try {
     $cat = Get-FindingCatalog
     $allF = @($nf) + @($hf) + @($pf) + @($aj.findings) + @($aj.coverage)
     Check 'Catálogo: todo hallazgo tiene sugerencia' (-not @($allF | Where-Object { -not "$($_.suggestion)".Trim() }).Count) (@($allF | Where-Object { -not "$($_.suggestion)".Trim() } | ForEach-Object { "$($_.rule)/$($_.severity)" }) -join ', ')
-    $srcText = (@('New-Report.ps1', 'Invoke-HostCheck.ps1', 'Invoke-PerfCheck.ps1', 'Invoke-Audit.ps1') | ForEach-Object { Get-Content (Join-Path $S $_) -Raw }) -join "`n"
+    $srcText = (@('New-Report.ps1', 'Invoke-HostCheck.ps1', 'Invoke-PerfCheck.ps1', 'Invoke-Audit.ps1', 'Compare-Report.ps1') | ForEach-Object { Get-Content (Join-Path $S $_) -Raw }) -join "`n"
     $emitted = @($allF | ForEach-Object { $_.rule } | Sort-Object -Unique)
     $unused = @($cat.Rules.Keys | Where-Object { $srcText -notmatch [regex]::Escape("'$_'") -and $_ -notin $emitted -and -not ($_ -like 'cl-n1-*' -and $srcText -match 'cl-n1-\$\(') })
     Check 'Catálogo: sin entradas sin uso' (-not $unused.Count) ($unused -join ', ')
@@ -305,10 +388,16 @@ try {
     Check 'Catálogo: marcadores reemplazados como texto literal' ((Get-FindingText 'svc' -Vars @{ label = '$(Get-Date)' }) -match [regex]::Escape('Detener $(Get-Date) y'))
     Check 'Catálogo: regla inexistente = texto vacío' ((Get-FindingText 'no-existe') -eq '')
     $areas = '(?i)infraestructura|arquitectura|seguridad de la informaci|storage(?! vmotion)|dueño|redes\b|licenciamiento|validar con|validación del|escalar|equipo de'
-    $allowed = @{ 'path-dead' = 'storage'; 'snap-age' = 'dueño'; 'vm-off' = 'dueño' }
+    $allowed = @{ 'path-dead' = 'storage'; 'snap-age' = 'dueño'; 'vm-off' = 'dueño'; 'perf-oversized' = 'dueño' }
     $bad = @($texts | Where-Object { $_.text -match $areas -and -not ($allowed[$_.rule] -and $Matches[0].ToLowerInvariant() -eq $allowed[$_.rule]) } | ForEach-Object { "$($_.rule): $($Matches[0])" })
     $bad += @($cat.Notes.Keys | Where-Object { "$($cat.Notes[$_])" -match $areas } | ForEach-Object { "nota $_" })
-    Check 'Menciones: solo path-dead (Storage), snap-age y vm-off (dueño)' (-not $bad.Count) ($bad -join '; ')
+    Check 'Menciones: solo path-dead (Storage) y snap-age, vm-off, perf-oversized (dueño)' (-not $bad.Count) ($bad -join '; ')
+    # Sin duplicados: los helpers consolidados en lib/ no se vuelven a definir en los scripts.
+    $libText = (Get-ChildItem (Join-Path $S 'lib') -Filter *.psm1 | ForEach-Object { Get-Content $_.FullName -Raw }) -join "`n"
+    $dupPatterns = '\$(pctOf|fmtPct|keyOf|sevCss|sevOrder|mdEsc|esc|enc)\s*=', 'SHA256\]::HashData\(\[Text\.Encoding\]::UTF8\.GetBytes\("\$\(\$\w+\.rule\)', '0\.9 \* \$', 'Round\(100 \* ', 'Measure-Object [^)]*-Sum\)\.Sum'
+    $dups = @(foreach ($pt in $dupPatterns) { if ($srcText -match $pt) { $Matches[0] } })
+    Check 'Sin duplicados: helpers locales consolidados en lib/' (-not $dups.Count) ($dups -join '; ')
+    Check 'Sin duplicados: una sola definición por función en lib/' (-not @([regex]::Matches($libText, '(?m)^function ([\w-]+)') | Group-Object { $_.Groups[1].Value } | Where-Object Count -gt 1).Count)
     $tplText = (@('templates/report.html', 'templates/report.md', 'templates/audit.md') | ForEach-Object { Get-Content (Join-Path $root $_) -Raw }) -join "`n"
     Check 'Menciones: scripts y plantillas sin derivar a Infraestructura' (($srcText + $tplText) -cnotmatch '[Vv]alidar con|[Ee]scalar a|validación del área|Infraestructura')
     Quiet { & "$S/Invoke-Audit.ps1" -FromRaw $audit -Scope security -Format md } | Out-Null

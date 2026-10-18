@@ -10,7 +10,7 @@ El proyecto incluye dos baterías de pruebas que se ejecutan sin contactar vCent
 | Batería | Comando | Atajo | Verifica |
 |---|---|---|---|
 | Guardas | `./scripts/Test-Guards.ps1 [-Strict]` | `task test:guards` (`task test:guards -- -Strict`) | Clasificación de subcomandos, enmascaramiento en la bitácora, decisiones del hook para comandos, archivos y lecturas, y equivalencia del filtro `pre-guard.sh`. 211 verificaciones, unos 18 s |
-| Reportes | `./scripts/Test-Reports.ps1` | `task test:reports` | Reportes, CSV, revisión de hosts, revisión de rendimiento, auditoría (con evolución), métricas, catálogo de textos y política de menciones, tendencias y bitácora sobre datos de demostración, más pruebas unitarias de funciones compartidas. 173 verificaciones |
+| Reportes | `./scripts/Test-Reports.ps1` | `task test:reports` | Reportes, CSV, revisión de hosts, revisión de rendimiento, auditoría (con evolución), métricas, VMs expuestas y prioridades, right-sizing, análisis de Claude, catálogo de textos y política de menciones, ausencia de helpers duplicados, tendencias y bitácora sobre datos de demostración, más pruebas unitarias de funciones compartidas. 203 verificaciones |
 
 `task test` ejecuta ambas baterías y `task test:log` verifica la integridad de la bitácora (`Test-AuditLog.ps1`). Ver [Atajos con Task](/vcenter/uso/taskfile/).
 

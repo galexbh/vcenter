@@ -84,6 +84,8 @@ Modificar el nivel (`metric.interval.change`) es una escritura en vCenter: requi
 | Ballooning de VM | `mem.vmmemctl.average / 1024` | MB | Máximo |
 | Swap-in de VM | `mem.swapinRate.average` | KB/s | p95 (sostenido) y máximo (puntual) |
 | Paquetes descartados | Suma de recepción y transmisión en la ventana | Paquetes | Total |
+| Uso de CPU de VM | `cpu.usage.average` | % de las vCPU asignadas | p95 (right-sizing) |
+| RAM activa de VM | `mem.active.average` | MB | p95 (right-sizing) |
 
 `cpu.ready.summation` informa, por intervalo, los milisegundos en que la VM estuvo lista para ejecutarse sin disponer de CPU física, sumados entre sus vCPU. Al dividir por la duración del intervalo y por el número de vCPU se obtiene el porcentaje promedio por vCPU. Por ejemplo, una VM de 4 vCPU con 60 000 ms de ready en un intervalo de 300 s: `60 000 / 300 000 × 100 / 4 = 5 %`.
 
@@ -103,13 +105,23 @@ El p95 se calcula por rango sobre las muestras válidas de la ventana. Las muest
 | `perf-swap` | Swap-in p95 > 0 (sostenido) | Advertencia | Una fila |
 | `perf-swap` | Solo el máximo de swap-in > 0 (puntual) | Info | Una fila |
 | `perf-net-drops` | Paquetes descartados > 0 | Advertencia | Una por host |
+| `perf-oversized` | Ventana 24h o 7d: ≥ 2 vCPU con CPU p95 < 30 %, o ≥ 4 GB con RAM activa p95 < 40 % | Info (Capacidad) | Una fila |
 | `coverage-perf-counters` | Contadores sin datos en la ventana | Info (Cobertura) | Una fila |
 | `coverage-perf-hosts` | Hosts sin métricas por no estar conectados | Info (Cobertura) | Una fila |
 | `coverage-perf-error` | Consultas de métricas fallidas | Info (Cobertura) | Una por mensaje de error |
 
-Los hallazgos de rendimiento pertenecen a la categoría **Rendimiento**; los de cobertura, a **Cobertura**. Las filas agrupadas enumeran hasta 15 VMs. El comando de verificación de cada hallazgo es `./scripts/Invoke-PerfCheck.ps1 -Env <entorno> -Window 1h`.
+Los hallazgos de rendimiento pertenecen a la categoría **Rendimiento**; `perf-oversized`, a **Capacidad**; los de cobertura, a **Cobertura**. Las filas agrupadas enumeran hasta 15 VMs. El comando de verificación de cada hallazgo es `./scripts/Invoke-PerfCheck.ps1 -Env <entorno> -Window 1h`.
 
 Las reglas `vm-balloon` y `vm-swap` de `New-Report.ps1` evalúan el valor instantáneo de `quickStats` en el momento de la recolección; `perf-balloon` y `perf-swap` evalúan la ventana completa. Ver [Hallazgos y umbrales](/vcenter/reportes/hallazgos/).
+
+## Capacidad recuperable (right-sizing)
+
+Con ventana de 24h o 7d, la revisión calcula cuánto se recupera ajustando las VMs a su uso real:
+
+- **vCPU sugeridas:** `max(1, ⌈vCPU × CPU p95 / 60⌉)`, para que el p95 quede por debajo del 60 %.
+- **RAM sugerida:** `max(2 GB, 2 × RAM activa p95)`, redondeada al GB. El factor 2 es conservador porque `mem.active` subestima el uso real del sistema invitado.
+
+El panel *Capacidad recuperable* suma las vCPU y la RAM recuperables y muestra las 5 VMs con más margen; la tabla *Right-sizing* lista todas. Con la ventana `1h` no se evalúa: una hora no es representativa del uso. Reducir vCPU o RAM requiere reiniciar la VM y confirmarlo con su dueño. Ambos contadores son de nivel 1.
 
 ## Cobertura: sin datos no equivale a sin problemas
 
@@ -128,6 +140,7 @@ Un contador sin datos, un host desconectado o una consulta rechazada **no** se i
 | `-CpuReadyWarnPct` / `-CpuReadyCritPct` | 5 / 10 | CPU ready p95 por vCPU, en % |
 | `-DsLatencyWarnMs` / `-DsLatencyCritMs` | 20 / 30 | Latencia p95 del peor host por datastore, en ms |
 | `-HostCpuWarnPct` / `-HostCpuCritPct` | 85 / 95 | CPU p95 del host, en % |
+| `-RightSizeCpuPct` / `-RightSizeMemPct` | 30 / 40 | Right-sizing: CPU p95 y RAM activa p95, en % de lo asignado |
 
 La lista completa de parámetros está en [Scripts](/vcenter/referencia/scripts/#invoke-perfcheckps1).
 

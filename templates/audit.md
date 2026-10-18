@@ -16,6 +16,8 @@
 
 {{EXEC_SUMMARY}}
 
+{{ANALYSIS}}
+
 ### Indicador por dominio
 
 {{DOMAIN_SCORES}}

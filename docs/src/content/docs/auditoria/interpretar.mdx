@@ -43,7 +43,12 @@ El resumen ejecutivo incluye dos paneles:
 - **Métricas clave**, tomadas de `raw/metrics.json` de cada fuente según el alcance: uso si falla el host mayor (peor clúster), VMs que aún caben con N+1, datastore más lleno, almacenamiento en uso, % de VMware Tools al día, cobertura de la revisión de hosts, peor CPU ready y peor latencia.
 - **Evolución**, frente a la auditoría anterior del mismo entorno (la más reciente entre las carpetas hermanas en `reports/<env>/`): hallazgos nuevos, resueltos y persistentes, seguidos por la clave estable `key` (regla + objeto), y el indicador de cada dominio con su variación (↑/↓). Incluye la lista de hallazgos nuevos críticos y de advertencia. En la primera auditoría del entorno, el panel lo indica. Si el alcance anterior era distinto, la nota lo advierte.
 
-Ambos quedan en `raw/audit.json` (`metrics` y `evolution`).
+Ambos quedan en `raw/audit.json` (`metrics` y `evolution`). Las métricas clave incluyen también la capacidad recuperable: disco en VMs apagadas y, con rendimiento en 24h o 7d, vCPU y RAM recuperables por right-sizing.
+
+## Prioridad y análisis
+
+- Cada hallazgo lleva **VMs expuestas** y una **prioridad** (`priority` en `audit.json`): severidad × VMs expuestas. *Principales riesgos* y el *plan de remediación* se ordenan por prioridad; el plan numera la columna *Prioridad*. Los identificadores AUD-NNN siguen el orden de severidad y dominio.
+- Si existe `raw/analysis.md` en la carpeta de la auditoría, el resumen ejecutivo incluye el **Análisis de Claude (IA)**, con la misma protección que en los reportes (ver [Prioridades y análisis](/vcenter/reportes/generar/#prioridades-y-análisis)).
 
 ## Severidades
 

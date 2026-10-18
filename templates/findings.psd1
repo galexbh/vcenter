@@ -7,7 +7,7 @@
 #   - Acción en imperativo + motivo breve + "cambio aprobado" si la acción modifica la plataforma.
 #   - Sin "validar con…" ni "escalar a…": el equipo que ejecuta el proyecto es el que decide.
 #   - Otra área solo si cambia la acción (Test-Reports lo controla): Storage en path-dead y el dueño
-#     de la VM en snap-age y vm-off (antes de eliminar).
+#     de la VM en snap-age, vm-off (antes de eliminar) y perf-oversized (antes de reducir recursos).
 #   - Marcadores {nombre}: se reemplazan como texto literal (nunca se evalúan).
 #   - Suggestion puede ser un texto o una tabla por severidad (Crítico / Advertencia / Info).
 @{
@@ -17,6 +17,10 @@
         'ds-used'          = @{ Suggestion = @{
                 'Crítico'     = 'Liberar espacio ya (snapshots viejos, ISOs, VMs huérfanas) o mover VMs con Storage vMotion; al llenarse, vSphere pausa las VMs que escriben en él.'
                 'Advertencia' = 'Planificar liberación o ampliación antes de llegar al umbral crítico.'
+            } }
+        'ds-trend'         = @{ Suggestion = @{
+                'Crítico'     = 'Liberar espacio o mover VMs esta semana: al ritmo actual el datastore llega al 90 % en días.'
+                'Advertencia' = 'Planificar liberación o ampliación antes de la fecha estimada.'
             } }
         'ds-thin'          = @{ Suggestion = 'Limitar el sobreaprovisionamiento: si los discos thin crecen, el datastore se llena; mover VMs o ampliar.' }
         'snap-age'         = @{ Suggestion = @{
@@ -102,6 +106,7 @@
                 'Crítico'     = 'Mover las VMs más demandantes y revisar la carga del arreglo, los paths y las colas (queue depth).'
                 'Advertencia' = 'Identificar las VMs más demandantes del datastore y repartirlas antes de que llegue a crítico.'
             } }
+        'perf-oversized'         = @{ Suggestion = 'Reducir vCPU y RAM a lo sugerido en la próxima ventana (requiere reinicio; confirmar con el dueño de la VM): la capacidad recuperada evita ampliar el clúster.' }
         'coverage-perf-counters' = @{ Suggestion = 'Usar -Window 1h (tiempo real) o subir el nivel de estadísticas del intervalo a 2 (escritura con cambio aprobado; aumenta el tamaño de la base de datos de vCenter).' }
         'coverage-perf-hosts'    = @{ Suggestion = 'Restablecer la conexión de esos hosts con vCenter y repetir la revisión.' }
         'coverage-perf-error'    = @{ Suggestion = 'Dar a la cuenta de servicio el privilegio de lectura de estadísticas de rendimiento y repetir la revisión.' }

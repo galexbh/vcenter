@@ -121,6 +121,9 @@
   .bar span { display: block; height: 100%; background: var(--accent); }
   .card.ok .bar span { background: var(--ok); } .card.warn .bar span { background: var(--warn); } .card.crit .bar span { background: var(--crit); }
   h3.pgroup { margin: 10px 0 4px; font-size: 9.5pt; color: var(--muted); }
+  /* Análisis redactado por Claude: bloque diferenciado, sin scripts ni enlaces. */
+  .analysis { border-left: 3px solid var(--accent); background: var(--soft); padding: 8px 14px; margin: 6px 0 12px; break-inside: avoid; }
+  .analysis h3 { margin: 10px 0 4px; font-size: 10.5pt; } .analysis ul, .analysis ol { margin: 4px 0 8px 18px; padding: 0; }
 
   .signs { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 18px; }
   .sign { border-top: 1px solid var(--ink); padding-top: 6px; font-size: 9.5pt; }
@@ -192,6 +195,7 @@
   <section class="page brk">
     <h2><span class="num">1</span>Resumen ejecutivo</h2>
     {{EXEC_SUMMARY}}
+    {{ANALYSIS}}
     <h3>Indicador por dominio</h3>
     <div class="scores">{{DOMAIN_SCORES}}</div>
     <p class="small muted">Indicador interno de priorización: 100 − (15 × críticos + 5 × advertencias + 1 × informativos), mínimo 0. No constituye una certificación ni una calificación de cumplimiento.</p>

@@ -71,14 +71,14 @@ $clusterCfg = @($clusters | ForEach-Object {
 
 # --- VMs ---------------------------------------------------------------------------
 $roles = @(
-    @{ p = 'app-erp'; n = 6; cpu = 8; mem = 32768; os = 'Red Hat Enterprise Linux 9 (64-bit)'; disk = 180 }
-    @{ p = 'db-core'; n = 4; cpu = 16; mem = 131072; os = 'Red Hat Enterprise Linux 8 (64-bit)'; disk = 900 }
-    @{ p = 'web-banca'; n = 8; cpu = 4; mem = 16384; os = 'Ubuntu Linux (64-bit)'; disk = 60 }
-    @{ p = 'win-ad'; n = 3; cpu = 4; mem = 16384; os = 'Microsoft Windows Server 2022 (64-bit)'; disk = 120 }
-    @{ p = 'app-pagos'; n = 6; cpu = 8; mem = 32768; os = 'Red Hat Enterprise Linux 9 (64-bit)'; disk = 200 }
-    @{ p = 'mon-obs'; n = 3; cpu = 8; mem = 32768; os = 'Ubuntu Linux (64-bit)'; disk = 500 }
-    @{ p = 'win-app'; n = 6; cpu = 4; mem = 16384; os = 'Microsoft Windows Server 2019 (64-bit)'; disk = 150 }
-    @{ p = 'test-qa'; n = 4; cpu = 2; mem = 8192; os = 'Ubuntu Linux (64-bit)'; disk = 40 }
+    @{ p = 'app-erp'; n = 6; cpu = 8; mem = 32768; os = 'Red Hat Enterprise Linux 9 (64-bit)'; disk = 180; ds = 'datastore-11' }
+    @{ p = 'db-core'; n = 4; cpu = 16; mem = 131072; os = 'Red Hat Enterprise Linux 8 (64-bit)'; disk = 900; ds = 'datastore-14' }
+    @{ p = 'web-banca'; n = 8; cpu = 4; mem = 16384; os = 'Ubuntu Linux (64-bit)'; disk = 60; ds = 'datastore-12' }
+    @{ p = 'win-ad'; n = 3; cpu = 4; mem = 16384; os = 'Microsoft Windows Server 2022 (64-bit)'; disk = 120; ds = 'datastore-12' }
+    @{ p = 'app-pagos'; n = 6; cpu = 8; mem = 32768; os = 'Red Hat Enterprise Linux 9 (64-bit)'; disk = 200; ds = 'datastore-11' }
+    @{ p = 'mon-obs'; n = 3; cpu = 8; mem = 32768; os = 'Ubuntu Linux (64-bit)'; disk = 500; ds = 'datastore-13' }
+    @{ p = 'win-app'; n = 6; cpu = 4; mem = 16384; os = 'Microsoft Windows Server 2019 (64-bit)'; disk = 150; ds = 'datastore-13' }
+    @{ p = 'test-qa'; n = 4; cpu = 2; mem = 8192; os = 'Ubuntu Linux (64-bit)'; disk = 40; ds = 'datastore-13' }
 )
 $vms = @(); $vi = 0
 foreach ($r in $roles) {
@@ -95,6 +95,7 @@ foreach ($r in $roles) {
             'snapshot.rootSnapshotList' = @(); 'runtime.consolidationNeeded' = $false; 'config.version' = 'vmx-20'
             'config.cpuAllocation.limit' = -1; 'config.memoryAllocation.limit' = -1; 'config.hardware.device' = @()
             'summary.quickStats.balloonedMemory' = 0; 'summary.quickStats.swappedMemory' = 0; 'summary.quickStats.compressedMemory' = 0
+            datastore = @(Ref 'Datastore' $r.ds)
         }
     }
 }
@@ -167,7 +168,7 @@ $vcenter = [pscustomobject]@{
         [pscustomobject]@{ name = 'VMware vCenter Server 8 Standard'; edition = 'vc.standard.instance'; total = 1; used = 1; expiration = $now.AddDays(38).ToUniversalTime().ToString('o') }
     )
 }
-$meta = [ordered]@{ env = 'demo'; generated = $now.ToString('o'); user = 'DEMO\usuario.demo' }
+$meta = [ordered]@{ env = 'demo'; generated = $now.ToString('o'); user = 'DEMO\usuario.demo'; deviceScan = $true; type = 'all' }
 Save $inv 'meta' $meta; Save $inv 'vms' $vms; Save $inv 'hosts' $hostsOut; Save $inv 'compute' $compute; Save $inv 'clusters' $clusterCfg
 Save $inv 'datastores' $datastores; Save $inv 'alarms' $alarms; Save $inv 'vcenter' $vcenter
 function Pool($id, $name, $parent, $cpuLimit = -1, $memLimit = -1) {
@@ -183,7 +184,8 @@ Save $inv 'pools' @(
 )
 
 # --- Revisión de hosts (esxcli) ---------------------------------------------------------
-$hl = @($hosts | ForEach-Object { [pscustomobject]@{ name = $_.name; cluster = $_.cluster; state = 'connected' } })
+$onPerHost = @{}; foreach ($v in $vms | Where-Object { $_.'runtime.powerState' -eq 'poweredOn' -and -not $_.'config.template' -and $_.PSObject.Properties['runtime.host'] }) { $onPerHost[$v.'runtime.host'.value] = 1 + [int]$onPerHost[$v.'runtime.host'.value] }
+$hl = @($hosts | ForEach-Object { [pscustomobject]@{ id = $_._moref; name = $_.name; cluster = $_.cluster; state = 'connected'; vmCount = [int]$onPerHost[$_._moref] } })
 function E($h, $rows) { [pscustomobject]@{ host = $h.name; cluster = $h.cluster; ok = $true; error = ''; rows = @($rows) } }
 $baseVibs = @(
     @{ Name = 'esx-base'; Version = '8.0.3-0.0.24022510'; Vendor = 'VMware' }
@@ -261,7 +263,11 @@ $perfVm = @(foreach ($v in $vms | Where-Object { $_.'runtime.powerState' -eq 'po
         $bal = if ($v.name -eq 'app-erp03') { St 900 1800 2048 } else { St 0 0 0 }
         $sw = switch ($v.name) { 'db-core02' { St 60 120 410 } 'web-banca02' { St 1 0 300 } default { St 0 0 0 } }
         $hid = $v.'runtime.host'.value
-        [pscustomobject]@{ name = $v.name; cluster = $hostCl[$hid]; host = $hostName[$hid]; vcpu = $v.'summary.config.numCpu'; readyPct = (St ($r * 0.6) $r ($r * 1.4)); balloonMB = $bal; swapinKBps = $sw }
+        $mem = $v.'summary.config.memorySizeMB'; $over = $v.name -like 'mon-obs*'
+        $cpu = if ($over) { 10 } else { 45 + ([int]($v._moref -replace '\D', '') % 5) * 5 }
+        $act = if ($over) { 4096 } else { [math]::Round($mem * 0.55) }
+        [pscustomobject]@{ name = $v.name; cluster = $hostCl[$hid]; host = $hostName[$hid]; vcpu = $v.'summary.config.numCpu'; memMB = $mem; readyPct = (St ($r * 0.6) $r ($r * 1.4)); balloonMB = $bal; swapinKBps = $sw
+            cpuUsagePct = (St ($cpu * 0.6) $cpu ($cpu * 1.3)); memActiveMB = (St ($act * 0.7) $act ($act * 1.2)) }
     })
 $perfDs = @(foreach ($h in $hosts) {
         foreach ($d in $datastores | Where-Object { $_.'summary.type' -eq 'VMFS' }) {

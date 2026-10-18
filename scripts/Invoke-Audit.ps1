@@ -13,8 +13,9 @@
     4. Controles de acceso          permisos con rol Administrador en la raíz del inventario.
   Asigna ID (AUD-001…), dominio, riesgo y referencia a cada hallazgo; calcula un indicador por
   dominio y genera auditoria.html (imprimible / PDF) y auditoria.md a partir de templates/audit.*,
-  más raw/audit.json con el modelo consolidado (incluye métricas clave y la evolución frente a la
-  auditoría anterior del mismo entorno). El seguimiento con Compare-Report.ps1 compara las
+  más raw/audit.json con el modelo consolidado (incluye métricas clave, prioridad por hallazgo y la
+  evolución frente a la auditoría anterior del mismo entorno). Si existe raw/analysis.md (redactado
+  por Claude), se incluye en el resumen ejecutivo. El seguimiento con Compare-Report.ps1 compara las
   corridas de inventario (inventario/raw/), no audit.json.
 
 .EXAMPLE
@@ -47,7 +48,6 @@ Import-Module (Join-Path $PSScriptRoot 'lib/Render.psm1') -Force -DisableNameChe
 Import-Module (Join-Path $PSScriptRoot 'lib/Common.psm1') -Force -DisableNameChecking
 Set-Alias -Name P -Value Get-Prop -Scope Script
 Set-Alias -Name Read-Json -Value Read-JsonFile -Scope Script
-$enc = { param($s) ConvertTo-HtmlText $s }
 $scripts = $PSScriptRoot
 
 function Wait-SourceJob($Jobs) {
@@ -184,8 +184,6 @@ $all = New-Object System.Collections.Generic.List[object]
 foreach ($s in $sources) { foreach ($f in @(Read-Json (Join-Path $outDir "$($s.dir)/raw/findings.json"))) { $f | Add-Member source $s.name -Force; $all.Add($f) } }
 foreach ($f in $extra) { $f | Add-Member source 'Controles de acceso' -Force; $all.Add($f) }
 
-$sevOrder = @{ 'Crítico' = 0; 'Advertencia' = 1; 'Info' = 2 }
-$sevCss = @{ 'Crítico' = 'crit'; 'Advertencia' = 'warn'; 'Info' = 'info' }
 $coverage = @($all | Where-Object { $_.category -eq 'Cobertura' })
 $scored = @($all | Where-Object { $_.category -ne 'Cobertura' } |
     ForEach-Object {
@@ -195,11 +193,13 @@ $scored = @($all | Where-Object { $_.category -ne 'Cobertura' } |
         $_ | Add-Member reference (Get-CategoryText $_.category Reference) -Force
         $_ } |
     Where-Object { $_.domain -in $scopeDomains } |
-    Sort-Object { $sevOrder[$_.severity] }, { [array]::IndexOf($domains, $_.domain) }, category, object)
+    Sort-Object { Get-SeverityRank $_.severity }, { [array]::IndexOf($domains, $_.domain) }, category, object)
 $i = 0; foreach ($f in $scored) {
     $i++; $f | Add-Member id ('AUD-{0:000}' -f $i) -Force
     # Clave estable (regla + objeto) para seguir un hallazgo entre auditorías; el AUD-NNN depende del orden.
-    $f | Add-Member key ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes("$($f.rule)|$($f.object)"))).Substring(0, 12).ToLowerInvariant()) -Force
+    $f | Add-Member key (Get-FindingKey $f) -Force
+    # Prioridad: severidad × VMs expuestas (orden de los principales riesgos y del plan de remediación).
+    $f | Add-Member priority (Get-FindingScore $f) -Force
 }
 
 $scores = [ordered]@{}
@@ -228,6 +228,7 @@ $keyCards = @(@(
         & $pick inventario 'cl-fit' 'VMs que aún caben con N+1 (clúster más justo)' -Min
         & $pick inventario 'ds-used:' 'Datastore más lleno' -Prefix
         & $pick inventario 'ds-total' 'Almacenamiento en uso'
+        & $pick inventario 'off-disk' 'Disco en VMs apagadas'
     }
     if ('Configuración' -in $scopeDomains) { & $pick inventario 'tools-current' 'VMware Tools al día' }
     & $pick hosts 'hc-coverage' 'Cobertura de la revisión de hosts'
@@ -235,27 +236,20 @@ $keyCards = @(@(
         & $pick perf 'perf-ready-worst' 'CPU ready p95 (peor VM)'
         & $pick perf 'perf-ds-worst' 'Latencia p95 (peor datastore)'
     }
+    if ('Capacidad' -in $scopeDomains) {
+        & $pick perf 'perf-reclaim-vcpu' 'vCPU recuperables (right-sizing)'
+        & $pick perf 'perf-reclaim-mem' 'RAM recuperable (right-sizing)'
+    }
 ) | Where-Object { $_ })
 $keyPanel = New-ReportPanel 'Métricas clave' $keyCards
 
 # --- Evolución frente a la auditoría anterior del mismo entorno ---------------------------------
-$keyOf = { param($f) if ($f.PSObject.Properties['key'] -and $f.key) { $f.key } else { [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes("$($f.rule)|$($f.object)"))).Substring(0, 12).ToLowerInvariant() } }
-# Historial: auditorías hermanas de esta carpeta (reports/<env>/), anteriores a esta.
-$prevAudit = $null
-$here = (Resolve-Path -LiteralPath $outDir).Path
-$envDir = Split-Path $here -Parent
-if ($envDir -and (Test-Path -LiteralPath $envDir)) {
-    $prevAudit = @(Get-ChildItem -LiteralPath $envDir -Directory | Where-Object { $_.FullName -ne $here } | ForEach-Object {
-            $j = Join-Path $_.FullName 'raw/audit.json'
-            if (Test-Path -LiteralPath $j) {
-                $o = $null; try { $o = Get-Content -LiteralPath $j -Raw | ConvertFrom-Json -DateKind String } catch { }
-                if ($o -and "$(P $o 'env' '')" -eq $Env -and (P $o 'generated') -and [datetime]$o.generated -lt $generated) { $o }
-            } } | Sort-Object { [datetime]$_.generated } -Descending | Select-Object -First 1)
-    $prevAudit = if ($prevAudit.Count) { $prevAudit[0] } else { $null }
-}
+# Historial: la auditoría hermana más reciente de esta carpeta (reports/<env>/), anterior a esta.
+$prevRun = Find-PreviousRun -OutDir $outDir -Env $Env -Before $generated -MetaFile 'audit.json' -RawFile 'audit.json'
+$prevAudit = if ($prevRun) { Read-Json (Join-Path $prevRun.rawDir 'audit.json') $null } else { $null }
 $evolution = $null
 if ($prevAudit) {
-    $prevF = @{}; foreach ($f in @($prevAudit.findings)) { if ($f) { $prevF[(& $keyOf $f)] = $f } }
+    $prevF = @{}; foreach ($f in @($prevAudit.findings)) { if ($f) { $prevF[(Get-FindingKey $f)] = $f } }
     $curK = @{}; foreach ($f in $scored) { $curK[$f.key] = $f }
     $new = @($scored | Where-Object { -not $prevF.ContainsKey($_.key) })
     $resolved = @($prevF.Keys | Where-Object { -not $curK.ContainsKey($_) } | ForEach-Object { $prevF[$_] })
@@ -267,7 +261,7 @@ if ($prevAudit) {
     $evolution = [ordered]@{
         previous = "$($prevAudit.id)"; previousGenerated = "$($prevAudit.generated)"; previousScope = "$($prevAudit.scope)"
         new = $new.Count; resolved = $resolved.Count; persistent = $persist.Count
-        domains = @($domDelta); newKeys = @($new | ForEach-Object { $_.key }); resolvedKeys = @($resolved | ForEach-Object { & $keyOf $_ })
+        domains = @($domDelta); newKeys = @($new | ForEach-Object { $_.key }); resolvedKeys = @($resolved | ForEach-Object { Get-FindingKey $_ })
     }
 }
 $arrow = { param($d) if ($null -eq $d) { '—' } elseif ($d -gt 0) { "↑ +$d" } elseif ($d -lt 0) { "↓ $d" } else { '= 0' } }
@@ -314,44 +308,48 @@ $perfText = if ($perfMeta -and 'Rendimiento' -in $scopeDomains) {
     " Las métricas de rendimiento cubren una ventana de $perfWin (intervalo de $(P $perfMeta 'interval' '?') s$(if ($null -ne $perfLevel) { ", nivel de estadísticas $perfLevel" })) sobre $(& $n ([int](P $perfSum 'Hosts' 0)) 'host' 'hosts') y $(& $n ([int](P $perfSum 'VMs evaluadas' 0)) 'VM encendida' 'VMs encendidas')."
 } else { '' }
 $nHostChecked = if ($hostSum) { [int](P $hostSum 'Hosts' 0) } else { 0 }
-$hostScope = if ($Cluster) { " La revisión de configuración de hosts se limitó a $(& $n $nHostChecked 'host' 'hosts') $(if ($Cluster.Count -eq 1) { 'del clúster' } else { 'de los clústeres' }) $(& $enc ($Cluster -join ', '))." } else { '' }
+$hostScope = if ($Cluster) { " La revisión de configuración de hosts se limitó a $(& $n $nHostChecked 'host' 'hosts') $(if ($Cluster.Count -eq 1) { 'del clúster' } else { 'de los clústeres' }) $(ConvertTo-HtmlText ($Cluster -join ', '))." } else { '' }
 $execText = @(
-    "Se evaluó el entorno <strong>$(& $enc $Env.ToUpper())</strong> el $stamp, en los dominios de $scopeText. El inventario comprendió $(& $n $nVm 'máquina virtual' 'máquinas virtuales'), $(& $n $nHost 'host' 'hosts') y $(& $n $nCl 'clúster o recurso de cómputo' 'clústeres o recursos de cómputo').$hostScope$perfText"
-    "Se identificaron <strong>$(& $n $counts['Crítico'] 'hallazgo crítico' 'hallazgos críticos')</strong>, $(& $n $counts['Advertencia'] 'advertencia' 'advertencias') y $(& $n $counts['Info'] 'observación informativa' 'observaciones informativas'). Los dominios con menor indicador son: $(& $enc ($worst -join ' y '))."
+    "Se evaluó el entorno <strong>$(ConvertTo-HtmlText $Env.ToUpper())</strong> el $stamp, en los dominios de $scopeText. El inventario comprendió $(& $n $nVm 'máquina virtual' 'máquinas virtuales'), $(& $n $nHost 'host' 'hosts') y $(& $n $nCl 'clúster o recurso de cómputo' 'clústeres o recursos de cómputo').$hostScope$perfText"
+    "Se identificaron <strong>$(& $n $counts['Crítico'] 'hallazgo crítico' 'hallazgos críticos')</strong>, $(& $n $counts['Advertencia'] 'advertencia' 'advertencias') y $(& $n $counts['Info'] 'observación informativa' 'observaciones informativas'). Los dominios con menor indicador son: $(ConvertTo-HtmlText ($worst -join ' y '))."
     $(if ($counts['Crítico']) { 'Se recomienda atender los hallazgos críticos de forma prioritaria, conforme al plan de remediación de la sección 4.' } else { 'No se identificaron hallazgos críticos. Se recomienda planificar la atención de las advertencias conforme al plan de remediación.' })
     $(if ($coverage.Count) { "La evaluación presenta $(& $n $coverage.Count 'limitación de cobertura' 'limitaciones de cobertura'), detalladas en la sección 2." })
 ) | Where-Object { $_ }
 
 # --- HTML ----------------------------------------------------------------------------
 $scoreClass = { param($v) if ($v -ge 85) { 'ok' } elseif ($v -ge 60) { 'warn' } else { 'crit' } }
-$domainHtml = ($scores.GetEnumerator() | ForEach-Object { "<div class=""score $(& $scoreClass $_.Value.score)""><div class=""v"">$($_.Value.score)</div><div class=""l"">$(& $enc $_.Key)</div><div class=""l"">$($_.Value.crit) C · $($_.Value.warn) A · $($_.Value.info) I</div></div>" }) -join ''
-$countHtml = ($counts.GetEnumerator() | ForEach-Object { "<span class=""count $($sevCss[$_.Key])"">$($_.Value) $(& $enc $_.Key)</span>" }) -join ''
-$top = @($scored | Where-Object { $_.severity -ne 'Info' } | Select-Object -First 5)
+$domainHtml = ($scores.GetEnumerator() | ForEach-Object { "<div class=""score $(& $scoreClass $_.Value.score)""><div class=""v"">$($_.Value.score)</div><div class=""l"">$(ConvertTo-HtmlText $_.Key)</div><div class=""l"">$($_.Value.crit) C · $($_.Value.warn) A · $($_.Value.info) I</div></div>" }) -join ''
+$countHtml = ($counts.GetEnumerator() | ForEach-Object { "<span class=""count $(Get-SeverityClass $_.Key)"">$($_.Value) $(ConvertTo-HtmlText $_.Key)</span>" }) -join ''
+$byPriority = @($scored | Where-Object { $_.priority -gt 0 } | Sort-Object priority -Descending)
+$vmsOf = { param($f) $v = Get-Prop $f 'impact'; if ($null -ne $v) { "$v" } else { '—' } }
+$top = @($byPriority | Select-Object -First 5)
 $topHtml = if ($top.Count) {
-    '<table class="t"><thead><tr><th>ID</th><th>Severidad</th><th>Dominio</th><th>Objeto</th><th>Riesgo</th></tr></thead><tbody>' +
-    (($top | ForEach-Object { "<tr><td>$($_.id)</td><td><span class=""sev $($sevCss[$_.severity])"">$(& $enc $_.severity)</span></td><td>$(& $enc $_.domain)</td><td>$(& $enc $_.object)</td><td>$(& $enc $_.risk)</td></tr>" }) -join '') + '</tbody></table>'
+    '<table class="t"><thead><tr><th>ID</th><th>Severidad</th><th>Dominio</th><th>Objeto</th><th class="n">VMs expuestas</th><th>Riesgo</th></tr></thead><tbody>' +
+    (($top | ForEach-Object { "<tr><td>$($_.id)</td><td><span class=""sev $(Get-SeverityClass $_.severity)"">$(ConvertTo-HtmlText $_.severity)</span></td><td>$(ConvertTo-HtmlText $_.domain)</td><td>$(ConvertTo-HtmlText $_.object)</td><td class=""n"">$(& $vmsOf $_)</td><td>$(ConvertTo-HtmlText $_.risk)</td></tr>" }) -join '') + '</tbody></table>'
 } else { '<p class="muted">Sin hallazgos críticos ni advertencias.</p>' }
 
+$analysis = Get-ReportAnalysis -RawDir (Join-Path $outDir 'raw')
+$analysisHtml = if ($analysis) { "<h3>$(ConvertTo-HtmlText $analysis.title)</h3><p class=""small muted"">$(ConvertTo-HtmlText $analysis.note)</p><div class=""analysis"">$(ConvertTo-SafeHtml $analysis.text)</div>" } else { '' }
 $keyHtml = if ($keyCards.Count) { ConvertTo-PanelHtml $keyPanel -Bare } else { '<p class="muted">Sin métricas disponibles.</p>' }
 $evoHtml = (ConvertTo-PanelHtml $evoPanel -Bare) + $(if ($newTop.Count) {
         '<h3>Hallazgos nuevos (críticos y advertencias)</h3><table class="t"><thead><tr><th>ID</th><th>Severidad</th><th>Dominio</th><th>Objeto</th></tr></thead><tbody>' +
-        (($newTop | ForEach-Object { "<tr><td>$($_.id)</td><td><span class=""sev $($sevCss[$_.severity])"">$(& $enc $_.severity)</span></td><td>$(& $enc $_.domain)</td><td>$(& $enc $_.object)</td></tr>" }) -join '') + '</tbody></table>' })
-$covRows = if ($coverage.Count) { ($coverage | ForEach-Object { "<tr><td>$(& $enc $_.object)</td><td>$(& $enc $_.evidence)</td></tr>" }) -join '' } else { '<tr><td colspan="2" class="muted">Cobertura completa.</td></tr>' }
+        (($newTop | ForEach-Object { "<tr><td>$($_.id)</td><td><span class=""sev $(Get-SeverityClass $_.severity)"">$(ConvertTo-HtmlText $_.severity)</span></td><td>$(ConvertTo-HtmlText $_.domain)</td><td>$(ConvertTo-HtmlText $_.object)</td></tr>" }) -join '') + '</tbody></table>' })
+$covRows = if ($coverage.Count) { ($coverage | ForEach-Object { "<tr><td>$(ConvertTo-HtmlText $_.object)</td><td>$(ConvertTo-HtmlText $_.evidence)</td></tr>" }) -join '' } else { '<tr><td colspan="2" class="muted">Cobertura completa.</td></tr>' }
 $methodHtml = @"
 <p>La evaluación se realizó mediante consultas de <strong>solo lectura</strong> a vCenter con el cliente govc, a través del wrapper controlado del proyecto. No se ejecutaron cambios en la infraestructura. Cada consulta quedó registrada en la bitácora de auditoría.</p>
 <table class="t"><thead><tr><th>Fuente</th><th>Método</th><th>Elementos evaluados</th></tr></thead><tbody>
 <tr><td>Inventario y configuración</td><td>object.collect en bloque · about.cert · license.ls</td><td>VMs, hosts, clústeres (HA/DRS), datastores, alarmas, snapshots, configuración de VMs, certificado de vCenter, licencias</td></tr>
 <tr><td>Configuración de hosts</td><td>host.esxcli (solo list/get) · host.service.ls · host.cert.info</td><td>VIBs y drivers, NIC físicas, paths de storage, NTP, syslog, coredump, plataforma, servicios SSH/Shell, certificados de host</td></tr>
-$(if ($perfMeta) { "<tr><td>Rendimiento</td><td>metric.sample · metric.interval.info (ventana $(& $enc $perfWin), intervalo $(& $enc (P $perfMeta 'interval' '')) s$(if ($null -ne $perfLevel) { ", nivel de estadísticas $perfLevel" }))</td><td>CPU ready por vCPU, latencia de datastores por host, CPU de hosts, ballooning, swap y paquetes descartados (p95 y máximo en la ventana)</td></tr>" })
+$(if ($perfMeta) { "<tr><td>Rendimiento</td><td>metric.sample · metric.interval.info (ventana $(ConvertTo-HtmlText $perfWin), intervalo $(ConvertTo-HtmlText (P $perfMeta 'interval' '')) s$(if ($null -ne $perfLevel) { ", nivel de estadísticas $perfLevel" }))</td><td>CPU ready por vCPU, latencia de datastores por host, CPU de hosts, ballooning, swap y paquetes descartados (p95 y máximo en la ventana)</td></tr>" })
 <tr><td>Controles de acceso</td><td>permissions.ls · role.ls</td><td>Asignaciones con rol Administrador en la raíz del inventario</td></tr>
 </tbody></table>
 <h3>Cuenta y ventana</h3>
-<p>Cuenta de servicio del perfil <code>$(& $enc $Env)</code> (Windows Credential Manager). Fotografía del estado al $stamp; los valores pueden variar después de esa fecha.</p>
+<p>Cuenta de servicio del perfil <code>$(ConvertTo-HtmlText $Env)</code> (Windows Credential Manager). Fotografía del estado al $stamp; los valores pueden variar después de esa fecha.</p>
 <h3>Limitaciones</h3>
 <ul>
 <li>No se evalúan sistemas operativos invitados, aplicaciones, respaldos, red física fuera del host ni seguridad perimetral.</li>
-<li>La sobresuscripción y la holgura N+1 se miden sobre recursos asignados y el uso al momento de la recolección. $(if ($perfMeta) { "Las métricas de rendimiento cubren la ventana de $(& $enc $perfWin); lo que el nivel de estadísticas de vCenter no conserva se declara como cobertura." } else { 'No se evaluó el consumo en una ventana de tiempo.' })</li>
-<li>$(& $enc (Get-NoteText 'thresholds'))</li>
+<li>La sobresuscripción y la holgura N+1 se miden sobre recursos asignados y el uso al momento de la recolección. $(if ($perfMeta) { "Las métricas de rendimiento cubren la ventana de $(ConvertTo-HtmlText $perfWin); lo que el nivel de estadísticas de vCenter no conserva se declara como cobertura." } else { 'No se evaluó el consumo en una ventana de tiempo.' })</li>
+<li>$(ConvertTo-HtmlText (Get-NoteText 'thresholds'))</li>
 <li>Las referencias a guías de seguridad son temáticas y orientativas; deben contrastarse con la versión vigente de cada documento.</li>
 </ul>
 <h3>Cobertura</h3>
@@ -359,35 +357,36 @@ $(if ($perfMeta) { "<tr><td>Rendimiento</td><td>metric.sample · metric.interval
 "@
 
 $matrixHtml = '<table class="t"><thead><tr><th>Dominio</th><th class="n">Crítico</th><th class="n">Advertencia</th><th class="n">Info</th><th class="n">Total</th><th class="n">Indicador</th></tr></thead><tbody>' +
-    (($scores.GetEnumerator() | ForEach-Object { "<tr><td>$(& $enc $_.Key)</td><td class=""n"">$($_.Value.crit)</td><td class=""n"">$($_.Value.warn)</td><td class=""n"">$($_.Value.info)</td><td class=""n"">$($_.Value.crit + $_.Value.warn + $_.Value.info)</td><td class=""n""><strong>$($_.Value.score)</strong></td></tr>" }) -join '') +
+    (($scores.GetEnumerator() | ForEach-Object { "<tr><td>$(ConvertTo-HtmlText $_.Key)</td><td class=""n"">$($_.Value.crit)</td><td class=""n"">$($_.Value.warn)</td><td class=""n"">$($_.Value.info)</td><td class=""n"">$($_.Value.crit + $_.Value.warn + $_.Value.info)</td><td class=""n""><strong>$($_.Value.score)</strong></td></tr>" }) -join '') +
     "<tr><td><strong>Total</strong></td><td class=""n""><strong>$($counts['Crítico'])</strong></td><td class=""n""><strong>$($counts['Advertencia'])</strong></td><td class=""n""><strong>$($counts['Info'])</strong></td><td class=""n""><strong>$($scored.Count)</strong></td><td></td></tr></tbody></table>"
 
 $findHtml = if ($scored.Count) {
     ($scored | ForEach-Object {
-        $refRow = if ($_.reference) { "<dt>Referencia</dt><dd>$(& $enc $_.reference)</dd>" } else { '' }
-        $cmdRow = if ($_.command) { "<dt>Verificación</dt><dd><code>$(& $enc $_.command)</code></dd>" } else { '' }
+        $refRow = if ($_.reference) { "<dt>Referencia</dt><dd>$(ConvertTo-HtmlText $_.reference)</dd>" } else { '' }
+        $cmdRow = if ($_.command) { "<dt>Verificación</dt><dd><code>$(ConvertTo-HtmlText $_.command)</code></dd>" } else { '' }
         @"
-<article class="finding $($sevCss[$_.severity])">
-<header><span class="id">$($_.id)</span><span class="obj">$(& $enc $_.object)</span><span class="sev $($sevCss[$_.severity])">$(& $enc $_.severity)</span><span class="dom">$(& $enc $_.domain) · $(& $enc $_.category)</span></header>
-<dl><dt>Evidencia</dt><dd>$(& $enc $_.evidence)</dd><dt>Riesgo</dt><dd>$(& $enc $_.risk)</dd><dt>Recomendación</dt><dd>$(& $enc $_.suggestion)</dd>$cmdRow$refRow<dt>Fuente</dt><dd>$(& $enc $_.source)</dd></dl>
+<article class="finding $(Get-SeverityClass $_.severity)">
+<header><span class="id">$($_.id)</span><span class="obj">$(ConvertTo-HtmlText $_.object)</span><span class="sev $(Get-SeverityClass $_.severity)">$(ConvertTo-HtmlText $_.severity)</span><span class="dom">$(ConvertTo-HtmlText $_.domain) · $(ConvertTo-HtmlText $_.category)</span></header>
+<dl><dt>Evidencia</dt><dd>$(ConvertTo-HtmlText $_.evidence)</dd>$(if ($null -ne (Get-Prop $_ 'impact')) { "<dt>VMs expuestas</dt><dd>$($_.impact)</dd>" })<dt>Riesgo</dt><dd>$(ConvertTo-HtmlText $_.risk)</dd><dt>Recomendación</dt><dd>$(ConvertTo-HtmlText $_.suggestion)</dd>$cmdRow$refRow<dt>Fuente</dt><dd>$(ConvertTo-HtmlText $_.source)</dd></dl>
 </article>
 "@ }) -join "`n"
 } else { '<p class="muted">No se identificaron hallazgos en el alcance evaluado.</p>' }
 
-$remHtml = '<table class="t"><thead><tr><th>ID</th><th>Sev.</th><th>Objeto</th><th>Acción recomendada</th><th>Responsable</th><th>Fecha compromiso</th><th>Estado</th></tr></thead><tbody>' +
-    (($scored | Where-Object { $_.severity -ne 'Info' } | ForEach-Object { "<tr><td>$($_.id)</td><td><span class=""sev $($sevCss[$_.severity])"">$(& $enc $_.severity.Substring(0,1))</span></td><td>$(& $enc $_.object)</td><td>$(& $enc $_.suggestion)</td><td class=""blank""></td><td class=""blank""></td><td>Abierto</td></tr>" }) -join '') +
+$rank = 0
+$remHtml = '<table class="t"><thead><tr><th class="n">Prioridad</th><th>ID</th><th>Sev.</th><th>Objeto</th><th class="n">VMs</th><th>Acción recomendada</th><th>Responsable</th><th>Fecha compromiso</th><th>Estado</th></tr></thead><tbody>' +
+    (($byPriority | ForEach-Object { $rank++; "<tr><td class=""n"">$rank</td><td>$($_.id)</td><td><span class=""sev $(Get-SeverityClass $_.severity)"">$(ConvertTo-HtmlText $_.severity.Substring(0,1))</span></td><td>$(ConvertTo-HtmlText $_.object)</td><td class=""n"">$(& $vmsOf $_)</td><td>$(ConvertTo-HtmlText $_.suggestion)</td><td class=""blank""></td><td class=""blank""></td><td>Abierto</td></tr>" }) -join '') +
     '</tbody></table><p class="small muted">Las observaciones informativas se incluyen en la sección 3 y pueden atenderse en el ciclo regular de mantenimiento.</p>'
 
 function KpiTable($obj, $title) {
-    if (-not $obj) { return "<p class=""muted"">$(& $enc $title): sin datos.</p>" }
-    "<h3>$(& $enc $title)</h3><table class=""t""><tbody>" + (($obj.PSObject.Properties | ForEach-Object { "<tr><td>$(& $enc $_.Name)</td><td class=""n"">$(& $enc $_.Value)</td></tr>" }) -join '') + '</tbody></table>'
+    if (-not $obj) { return "<p class=""muted"">$(ConvertTo-HtmlText $title): sin datos.</p>" }
+    "<h3>$(ConvertTo-HtmlText $title)</h3><table class=""t""><tbody>" + (($obj.PSObject.Properties | ForEach-Object { "<tr><td>$(ConvertTo-HtmlText $_.Name)</td><td class=""n"">$(ConvertTo-HtmlText $_.Value)</td></tr>" }) -join '') + '</tbody></table>'
 }
 $annexHtml = @(
     (KpiTable $invSum 'A. Resumen de inventario')
     (KpiTable $hostSum 'B. Resumen de la revisión de hosts')
     (KpiTable $perfSum 'C. Resumen de rendimiento')
-    $(if ($adminPrincipals.Count) { '<h3>D. Principales con rol Administrador en la raíz</h3><table class="t"><thead><tr><th>Principal</th><th>Tipo</th><th>Propaga</th></tr></thead><tbody>' + (($adminPrincipals | ForEach-Object { "<tr><td>$(& $enc $_.principal)</td><td>$(if ($_.group) { 'Grupo' } else { 'Usuario' })</td><td>$(if ($_.propagate) { 'Sí' } else { 'No' })</td></tr>" }) -join '') + '</tbody></table><p class="small muted">Información sensible: nombres de cuentas con privilegios elevados.</p>' })
-    '<h3>E. Reportes de detalle</h3><ul>' + (($sources | ForEach-Object { "<li><a href=""$($_.report)"">$(& $enc $_.name)</a> — <code>$(& $enc $_.report)</code></li>" }) -join '') + '</ul>'
+    $(if ($adminPrincipals.Count) { '<h3>D. Principales con rol Administrador en la raíz</h3><table class="t"><thead><tr><th>Principal</th><th>Tipo</th><th>Propaga</th></tr></thead><tbody>' + (($adminPrincipals | ForEach-Object { "<tr><td>$(ConvertTo-HtmlText $_.principal)</td><td>$(if ($_.group) { 'Grupo' } else { 'Usuario' })</td><td>$(if ($_.propagate) { 'Sí' } else { 'No' })</td></tr>" }) -join '') + '</tbody></table><p class="small muted">Información sensible: nombres de cuentas con privilegios elevados.</p>' })
+    '<h3>E. Reportes de detalle</h3><ul>' + (($sources | ForEach-Object { "<li><a href=""$($_.report)"">$(ConvertTo-HtmlText $_.name)</a> — <code>$(ConvertTo-HtmlText $_.report)</code></li>" }) -join '') + '</ul>'
     '<h3>F. Comandos de recolección</h3><table class="t"><tbody>' + ((@(
         'object.collect -json -type m|h|r|c|s|p / &lt;propiedades&gt;', 'object.collect -json / triggeredAlarmState', 'about.cert -json', 'license.ls -json',
         'metric.interval.info -json', 'metric.sample -json -i &lt;intervalo&gt; -n &lt;muestras&gt; -instance=&lt;…&gt; HostSystem:&lt;id&gt;|VirtualMachine:&lt;id&gt; … &lt;contadores&gt;',
@@ -405,28 +404,28 @@ if ('html' -in $Format) {
         ENV = $Env.ToUpper(); SCOPE = $scopeLabel + $clusterLabel; DATE = $stamp; PREPARED_BY = $preparedBy
         AUDIT_ID = $auditId; VERSION = $Version; CLASSIFICATION = $classification
     }
-    foreach ($k in $text.Keys) { $map[$k] = & $enc $text[$k] }
+    foreach ($k in $text.Keys) { $map[$k] = ConvertTo-HtmlText $text[$k] }
     $map += @{
         EXEC_SUMMARY = (($execText | ForEach-Object { "<p>$_</p>" }) -join ''); DOMAIN_SCORES = $domainHtml; SEVERITY_COUNTS = $countHtml
-        TOP_RISKS = $topHtml; KEY_METRICS = $keyHtml; EVOLUTION = $evoHtml; METHODOLOGY = $methodHtml; MATRIX = $matrixHtml; FINDINGS = $findHtml; REMEDIATION = $remHtml; ANNEXES = $annexHtml
+        TOP_RISKS = $topHtml; ANALYSIS = $analysisHtml; KEY_METRICS = $keyHtml; EVOLUTION = $evoHtml; METHODOLOGY = $methodHtml; MATRIX = $matrixHtml; FINDINGS = $findHtml; REMEDIATION = $remHtml; ANNEXES = $annexHtml
     }
     $html = Expand-Template (Get-Content (Join-Path $root 'templates/audit.html') -Raw) $map
     $f = Join-Path $outDir 'auditoria.html'; Set-Content $f $html -Encoding utf8; $written += $f
 }
 if ('md' -in $Format) {
-    $esc = { param($s) ("$s" -replace "`r?`n", ' ' -replace '([\\`*_\[\]<>|#])', '\$1') }
     $strip = { param($s) ($s -replace '<[^>]+>', '') }
     $md = Expand-Template (Get-Content (Join-Path $root 'templates/audit.md') -Raw) @{
         TITLE          = "Auditoría de la plataforma vSphere — $($Env.ToUpper())"; ENV = $Env.ToUpper(); SCOPE = $scopeLabel + $clusterLabel
-        DATE           = $stamp; PREPARED_BY = (& $esc $preparedBy); AUDIT_ID = $auditId; VERSION = $Version; CLASSIFICATION = $classification
+        DATE           = $stamp; PREPARED_BY = (ConvertTo-MdText $preparedBy); AUDIT_ID = $auditId; VERSION = $Version; CLASSIFICATION = $classification
         EXEC_SUMMARY   = (($execText | ForEach-Object { [System.Net.WebUtility]::HtmlDecode((& $strip $_)) }) -join "`n`n")
         DOMAIN_SCORES  = ("| Dominio | Indicador | Crítico | Advertencia | Info |`n|---|---:|---:|---:|---:|`n" + (($scores.GetEnumerator() | ForEach-Object { "| $($_.Key) | $($_.Value.score) | $($_.Value.crit) | $($_.Value.warn) | $($_.Value.info) |" }) -join "`n"))
-        FINDINGS       = $(if ($scored.Count) { ($scored | ForEach-Object { "### $($_.id) · $(& $esc $_.object)`n`n| | |`n|---|---|`n| Severidad | $($_.severity) |`n| Dominio | $($_.domain) · $($_.category) |`n| Evidencia | $(& $esc $_.evidence) |`n| Riesgo | $(& $esc $_.risk) |`n| Recomendación | $(& $esc $_.suggestion) |$(if ($_.command) { "`n| Verificación | $(Format-MdCode ("$($_.command)" -replace '\|', '\|')) |" })$(if ($_.reference) { "`n| Referencia | $(& $esc $_.reference) |" })" }) -join "`n`n" } else { 'No se identificaron hallazgos.' })
-        REMEDIATION    = ("| ID | Severidad | Objeto | Acción | Responsable | Fecha | Estado |`n|---|---|---|---|---|---|---|`n" + (($scored | Where-Object { $_.severity -ne 'Info' } | ForEach-Object { "| $($_.id) | $($_.severity) | $(& $esc $_.object) | $(& $esc $_.suggestion) |  |  | Abierto |" }) -join "`n"))
+        FINDINGS       = $(if ($scored.Count) { ($scored | ForEach-Object { "### $($_.id) · $(ConvertTo-MdText $_.object)`n`n| | |`n|---|---|`n| Severidad | $($_.severity) |`n| Dominio | $($_.domain) · $($_.category) |`n| Evidencia | $(ConvertTo-MdText $_.evidence) |`n| Riesgo | $(ConvertTo-MdText $_.risk) |`n| Recomendación | $(ConvertTo-MdText $_.suggestion) |$(if ($_.command) { "`n| Verificación | $(Format-MdCode ("$($_.command)" -replace '\|', '\|')) |" })$(if ($_.reference) { "`n| Referencia | $(ConvertTo-MdText $_.reference) |" })" }) -join "`n`n" } else { 'No se identificaron hallazgos.' })
+        REMEDIATION    = ("| Prioridad | ID | Severidad | Objeto | VMs | Acción | Responsable | Fecha | Estado |`n|---:|---|---|---|---:|---|---|---|---|`n" + (@($byPriority | ForEach-Object -Begin { $rk = 0 } -Process { $rk++; "| $rk | $($_.id) | $($_.severity) | $(ConvertTo-MdText $_.object) | $(& $vmsOf $_) | $(ConvertTo-MdText $_.suggestion) |  |  | Abierto |" }) -join "`n"))
         THRESHOLDS     = (Get-NoteText 'thresholds')
+        ANALYSIS       = $(if ($analysis) { "### $($analysis.title)`n`n_$(ConvertTo-MdText $analysis.note)_`n`n$(ConvertTo-SafeMd $analysis.text)`n" } else { '' })
         KEY_METRICS    = $(if ($keyCards.Count) { ConvertTo-PanelMd $keyPanel -Bare } else { 'Sin métricas disponibles.' })
-        EVOLUTION      = (ConvertTo-PanelMd $evoPanel -Bare) + $(if ($newTop.Count) { "`n`n**Hallazgos nuevos (críticos y advertencias)**`n`n| ID | Severidad | Dominio | Objeto |`n|---|---|---|---|`n" + (($newTop | ForEach-Object { "| $($_.id) | $($_.severity) | $($_.domain) | $(& $esc $_.object) |" }) -join "`n") })
-        COVERAGE       = $(if ($coverage.Count) { ($coverage | ForEach-Object { "- $(& $esc $_.object): $(& $esc $_.evidence)" }) -join "`n" } else { 'Cobertura completa.' })
+        EVOLUTION      = (ConvertTo-PanelMd $evoPanel -Bare) + $(if ($newTop.Count) { "`n`n**Hallazgos nuevos (críticos y advertencias)**`n`n| ID | Severidad | Dominio | Objeto |`n|---|---|---|---|`n" + (($newTop | ForEach-Object { "| $($_.id) | $($_.severity) | $($_.domain) | $(ConvertTo-MdText $_.object) |" }) -join "`n") })
+        COVERAGE       = $(if ($coverage.Count) { ($coverage | ForEach-Object { "- $(ConvertTo-MdText $_.object): $(ConvertTo-MdText $_.evidence)" }) -join "`n" } else { 'Cobertura completa.' })
     }
     $f = Join-Path $outDir 'auditoria.md'; Set-Content $f $md -Encoding utf8; $written += $f
 }

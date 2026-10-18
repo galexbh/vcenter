@@ -5,6 +5,30 @@ sidebar:
   order: 6
 ---
 
+## 2.0 — Octubre 2026
+
+**Decidir con impacto**
+- **VMs expuestas** (`impact`) en cada hallazgo: VMs encendidas del datastore, host o clúster afectado; columna nueva en los reportes y en el informe de auditoría. En N+1, la evidencia estima cuántas VMs no podrían reiniciarse.
+- Sección **Prioridades** al inicio de cada reporte: críticos y advertencias agrupados por regla, ordenados por severidad × VMs expuestas. En la auditoría, *Principales riesgos* y el plan de remediación siguen ese orden (columna *Prioridad*; `priority` en `audit.json`).
+- **Análisis de Claude (IA)**: con `/report`, `/health`, `/capacity`, `/perf`, `/host-check` y `/audit`, Claude escribe `raw/analysis.md` y regenera con `-FromRaw`. El texto se escapa y solo admite un subconjunto de Markdown. Ver [Prioridades y análisis](/vcenter/reportes/generar/#prioridades-y-análisis).
+
+**Capacidad recuperable**
+- Right-sizing en `Invoke-PerfCheck.ps1` (24h y 7d): contadores `cpu.usage.average` y `mem.active.average` por VM, regla `perf-oversized`, tabla *Right-sizing* y panel *Capacidad recuperable* (vCPU y RAM recuperables). Parámetros `-RightSizeCpuPct` y `-RightSizeMemPct`. Ver [Capacidad recuperable](/vcenter/reportes/rendimiento/#capacidad-recuperable-right-sizing).
+- Tarjeta *Disco en VMs apagadas* en el panel *Almacenamiento*; las métricas clave de la auditoría suman disco en VMs apagadas, vCPU y RAM recuperables.
+- Nueva regla en el catálogo: `ds-trend` (tendencias), antes con texto fijo en `Compare-Report.ps1`.
+
+**Sin duplicación**
+- Helpers consolidados: `Get-Percent`, `Format-Percent`, `Get-DaysToPct`, `Get-FindingKey`, `Find-PreviousRun`, `Set-FindingImpact` (Common) y `Get-SeverityRank`, `Get-SeverityClass`, `ConvertTo-MdText`, `Get-CellValue` (Render, capa base sin dependencias). Se eliminan las copias locales de porcentajes, mapas de severidad, escapes de Markdown, clave estable, búsqueda de la corrida anterior y días hasta el 90 % en los scripts.
+- `Test-Reports.ps1` falla si un script vuelve a definir esos helpers o si una función de `lib/` está definida dos veces.
+
+**Datos y compatibilidad**
+- `New-Report.ps1` recolecta `datastore` por VM y guarda `type` en `meta.json` (`-FromRaw` sin `-Type` conserva el tipo). `Invoke-HostCheck.ps1` agrega una consulta `object.collect` de VMs (host y estado) y guarda `vmCount` por host.
+- Corridas anteriores: `-FromRaw` funciona; sin los datos nuevos, el impacto queda sin dato y el right-sizing indica «sin datos de uso». Los `findings.json` sin `impact` se muestran y se comparan sin error.
+- Con los datos de demostración, los hallazgos son idénticos a 1.9, salvo la estimación de VMs sin reinicio en N+1 y el hallazgo `perf-oversized`.
+
+**Pruebas**
+- `Test-Reports.ps1`: 203 verificaciones.
+
 ## 1.9 — Octubre 2026
 
 **Mensajes directos y catálogo de textos**

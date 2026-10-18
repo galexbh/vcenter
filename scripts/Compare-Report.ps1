@@ -116,15 +116,17 @@ $dsRows = @(foreach ($d in $b.datastores) {
         $used0 = if ($o) { ([double](P $o 'summary.capacity' 0) - [double](P $o 'summary.freeSpace' 0)) / 1GB } else { $null }
         $rate = if ($null -ne $used0 -and $days -gt 0) { ($used1 - $used0) / $days } else { $null }
         $capGB = $cap / 1GB
-        $to90 = if ($rate -gt 0) { [math]::Max(0, [math]::Floor((0.9 * $capGB - $used1) / $rate)) } else { $null }
-        $to100 = if ($rate -gt 0) { [math]::Max(0, [math]::Floor(($capGB - $used1) / $rate)) } else { $null }
+        # Sin crecimiento (+∞) se muestra como «sin crecimiento», igual que sin dato de días.
+        $days90 = Get-DaysToPct -CapGB $capGB -UsedGB $used1 -RatePerDay $rate -Pct 90; $days100 = Get-DaysToPct -CapGB $capGB -UsedGB $used1 -RatePerDay $rate -Pct 100
+        $to90 = if ($null -ne $days90 -and -not [double]::IsPositiveInfinity($days90)) { $days90 } else { $null }
+        $to100 = if ($null -ne $days100 -and -not [double]::IsPositiveInfinity($days100)) { $days100 } else { $null }
         if ($null -ne $to90 -and $to90 -le 30) {
             $sev = if ($to90 -le 7) { 'Crítico' } else { 'Advertencia' }
-            Add-ReportFinding $findings $sev 'Almacenamiento' $d.name "Al ritmo actual ($([math]::Round($rate,1)) GB/día) llega al 90 % en ~$to90 días" 'Planificar liberación de espacio o ampliación antes de la fecha estimada.' (& $rc 'datastore.info', "Datastore:$($d._moref)") -Rule 'ds-trend'
+            Add-ReportFinding $findings $sev 'Almacenamiento' $d.name "Al ritmo actual ($([math]::Round($rate,1)) GB/día) llega al 90 % en ~$to90 días" (Get-FindingText 'ds-trend' $sev) (& $rc 'datastore.info', "Datastore:$($d._moref)") -Rule 'ds-trend'
         }
         [pscustomobject]@{
             name = $d.name; capGB = [math]::Round($capGB, 0); usedBase = $(if ($null -ne $used0) { [math]::Round($used0, 1) } else { 'nuevo' }); usedNow = [math]::Round($used1, 1)
-            usedPct = [math]::Round(100 * $used1 / $capGB, 1); rate = $(if ($null -ne $rate) { [math]::Round($rate, 2) } else { '' })
+            usedPct = Get-Percent $used1 $capGB; rate = $(if ($null -ne $rate) { [math]::Round($rate, 2) } else { '' })
             to90 = $(if ($null -ne $to90) { $to90 } elseif ($null -ne $rate) { 'sin crecimiento' } else { '' }); to100 = $(if ($null -ne $to100) { $to100 } else { '' })
         } })
 $dsRows = @($dsRows | Sort-Object { if ($_.to90 -is [int] -or $_.to90 -is [double]) { [double]$_.to90 } else { [double]::MaxValue } }, name)

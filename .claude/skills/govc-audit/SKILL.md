@@ -19,9 +19,10 @@ description: Auditoría técnica completa de un entorno vSphere con informe form
 
 ## Lectura del resultado (mínima)
 
-1. `raw/audit.json`: `id`, `scope`, `scores` (indicador y conteos por dominio), `counts` (por severidad), `coverage` y `findings` (ya ordenados; los 5 primeros son los principales riesgos, con su `id` AUD-NNN).
+1. `raw/audit.json`: `id`, `scope`, `scores` (indicador y conteos por dominio), `counts` (por severidad), `metrics`, `evolution`, `coverage` y `findings` (ordenados por severidad y dominio; los principales riesgos son los de mayor `priority`, severidad × VMs expuestas `impact`, con su `id` AUD-NNN).
 2. Si hace falta texto: `auditoria.md` solo hasta `## 3. Hallazgos detallados` (resumen ejecutivo, indicadores, alcance y limitaciones).
-3. No abras `auditoria.html` ni `raw/vcenter-access.json` para resumir: el **anexo D** (solo en el HTML) y ese archivo contienen nombres de cuentas con rol Administrador.
+3. Redacta el análisis en `<auditoría>/raw/analysis.md` y regenera con `-FromRaw` (skill `govc-report`, *Análisis de Claude*): queda en el resumen ejecutivo.
+4. No abras `auditoria.html` ni `raw/vcenter-access.json` para resumir: el **anexo D** (solo en el HTML) y ese archivo contienen nombres de cuentas con rol Administrador.
 
 Formato de respuesta:
 

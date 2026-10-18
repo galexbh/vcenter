@@ -5,6 +5,7 @@
 
 .DESCRIPTION
   Consulta las métricas de vCenter con `metric.sample` (modo lote, una sesión) para hosts y VMs
+  (incluido el uso de CPU y la RAM activa de cada VM, para el right-sizing en 24h y 7d)
   encendidas, y guarda solo agregados por entidad y contador (promedio, p95 y máximo) en
   raw/perf-*.json. Con -FromRaw recalcula los hallazgos con otros umbrales sin volver a consultar.
   Ventanas:
@@ -36,6 +37,9 @@ param(
     [double]$DsLatencyCritMs = 30,
     [double]$HostCpuWarnPct = 85,
     [double]$HostCpuCritPct = 95,
+    # Right-sizing (ventanas 24h y 7d): CPU p95 y RAM activa p95 por debajo de estos % de lo asignado.
+    [double]$RightSizeCpuPct = 30,
+    [double]$RightSizeMemPct = 40,
     [int]$MdMaxRows = 200
 )
 
@@ -52,7 +56,7 @@ $windows = @{ '1h' = @{ i = 20; n = 180 }; '24h' = @{ i = 300; n = 288 }; '7d' =
 # Contadores por consulta. Las agregadas usan -instance= (instancia vacía = total de la entidad).
 $hostAggCounters = @('cpu.usage.average', 'mem.vmmemctl.average', 'mem.swapinRate.average', 'net.droppedRx.summation', 'net.droppedTx.summation')
 $hostDsCounters = @('datastore.totalReadLatency.average', 'datastore.totalWriteLatency.average')
-$vmCounters = @('cpu.ready.summation', 'mem.vmmemctl.average', 'mem.swapinRate.average')
+$vmCounters = @('cpu.ready.summation', 'mem.vmmemctl.average', 'mem.swapinRate.average', 'cpu.usage.average', 'mem.active.average')
 $chunkSize = 50
 
 function Q($obj, [string[]]$names, $default = $null) {
@@ -129,7 +133,7 @@ if ($ctx.fromRaw) {
     $cmds = @(, @('metric.interval.info', '-json'))
     if (-not $useInv) {
         $cmds += , @('object.collect', '-json', '-type', 'h', '/', 'name', 'parent', 'runtime.connectionState', 'runtime.inMaintenanceMode')
-        $cmds += , @('object.collect', '-json', '-type', 'm', '/', 'name', 'runtime.powerState', 'runtime.host', 'summary.config.numCpu', 'config.template')
+        $cmds += , @('object.collect', '-json', '-type', 'm', '/', 'name', 'runtime.powerState', 'runtime.host', 'summary.config.numCpu', 'summary.config.memorySizeMB', 'config.template')
         $cmds += , @('object.collect', '-json', '-type', 'r', '/', 'name')
         $cmds += , @('object.collect', '-json', '-type', 's', '/', 'name', 'summary.url')
     }
@@ -165,7 +169,7 @@ if ($ctx.fromRaw) {
         if (-not $hid -or -not $selIds[$hid]) { continue }
         $hi = $hostInfo[$hid]
         if ($hi.state -ne 'connected') { continue }
-        $vmInfo[$v._moref] = [pscustomobject]@{ id = $v._moref; name = $v.name; host = $hi.name; cluster = $hi.cluster; vcpu = [int](P $v 'summary.config.numCpu' 1) }
+        $vmInfo[$v._moref] = [pscustomobject]@{ id = $v._moref; name = $v.name; host = $hi.name; cluster = $hi.cluster; vcpu = [int](P $v 'summary.config.numCpu' 1); memMB = [int](P $v 'summary.config.memorySizeMB' 0) }
     }
 
     # Segundo lote: muestras por trozos (límite de consultas de vCenter y largo de la línea de comandos).
@@ -204,7 +208,7 @@ if ($ctx.fromRaw) {
     $hostPerf = @(foreach ($h in $hostSel) {
             $ok = $h.state -eq 'connected'
             $rx = & $find 'host' $h.id 'net.droppedRx.summation'; $tx = & $find 'host' $h.id 'net.droppedTx.summation'
-            $sum = { param($s) if ($s) { $v = @($s.values | Where-Object { $_ -ge 0 }); if ($v.Count) { [long](($v | Measure-Object -Sum).Sum) } else { $null } } else { $null } }
+            $sum = { param($s) if ($s) { $v = @($s.values | Where-Object { $_ -ge 0 }); if ($v.Count) { [long](Get-Sum $v) } else { $null } } else { $null } }
             [pscustomobject]@{
                 name = $h.name; cluster = $h.cluster; ok = $ok; error = $(if ($ok) { '' } else { "host $($h.state)" })
                 cpuPct = & $statsOf (& $find 'host' $h.id 'cpu.usage.average') 0.01           # centésimas de %
@@ -216,8 +220,10 @@ if ($ctx.fromRaw) {
             # cpu.ready.summation: ms listos-sin-CPU por intervalo, sumados entre vCPUs → % por vCPU.
             $scale = 100 / ($win.i * 1000) / [math]::Max(1, $v.vcpu)
             [pscustomobject]@{
-                name = $v.name; cluster = $v.cluster; host = $v.host; vcpu = $v.vcpu
+                name = $v.name; cluster = $v.cluster; host = $v.host; vcpu = $v.vcpu; memMB = $v.memMB
                 readyPct = & $statsOf (& $find 'vm' $v.id 'cpu.ready.summation') $scale
+                cpuUsagePct = & $statsOf (& $find 'vm' $v.id 'cpu.usage.average') 0.01        # centésimas de %
+                memActiveMB = & $statsOf (& $find 'vm' $v.id 'mem.active.average') (1 / 1024)
                 balloonMB = & $statsOf (& $find 'vm' $v.id 'mem.vmmemctl.average') (1 / 1024)
                 swapinKBps = & $statsOf (& $find 'vm' $v.id 'mem.swapinRate.average')
             } })
@@ -270,6 +276,29 @@ $swPeak = @($vmPerf | ForEach-Object { $p = & $nOrNull $_.swapinKBps 'p95'; $m =
 Add-Group 'Advertencia' $swSust 'Swap-in sostenido del hipervisor' 'perf-swap'
 Add-Group 'Info' $swPeak 'Swap-in puntual del hipervisor' 'perf-swap'
 
+# Right-sizing: VMs sobredimensionadas según su uso p95 en la ventana. Con 1h la muestra no es representativa.
+# CPU: objetivo p95 ≤ 60 % con las vCPU sugeridas. RAM: el doble de la activa p95 (mem.active subestima el uso real).
+$canSize = $Window -ne '1h'
+$hasUsage = @($vmPerf | Where-Object { $null -ne (P $_ 'cpuUsagePct') -or $null -ne (P $_ 'memActiveMB') }).Count -gt 0
+$sizing = @(if ($canSize) {
+        foreach ($v in $vmPerf) {
+            $cpu = & $nOrNull (P $v 'cpuUsagePct') 'p95'; $act = & $nOrNull (P $v 'memActiveMB') 'p95'
+            $vc = [int]$v.vcpu; $mem = [double](P $v 'memMB' 0)
+            $vcNew = if ($null -ne $cpu -and $vc -ge 2 -and $cpu -lt $RightSizeCpuPct) { [int][math]::Max(1, [math]::Ceiling($vc * $cpu / 60)) } else { $vc }
+            $memNew = if ($null -ne $act -and $mem -ge 4096 -and $act -lt $mem * $RightSizeMemPct / 100) { [math]::Max(2048, [math]::Ceiling($act * 2 / 1024) * 1024) } else { $mem }
+            if ($vcNew -lt $vc -or $memNew -lt $mem) {
+                $gb = { param($mb) [math]::Round($mb / 1024, 1) }
+                [pscustomobject]@{
+                    name = $v.name; cluster = $v.cluster; host = $v.host; vcpu = $vc; cpuP95 = $cpu; vcpuNew = $vcNew
+                    memGB = & $gb $mem; actGB = $(if ($null -ne $act) { & $gb $act } else { $null }); memNewGB = & $gb $memNew
+                    vcpuFree = $vc - $vcNew; memFreeGB = & $gb ($mem - $memNew)
+                    text = "$($v.name) ($vc→$vcNew vCPU, $(& $gb $mem)→$(& $gb $memNew) GB)"
+                }
+            }
+        } })
+$sizing = @($sizing | Sort-Object { $_.vcpuFree * 4 + $_.memFreeGB } -Descending)
+Add-GroupedFinding -List $findings -Severity 'Info' -Category 'Capacidad' -Items $sizing -Label "Uso p95 bajo en la ventana $Window" -Suggestion (Get-FindingText 'perf-oversized') -Command $review -Rule 'perf-oversized'
+
 # CPU de hosts (p95) y caídas de red.
 foreach ($h in $hostPerf | Where-Object ok) {
     $p = & $nOrNull $h.cpuPct 'p95'
@@ -305,9 +334,13 @@ if ($missingNow.Count) {
 $down = @($hostPerf | Where-Object { -not $_.ok })
 if ($down.Count) { Add-ReportFinding -Rule 'coverage-perf-hosts' $findings 'Info' 'Cobertura' $(if ($down.Count -eq 1) { $down[0].name } else { "$($down.Count) hosts" }) "Hosts sin métricas: $((($down | ForEach-Object { "$($_.name) ($($_.error))" })) -join ', ')" (Get-FindingText 'coverage-perf-hosts') }
 foreach ($g in @($errors | Group-Object { ("$($_.error)" -replace '<.*$', '').Trim() })) {
-    $n = ($g.Group | Measure-Object entities -Sum).Sum
+    $n = Get-Sum $g.Group 'entities'
     Add-ReportFinding -Rule 'coverage-perf-error' $findings 'Info' 'Cobertura' "$n entidades" "Consulta de métricas fallida ($((@($g.Group.kind | Sort-Object -Unique)) -join ', ')): $($g.Name)" (Get-FindingText 'coverage-perf-error')
 }
+
+# VMs expuestas en hallazgos de host: VMs evaluadas en ese host.
+$exposed = @{}; foreach ($v in $vmPerf) { if ($v.host) { $exposed["$($v.host)"] = 1 + [int]$exposed["$($v.host)"] } }
+Set-FindingImpact $findings $exposed
 
 $sorted = Sort-ReportFinding $findings
 
@@ -339,9 +372,30 @@ foreach ($t in @(
                     -Note $(if ($np -eq 'datastore') { "peor host: $($r.host)" } else { '' })))
     }
 }
+# Panel de capacidad recuperable (right-sizing).
+$reclaimCards = if (-not $canSize) { @(New-PanelCard -Key 'perf-reclaim-vcpu' -Label 'vCPU recuperables' -Value '—' -Note 'requiere ventana 24h o 7d') }
+elseif (-not $hasUsage) { @(New-PanelCard -Key 'perf-reclaim-vcpu' -Label 'vCPU recuperables' -Value '—' -Note 'sin datos de uso en esta corrida') }
+else {
+    $vcTotal = [double](Get-Sum $vmPerf 'vcpu'); $memTotal = (Get-Sum $vmPerf 'memMB') / 1024
+    $vcFree = [int](Get-Sum $sizing 'vcpuFree'); $memFree = [math]::Round([double](Get-Sum $sizing 'memFreeGB'), 1)
+    $vcP = Get-Percent $vcFree $vcTotal; $memP = Get-Percent $memFree $memTotal
+    @(
+        New-PanelCard -Key 'perf-reclaim-vcpu' -Label 'vCPU recuperables' -Value "$vcFree" -Number $vcFree -Pct $vcP -Note "$(Format-Percent $vcP) de $vcTotal vCPU evaluadas"
+        New-PanelCard -Key 'perf-reclaim-mem' -Label 'RAM recuperable' -Value ('{0:0.#} GB' -f $memFree) -Number $memFree -Pct $memP -Note "$(Format-Percent $memP) de $([math]::Round($memTotal)) GB asignados"
+        New-PanelCard -Key 'perf-oversized' -Label 'VMs sobredimensionadas' -Value "$($sizing.Count)" -Number $sizing.Count -Note "de $($vmPerf.Count) VMs evaluadas"
+        foreach ($s in @($sizing | Select-Object -First 5)) {
+            New-PanelCard -Group 'Más recuperables' -Label $s.name -Value "−$($s.vcpuFree) vCPU · −$($s.memFreeGB) GB" `
+                -Note "CPU p95 $(if ($null -ne $s.cpuP95) { "$($s.cpuP95) %" } else { '—' }) · RAM activa $(if ($null -ne $s.actGB) { "$($s.actGB) GB" } else { '—' })"
+        }
+    )
+}
 $sections = New-Object System.Collections.Generic.List[object]
 $sections.Add((New-ReportPanel 'Rendimiento' $perfCards.ToArray() "Ventana $Window. La barra llega al 100 % en el umbral crítico de cada métrica."))
+$sections.Add((New-ReportPanel 'Capacidad recuperable' $reclaimCards "Right-sizing con el uso p95 de la ventana: CPU p95 < $RightSizeCpuPct % y RAM activa p95 < $RightSizeMemPct % de lo asignado. Cambiar vCPU o RAM requiere reinicio."))
 $sections.Add((New-ReportTable 'Hallazgos y sugerencias' (Get-FindingColumns) $sorted (Get-NoteText 'perf-table' -Vars @{ window = $Window })))
+if ($sizing.Count) {
+    $sections.Add((New-ReportTable 'Right-sizing' @('name:VM', 'cluster:Clúster', 'vcpu:vCPU', 'cpuP95:CPU p95 %', 'vcpuNew:vCPU sugeridas', 'memGB:RAM GB', 'actGB:RAM activa p95 GB', 'memNewGB:RAM sugerida GB') $sizing 'vCPU sugeridas para un p95 ≤ 60 %; RAM sugerida = 2 × activa p95 (mínimo 2 GB).'))
+}
 $sections.Add((New-ReportTable 'Hosts' @('cluster:Clúster', 'name:Host', 'cpuAvg:CPU prom. %', 'cpuP95:CPU p95 %', 'cpuMax:CPU máx. %', 'balloon:Balloon máx. MB', 'drops:Paquetes descartados') @($hostPerf | Where-Object ok | ForEach-Object {
                 [pscustomobject]@{ cluster = $_.cluster; name = $_.name; cpuAvg = & $fmt $_.cpuPct 'avg'; cpuP95 = & $fmt $_.cpuPct 'p95'; cpuMax = & $fmt $_.cpuPct 'max'; balloon = & $fmt $_.balloonMB 'max'; drops = $(if ($null -ne (P $_ 'dropsRx') -or $null -ne (P $_ 'dropsTx')) { [long](P $_ 'dropsRx' 0) + [long](P $_ 'dropsTx' 0) } else { '' }) } }) "Umbrales de CPU: advertencia ≥ $HostCpuWarnPct %, crítico ≥ $HostCpuCritPct % (p95)."))
 $sections.Add((New-ReportTable 'Latencia por datastore' @('datastore:Datastore', 'host:Peor host', 'readP95:Lectura p95 ms', 'writeP95:Escritura p95 ms', 'maxMs:Máx. ms', 'hosts:Hosts') $dsRows "Umbrales: advertencia ≥ $DsLatencyWarnMs ms, crítico ≥ $DsLatencyCritMs ms (p95 del peor host)."))

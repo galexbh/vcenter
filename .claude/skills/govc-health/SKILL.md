@@ -8,7 +8,7 @@ description: Criterios para evaluar la salud de vCenter y dar sugerencias priori
 ## Flujo
 
 1. Datos: `./scripts/New-Report.ps1 -Env <env> -Type health` (o `-FromRaw` si ya hay una corrida de hoy).
-2. Lee `raw/summary.json`, `raw/metrics.json` (panel *Salud e higiene*) y `raw/findings.json` (ya ordenado por severidad).
+2. Lee `raw/summary.json`, `raw/metrics.json` (panel *Salud e higiene*) y `raw/findings.json` (ya ordenado por severidad). Dentro de cada severidad, primero lo que expone más VMs (`impact`).
 3. Profundiza solo en los críticos con lecturas puntuales: usa el campo `command` del hallazgo.
 4. Responde con el formato de abajo.
 
@@ -26,7 +26,8 @@ Los umbrales numéricos y su parámetro están en la skill `govc-report` (fuente
 | HA/DRS | `cl-ha`, `cl-ha-admission`, `cl-drs` | Sin HA o sin control de admisión no hay capacidad garantizada para failover | Evaluar habilitarlo (cambio aprobado) |
 | Memoria de VMs | `vm-balloon`, `vm-swap`, `vm-compressed` | Presión de memoria en el host (valor instantáneo); el swap degrada mucho | Confirmar en una ventana con `/perf` (`perf-balloon`, `perf-swap`) |
 | Resource pools / VMs | `rp-limit`, `vm-limits` | Un límite provoca contención aunque el host tenga recursos | Confirmar que el límite es intencional |
-| Rendimiento | `perf-cpu-ready`, `perf-ds-latency`, `perf-host-cpu`, `perf-net-drops` | Contención y latencia aunque la capacidad asignada parezca suficiente | Redistribuir (DRS), right-sizing, revisar el arreglo con Storage |
+| Rendimiento | `perf-cpu-ready`, `perf-ds-latency`, `perf-host-cpu`, `perf-net-drops` | Contención y latencia aunque la capacidad asignada parezca suficiente | Redistribuir (DRS), right-sizing, revisar la carga del arreglo |
+| Capacidad recuperable | `perf-oversized` (24h/7d), tarjeta `off-disk` | vCPU y RAM asignadas sin uso, y disco de VMs apagadas: capacidad disponible sin comprar | Reducir a lo sugerido (tabla *Right-sizing*, con reinicio y confirmación del dueño de la VM) antes de proponer ampliar |
 | Cobertura | `coverage-perf-counters`, `coverage-perf-hosts`, `coverage-perf-error`, `coverage-devices` | Un contador sin datos (p. ej. drops con nivel de estadísticas 1 en 24h) **no** significa «sin problema» | Repetir con `-Window 1h` o declarar la limitación |
 | Hosts | `host-state` | Host desconectado / sin respuesta: VMs sin HA ni gestión | Revisar red de gestión y hostd/vpxa de inmediato; si el hardware no responde, caso con el fabricante |
 | Hosts | `host-maint` | Capacidad reducida si el mantenimiento está fuera de ventana | Confirmar ventana y reintegrar |

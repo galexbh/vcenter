@@ -146,7 +146,7 @@ Rechaza su ejecución cuando lo invoca Claude.
 | `CredMan.psm1` | Acceso a la bóveda (uso exclusivo del wrapper) |
 | `GovcJson.psm1` | `ConvertFrom-GovcCollect`, `Split-JsonStream` |
 | `GovcBatch.psm1` | `Invoke-GovcBatch`, `Get-GovcBatchError` (lotes de lectura con una sesión) |
-| `Render.psm1` | `New-ReportTable`, `New-ReportPanel`, `New-PanelCard`, `Get-MetricLevel`, `Format-TextBar`, `ConvertTo-PanelHtml`, `ConvertTo-PanelMd`, `New-FindingList`, `Add-ReportFinding`, `Export-ReportFinding`, `Sort-ReportFinding`, `Get-FindingColumns`, `Write-GovcReport`, `ConvertTo-HtmlText`, `Expand-Template`, `Format-MdCode` |
+| `Render.psm1` | Capa base, sin dependencias: `Get-SeverityRank`, `Get-SeverityClass`, `ConvertTo-MdText`, `ConvertTo-HtmlText`, `Get-CellValue`, `New-ReportTable`, `New-ReportPanel`, `New-PanelCard`, `New-ReportAnalysis`, `Get-MetricLevel`, `Format-TextBar`, `ConvertTo-PanelHtml`, `ConvertTo-PanelMd`, `ConvertTo-SafeHtml`, `ConvertTo-SafeMd`, `New-FindingList`, `Add-ReportFinding`, `Export-ReportFinding`, `Sort-ReportFinding`, `Get-FindingColumns`, `Write-GovcReport`, `ConvertTo-HtmlText`, `Expand-Template`, `Format-MdCode` |
 | `Common.psm1` | Utilidades compartidas por los scripts de reportes (protegido, porque incluye el escape de textos de vCenter en los comandos sugeridos). Ver la tabla siguiente |
 
 Funciones de `Common.psm1`:
@@ -156,7 +156,9 @@ Funciones de `Common.psm1`:
 | Lectura tolerante | `Get-Prop`, `Get-FirstProp`, `Read-JsonFile` |
 | Contexto de corrida | `Initialize-RunContext` (origen `-Env` o `-FromRaw`, carpeta de salida y metadatos), `Assert-EnvName`, `Get-RunUser`, `Write-RunMeta`, `Save-RawJson` (`-Depth 100`) |
 | Datos de vCenter | `ConvertFrom-CertJson`, `Get-SnapshotList` |
-| Comandos sugeridos y texto | `New-ReviewCommand`, `Format-PsLiteral`, `ConvertTo-MdText` |
+| Comandos sugeridos | `New-ReviewCommand`, `Format-PsLiteral` |
+| Cálculos compartidos | `Get-Percent`, `Format-Percent`, `Get-DaysToPct`, `Get-FindingKey`, `Find-PreviousRun` |
+| Impacto y prioridad | `Set-FindingImpact`, `Get-FindingScore`, `Get-ReportPriority`, `Get-PriorityColumns`, `Get-ReportAnalysis` |
 | Catálogo de textos | `Get-FindingCatalog`, `Get-FindingText`, `Get-CategoryText`, `Get-NoteText` (`templates/findings.psd1`) |
-| Hallazgos | `Get-SeverityRank`, `Add-GroupedFinding`, `Add-CoverageByError`, `Add-SeverityKpis` |
-| Cierre del reporte | `Export-GovcCsv`, `Complete-Report` (`findings.json`, `summary.json`, `metrics.json`, HTML/MD y CSV) |
+| Hallazgos | `Add-GroupedFinding`, `Add-CoverageByError`, `Add-SeverityKpis` |
+| Cierre del reporte | `Export-GovcCsv`, `Complete-Report` (`findings.json`, `summary.json`, `metrics.json`, secciones *Prioridades* y *Análisis de Claude*, HTML/MD y CSV) |
