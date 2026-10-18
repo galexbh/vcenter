@@ -11,4 +11,4 @@
 {{SECTIONS}}
 
 ---
-_Generado con scripts/New-Report.ps1. Las sugerencias requieren validación del equipo responsable antes de ejecutar cambios._
+_Generado con los scripts de reportes del proyecto. Ningún cambio se ejecutó; las acciones en prod/dr requieren cambio aprobado._

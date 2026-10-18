@@ -16,21 +16,21 @@
     color-scheme: light;
     --bg: #f6f7f9; --surface: #ffffff; --text: #1b1f24; --muted: #5b6470; --border: #dde1e6;
     --accent: #0b4f8a; --crit-bg: #fde8e8; --crit: #a61b1b; --warn-bg: #fff4d6; --warn: #8a5a00;
-    --info-bg: #e6f0fb; --info: #0b4f8a; --code-bg: #f0f2f5;
+    --info-bg: #e6f0fb; --info: #0b4f8a; --code-bg: #f0f2f5; --ok: #1d6b3a;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
       color-scheme: dark;
       --bg: #12151a; --surface: #1a1e24; --text: #e6e9ed; --muted: #9aa3ad; --border: #2c323a;
       --accent: #6cb2f0; --crit-bg: #3d1717; --crit: #ff9b9b; --warn-bg: #3a2e10; --warn: #f3c969;
-      --info-bg: #14283d; --info: #8cc4f5; --code-bg: #232931;
+      --info-bg: #14283d; --info: #8cc4f5; --code-bg: #232931; --ok: #7fd49b;
     }
   }
   :root[data-theme="dark"] {
     color-scheme: dark;
     --bg: #12151a; --surface: #1a1e24; --text: #e6e9ed; --muted: #9aa3ad; --border: #2c323a;
     --accent: #6cb2f0; --crit-bg: #3d1717; --crit: #ff9b9b; --warn-bg: #3a2e10; --warn: #f3c969;
-    --info-bg: #14283d; --info: #8cc4f5; --code-bg: #232931;
+    --info-bg: #14283d; --info: #8cc4f5; --code-bg: #232931; --ok: #7fd49b;
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 "Segoe UI", system-ui, sans-serif; transition: background .15s, color .15s; }
@@ -70,6 +70,18 @@
   .sev.crit { background: var(--crit-bg); color: var(--crit); }
   .sev.warn { background: var(--warn-bg); color: var(--warn); }
   .sev.info { background: var(--info-bg); color: var(--info); }
+  /* Paneles de métricas: tarjetas con barra (ancho calculado por el script; sin JavaScript). */
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; margin-bottom: 8px; }
+  .card { border: 1px solid var(--border); border-left: 4px solid var(--border); border-radius: 6px; padding: 10px 12px; background: var(--surface); break-inside: avoid; }
+  .card.ok { border-left-color: var(--ok); } .card.warn { border-left-color: var(--warn); } .card.crit { border-left-color: var(--crit); }
+  .card .cl { color: var(--muted); font-size: 12px; }
+  .card .cv { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .card.warn .cv { color: var(--warn); } .card.crit .cv { color: var(--crit); }
+  .card .cn { color: var(--muted); font-size: 12px; margin-top: 4px; }
+  .bar { height: 6px; border-radius: 3px; background: var(--code-bg); overflow: hidden; margin-top: 6px; }
+  .bar span { display: block; height: 100%; background: var(--accent); }
+  .card.ok .bar span { background: var(--ok); } .card.warn .bar span { background: var(--warn); } .card.crit .bar span { background: var(--crit); }
+  h3.pgroup { margin: 12px 0 6px; font-size: 13px; color: var(--muted); font-weight: 600; }
   footer { color: var(--muted); font-size: 12px; text-align: center; padding: 16px; }
   @media (max-width: 640px) { .top { flex-direction: column-reverse; } }
   /* Impresión y PDF: siempre en tema claro, sin el botón. */
@@ -78,7 +90,7 @@
       color-scheme: light;
       --bg: #ffffff; --surface: #ffffff; --text: #1b1f24; --muted: #5b6470; --border: #dde1e6;
       --accent: #0b4f8a; --crit-bg: #fde8e8; --crit: #a61b1b; --warn-bg: #fff4d6; --warn: #8a5a00;
-      --info-bg: #e6f0fb; --info: #0b4f8a; --code-bg: #f0f2f5;
+      --info-bg: #e6f0fb; --info: #0b4f8a; --code-bg: #f0f2f5; --ok: #1d6b3a;
     }
     .theme-toggle { display: none; }
     * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
@@ -106,7 +118,7 @@
   </div>
 {{SECTIONS}}
 </main>
-<footer>Generado con scripts/New-Report.ps1. Las sugerencias requieren validación del equipo responsable antes de ejecutar cambios.</footer>
+<footer>Generado con los scripts de reportes del proyecto. Ningún cambio se ejecutó; las acciones en prod/dr requieren cambio aprobado.</footer>
 <script>
   (function () {
     var root = document.documentElement, btn = document.getElementById('theme-toggle'), label = document.getElementById('theme-label');

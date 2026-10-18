@@ -8,7 +8,7 @@ description: Criterios para evaluar la salud de vCenter y dar sugerencias priori
 ## Flujo
 
 1. Datos: `./scripts/New-Report.ps1 -Env <env> -Type health` (o `-FromRaw` si ya hay una corrida de hoy).
-2. Lee `raw/summary.json` y `raw/findings.json` (ya ordenado por severidad).
+2. Lee `raw/summary.json`, `raw/metrics.json` (panel *Salud e higiene*) y `raw/findings.json` (ya ordenado por severidad).
 3. Profundiza solo en los críticos con lecturas puntuales: usa el campo `command` del hallazgo.
 4. Responde con el formato de abajo.
 
@@ -28,16 +28,16 @@ Los umbrales numéricos y su parámetro están en la skill `govc-report` (fuente
 | Resource pools / VMs | `rp-limit`, `vm-limits` | Un límite provoca contención aunque el host tenga recursos | Confirmar que el límite es intencional |
 | Rendimiento | `perf-cpu-ready`, `perf-ds-latency`, `perf-host-cpu`, `perf-net-drops` | Contención y latencia aunque la capacidad asignada parezca suficiente | Redistribuir (DRS), right-sizing, revisar el arreglo con Storage |
 | Cobertura | `coverage-perf-counters`, `coverage-perf-hosts`, `coverage-perf-error`, `coverage-devices` | Un contador sin datos (p. ej. drops con nivel de estadísticas 1 en 24h) **no** significa «sin problema» | Repetir con `-Window 1h` o declarar la limitación |
-| Hosts | `host-state` | Host desconectado / sin respuesta: VMs sin HA ni gestión | Escalar a Infraestructura de inmediato |
+| Hosts | `host-state` | Host desconectado / sin respuesta: VMs sin HA ni gestión | Revisar red de gestión y hostd/vpxa de inmediato; si el hardware no responde, caso con el fabricante |
 | Hosts | `host-maint` | Capacidad reducida si el mantenimiento está fuera de ventana | Confirmar ventana y reintegrar |
 | Tools | `tools-missing`, `tools-notrunning`, `tools-old` | Sin apagado ordenado, sin quiesce de backup, sin métricas de guest | Instalar/actualizar en ventana |
 | Configuración VM | `vm-consolidate`, `vm-iso`, `vm-hwversion` | Discos sin consolidar crecen; una ISO conectada puede impedir vMotion; hardware antiguo limita funciones | Consolidar, desconectar ISO, planificar actualización |
 | Certificados / licencias | `cert-vc`, `license` | Un vencimiento corta la gestión o el soporte | Planificar renovación |
 | Alarmas | `alarm` (objeto `entidad / alarma`) | Según la alarma | Seguir runbook; el campo `command` del hallazgo |
-| Higiene | `vm-off` | Consumen disco y licencias | Validar con dueños, dar de baja con cambio |
+| Higiene | `vm-off` | Consumen disco y licencias | Confirmar con el dueño de la VM y dar de baja con cambio |
 | Hosts (esxcli) | `vib-drift`, `nic-*`, `path-*`, `ntp-*`, `syslog-remote`, `coredump`, `cert-host-*` | vMotion/HA inconsistentes, pérdida de redundancia, logs sin SIEM, superficie de ataque | `/host-check` (skill `govc-esxcli`); cambios en hosts solo como propuesta |
 
-Los ratios y umbrales son práctica común de la industria, no norma: si el equipo tiene una política propia, usa la suya (validar con Infraestructura/Arquitectura). Cambiar el nivel de estadísticas de vCenter (`metric.interval.change`) es una escritura: solo como propuesta.
+Los ratios y umbrales son práctica común de la industria, no norma: si hay una política interna de capacidad, usa sus umbrales (parámetros de cada script). Cambiar el nivel de estadísticas de vCenter (`metric.interval.change`) es una escritura: solo como propuesta.
 
 ## Formato de respuesta
 
@@ -59,4 +59,4 @@ Reporte completo: <ruta md> · <ruta html>
 
 - Propón comandos de **lectura** para revisar. Si sugieres una acción de cambio, escribe el comando como propuesta y aclara su clase (write/destructive) y lo que exige el `mode` del entorno (skill `govc-core`); en entornos productivos, cambio aprobado.
 - No ejecutes acciones correctivas por iniciativa propia.
-- Para cambios con riesgo material (capacidad, eliminación de datos, mantenimiento de hosts), cierra recomendando validación con Infraestructura/Arquitectura y Riesgo Tecnológico según corresponda.
+- Cierra con tu recomendación priorizada: los 3 primeros pasos, en orden, con el motivo y el comando de revisión. Para eliminar datos (snapshots, VMs), confirma antes con el dueño de la VM; para ampliar capacidad, la decisión de inversión es de Arquitectura.

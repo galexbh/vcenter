@@ -15,4 +15,4 @@ Sigue la skill `govc-health` (umbrales en `govc-report`):
    - Reglas: `perf-cpu-ready`, `perf-ds-latency`, `perf-host-cpu`, `perf-balloon`, `perf-swap`, `perf-net-drops`.
    - Cobertura (`coverage-perf-counters`, `coverage-perf-hosts`, `coverage-perf-error`): un contador sin datos es una limitación (nivel de estadísticas del intervalo), **no** «sin problema». Sugiere `-Window 1h` (tiempo real) para cubrirlo.
 3. Entrega: hallazgos priorizados con objeto, evidencia (p95/máx.), acción y comando de revisión; ruta de la carpeta.
-4. Aclara que los umbrales son práctica común a validar con Infraestructura, no política del banco. Cambiar el nivel de estadísticas es una escritura: solo como propuesta.
+4. Usa el panel *Rendimiento* (`raw/metrics.json`: `perf-ready-worst`, `perf-ds-worst`, `perf-host-worst`) y prioriza por impacto. Los umbrales son práctica común, no política interna; ajústalos con los parámetros del script. Cambiar el nivel de estadísticas es una escritura: solo como propuesta.

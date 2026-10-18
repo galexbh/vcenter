@@ -6,7 +6,7 @@
   Recolecta inventario en bloque (una llamada object.collect por tipo de objeto) mediante
   scripts/govc.ps1, guarda el JSON normalizado en reports/<env>/<marca>/raw/ y renderiza las
   plantillas de templates/. Con -FromRaw re-renderiza sin volver a consultar vCenter.
-  Escribe además raw/findings.json y raw/summary.json, que usan Invoke-Audit.ps1 y
+  Escribe además raw/findings.json, raw/summary.json y raw/metrics.json (paneles), que usan Invoke-Audit.ps1 y
   Compare-Report.ps1. Los reportes quedan en reports/ (ignorado por git) y contienen
   información interna.
 
@@ -315,90 +315,91 @@ $snapRows = @($realVms | ForEach-Object { $vm = $_; $_.snapshots | ForEach-Objec
 
 # --- Hallazgos ------------------------------------------------------------------
 $findings = New-FindingList
-function Add-Finding($sev, $cat, $obj, $evidence, $suggestion, $command = '', $rule = '') {
-    Add-ReportFinding -List $findings -Severity $sev -Category $cat -Object $obj -Evidence $evidence -Suggestion $suggestion -Command $command -Rule $rule
+# La sugerencia sale del catálogo (templates/findings.psd1) por regla y severidad.
+function Add-Finding($sev, $cat, $obj, $evidence, $command = '', $rule = '') {
+    Add-ReportFinding -List $findings -Severity $sev -Category $cat -Object $obj -Evidence $evidence -Suggestion (Get-FindingText $rule $sev) -Command $command -Rule $rule
 }
-function Add-GroupFinding($sev, $cat, $hit, $label, $tip, $command, $rule) {
-    Add-GroupedFinding -List $findings -Severity $sev -Category $cat -Items $hit -Label $label -Suggestion $tip -Command $command -Rule $rule
+function Add-GroupFinding($sev, $cat, $hit, $label, $command, $rule) {
+    Add-GroupedFinding -List $findings -Severity $sev -Category $cat -Items $hit -Label $label -Suggestion (Get-FindingText $rule $sev) -Command $command -Rule $rule
 }
 # Comandos de revisión: referencias Tipo:id (inequívocas, sin caracteres que escapar) y argumentos
 # escapados por New-ReviewCommand; los nombres vienen de vCenter y nunca se interpolan sin escapar.
 $rc = { param([string[]]$a) New-ReviewCommand -Env $Env -Arguments $a }
 
 foreach ($d in $datastores) {
-    if (-not $d.accessible) { Add-Finding 'Crítico' 'Almacenamiento' $d.name 'Datastore no accesible' 'Revisar conectividad de almacenamiento/paths con el equipo de storage.' (& $rc 'datastore.info', "Datastore:$($d.id)") 'ds-inaccessible' }
-    elseif ($d.usedPct -ge $DatastoreCritPct) { Add-Finding 'Crítico' 'Almacenamiento' $d.name "Uso $($d.usedPct)% (libre $($d.freeGB) GB)" 'Liberar espacio (snapshots, ISOs, VMs huérfanas) o ampliar/migrar con Storage vMotion.' (& $rc 'datastore.info', "Datastore:$($d.id)") 'ds-used' }
-    elseif ($d.usedPct -ge $DatastoreWarnPct) { Add-Finding 'Advertencia' 'Almacenamiento' $d.name "Uso $($d.usedPct)% (libre $($d.freeGB) GB)" 'Planificar capacidad antes de llegar al umbral crítico.' (& $rc 'datastore.info', "Datastore:$($d.id)") 'ds-used' }
-    if ($d.accessible -and $d.provPct -gt 150) { Add-Finding 'Advertencia' 'Almacenamiento' $d.name "Aprovisionado $($d.provPct)% de la capacidad (thin)" 'Riesgo de llenado si los discos thin crecen; revisar sobreaprovisionamiento.' '' 'ds-thin' }
+    if (-not $d.accessible) { Add-Finding 'Crítico' 'Almacenamiento' $d.name 'Datastore no accesible' (& $rc 'datastore.info', "Datastore:$($d.id)") 'ds-inaccessible' }
+    elseif ($d.usedPct -ge $DatastoreCritPct) { Add-Finding 'Crítico' 'Almacenamiento' $d.name "Uso $($d.usedPct)% (libre $($d.freeGB) GB)" (& $rc 'datastore.info', "Datastore:$($d.id)") 'ds-used' }
+    elseif ($d.usedPct -ge $DatastoreWarnPct) { Add-Finding 'Advertencia' 'Almacenamiento' $d.name "Uso $($d.usedPct)% (libre $($d.freeGB) GB)" (& $rc 'datastore.info', "Datastore:$($d.id)") 'ds-used' }
+    if ($d.accessible -and $d.provPct -gt 150) { Add-Finding 'Advertencia' 'Almacenamiento' $d.name "Aprovisionado $($d.provPct)% de la capacidad (thin)" '' 'ds-thin' }
 }
 foreach ($s in $snapRows) {
     $cmd = & $rc 'snapshot.tree', '-vm', "VirtualMachine:$($s.vmId)", '-D', '-i'
-    if ($s.ageDays -ge $SnapshotCritDays) { Add-Finding 'Crítico' 'Snapshots' "$($s.vm) / $($s.name)" "Snapshot '$($s.name)' con $($s.ageDays) días" 'Validar con el dueño de la VM y consolidar/eliminar mediante cambio aprobado (degrada rendimiento y consume datastore).' $cmd 'snap-age' }
-    elseif ($s.ageDays -ge $SnapshotWarnDays) { Add-Finding 'Advertencia' 'Snapshots' "$($s.vm) / $($s.name)" "Snapshot '$($s.name)' con $($s.ageDays) días" 'Los snapshots no son respaldo; confirmar si aún se necesita.' $cmd 'snap-age' }
+    if ($s.ageDays -ge $SnapshotCritDays) { Add-Finding 'Crítico' 'Snapshots' "$($s.vm) / $($s.name)" "Snapshot '$($s.name)' con $($s.ageDays) días" $cmd 'snap-age' }
+    elseif ($s.ageDays -ge $SnapshotWarnDays) { Add-Finding 'Advertencia' 'Snapshots' "$($s.vm) / $($s.name)" "Snapshot '$($s.name)' con $($s.ageDays) días" $cmd 'snap-age' }
 }
 foreach ($h in $hosts) {
-    if ($h.state -ne 'connected') { Add-Finding 'Crítico' 'Hosts' $h.name "Estado: $($h.state)" 'Revisar conectividad del host con vCenter (management network, servicios hostd/vpxa).' (& $rc 'host.info', '-host', "HostSystem:$($h.id)") 'host-state' }
-    elseif ($h.maint) { Add-Finding 'Info' 'Hosts' $h.name 'En modo mantenimiento' 'Confirmar que corresponde a una ventana activa; si no, reintegrarlo al clúster.' '' 'host-maint' }
-    if ($h.memPct -ge $HostMemWarnPct) { Add-Finding 'Advertencia' 'Capacidad' $h.name "Memoria en uso $($h.memPct)%" 'Revisar balanceo DRS o redistribuir cargas.' '' 'host-mem' }
+    if ($h.state -ne 'connected') { Add-Finding 'Crítico' 'Hosts' $h.name "Estado: $($h.state)" (& $rc 'host.info', '-host', "HostSystem:$($h.id)") 'host-state' }
+    elseif ($h.maint) { Add-Finding 'Info' 'Hosts' $h.name 'En modo mantenimiento' '' 'host-maint' }
+    if ($h.memPct -ge $HostMemWarnPct) { Add-Finding 'Advertencia' 'Capacidad' $h.name "Memoria en uso $($h.memPct)%" '' 'host-mem' }
 }
 foreach ($c in $clusters | Where-Object { $_.cores -gt 0 }) {
     $perf = "./scripts/Invoke-PerfCheck.ps1 -Env $Env -Cluster $(Format-PsLiteral $c.name)"
-    if ($c.vcpuRatio -ge $VcpuRatioCrit) { Add-Finding 'Crítico' 'Capacidad' $c.name "vCPU:pCore $($c.vcpuRatio):1" 'Sobresuscripción de CPU alta; revisar CPU Ready y right-sizing de VMs.' $perf 'cl-vcpu' }
-    elseif ($c.vcpuRatio -ge $VcpuRatioWarn) { Add-Finding 'Advertencia' 'Capacidad' $c.name "vCPU:pCore $($c.vcpuRatio):1" 'Monitorear CPU Ready; considerar right-sizing.' $perf 'cl-vcpu' }
-    if ($c.memRatio -gt $MemRatioWarn) { Add-Finding 'Advertencia' 'Capacidad' $c.name "RAM asignada/física $($c.memRatio)" 'Sobrecompromiso de memoria; revisar ballooning/swap y reservas de HA.' '' 'cl-mem' }
+    if ($c.vcpuRatio -ge $VcpuRatioCrit) { Add-Finding 'Crítico' 'Capacidad' $c.name "vCPU:pCore $($c.vcpuRatio):1" $perf 'cl-vcpu' }
+    elseif ($c.vcpuRatio -ge $VcpuRatioWarn) { Add-Finding 'Advertencia' 'Capacidad' $c.name "vCPU:pCore $($c.vcpuRatio):1" $perf 'cl-vcpu' }
+    if ($c.memRatio -gt $MemRatioWarn) { Add-Finding 'Advertencia' 'Capacidad' $c.name "RAM asignada/física $($c.memRatio)" '' 'cl-mem' }
 }
 foreach ($c in $clusters | Where-Object { $_.isCluster }) {
     # Holgura N+1 con el uso actual (quickStats): ¿la carga cabe si cae el host de mayor capacidad?
     if ($c.activeHosts -eq 1) {
-        Add-Finding 'Info' 'Capacidad' $c.name 'Un solo host activo: sin tolerancia a la falla de un host' 'Confirmar que es intencional; con un solo host, HA no puede reiniciar VMs en otro.' '' 'cl-n1-single'
+        Add-Finding 'Info' 'Capacidad' $c.name 'Un solo host activo: sin tolerancia a la falla de un host' '' 'cl-n1-single'
     } elseif ($c.activeHosts -ge 2) {
         foreach ($r in @(@{ k = 'mem'; n = $c.n1Mem; label = 'Memoria'; fmt = { param($x) "$([math]::Round($x / 1024)) GB" } }, @{ k = 'cpu'; n = $c.n1Cpu; label = 'CPU'; fmt = { param($x) "$([math]::Round($x / 1000)) GHz" } })) {
             $n = $r.n; if ($null -eq $n.pct) { continue }
             $ev = "$($r.label) en uso $(& $r.fmt $n.used); sin el host mayor quedan $(& $r.fmt $n.left) ($($n.pct)% de uso) con $($n.hosts) hosts activos"
-            if ($n.pct -gt 100) { Add-Finding 'Crítico' 'Capacidad' $c.name $ev 'La carga actual no cabe si falla un host: HA no podría reiniciar todas las VMs. Agregar capacidad o reducir carga.' '' "cl-n1-$($r.k)" }
-            elseif ($n.pct -ge $N1WarnPct) { Add-Finding 'Advertencia' 'Capacidad' $c.name $ev 'Holgura N+1 escasa; planificar capacidad antes de que la falla de un host deje VMs sin recursos.' '' "cl-n1-$($r.k)" }
+            if ($n.pct -gt 100) { Add-Finding 'Crítico' 'Capacidad' $c.name $ev '' "cl-n1-$($r.k)" }
+            elseif ($n.pct -ge $N1WarnPct) { Add-Finding 'Advertencia' 'Capacidad' $c.name $ev '' "cl-n1-$($r.k)" }
         }
     }
-    if ($c.ha -eq 'Sí' -and $c.admission -eq $false) { Add-Finding 'Advertencia' 'Clúster' $c.name 'HA activo con el control de admisión desactivado' 'Sin control de admisión, vSphere permite encender VMs aunque ya no haya capacidad para reiniciarlas ante una falla; evaluar habilitarlo (cambio aprobado).' (& $rc 'object.collect', '-s', "ClusterComputeResource:$($c.id)", 'configurationEx.dasConfig.admissionControlEnabled') 'cl-ha-admission' }
-    if ($c.ha -eq 'No') { Add-Finding 'Crítico' 'Clúster' $c.name 'vSphere HA deshabilitado' 'Habilitar HA para que las VMs se reinicien ante la falla de un host (cambio aprobado).' (& $rc 'object.collect', '-s', "ClusterComputeResource:$($c.id)", 'configurationEx.dasConfig.enabled') 'cl-ha' }
-    if ($c.drs -eq 'No') { Add-Finding 'Advertencia' 'Clúster' $c.name 'DRS deshabilitado' 'Evaluar habilitar DRS para balanceo automático y mantenimiento sin interrupción.' '' 'cl-drs' }
-    elseif ($c.drs -eq 'manual') { Add-Finding 'Advertencia' 'Clúster' $c.name 'DRS en modo manual' 'En modo manual DRS solo recomienda; considerar partiallyAutomated o fullyAutomated.' '' 'cl-drs' }
+    if ($c.ha -eq 'Sí' -and $c.admission -eq $false) { Add-Finding 'Advertencia' 'Clúster' $c.name 'HA activo con el control de admisión desactivado' (& $rc 'object.collect', '-s', "ClusterComputeResource:$($c.id)", 'configurationEx.dasConfig.admissionControlEnabled') 'cl-ha-admission' }
+    if ($c.ha -eq 'No') { Add-Finding 'Crítico' 'Clúster' $c.name 'vSphere HA deshabilitado' (& $rc 'object.collect', '-s', "ClusterComputeResource:$($c.id)", 'configurationEx.dasConfig.enabled') 'cl-ha' }
+    if ($c.drs -eq 'No') { Add-Finding 'Advertencia' 'Clúster' $c.name 'DRS deshabilitado' '' 'cl-drs' }
+    elseif ($c.drs -eq 'manual') { Add-Finding 'Advertencia' 'Clúster' $c.name 'DRS en modo manual' '' 'cl-drs' }
 }
 
 $off = @($realVms | Where-Object power -eq 'poweredOff')
-if ($off.Count) { Add-Finding 'Info' 'Higiene' "$($off.Count) VMs" "VMs apagadas: $((($off | Select-Object -First 10).name) -join ', ')$(if ($off.Count -gt 10) { '…' })" 'Validar con dueños si pueden darse de baja (consumen almacenamiento y licencias).' (& $rc 'find', '/', '-type', 'm', '-runtime.powerState', 'poweredOff') 'vm-off' }
+if ($off.Count) { Add-Finding 'Info' 'Higiene' "$($off.Count) VMs" "VMs apagadas: $((($off | Select-Object -First 10).name) -join ', ')$(if ($off.Count -gt 10) { '…' })" (& $rc 'find', '/', '-type', 'm', '-runtime.powerState', 'poweredOff') 'vm-off' }
 
 $onVms = @($realVms | Where-Object power -eq 'poweredOn')
-Add-GroupFinding 'Advertencia' 'VMware Tools' @($onVms | Where-Object { $_.toolsVer -eq 'guestToolsNotInstalled' }) 'VMware Tools no instalado' 'Instalar open-vm-tools/VMware Tools (apagado ordenado, quiesce de backups, métricas).' '' 'tools-missing'
-Add-GroupFinding 'Advertencia' 'VMware Tools' @($onVms | Where-Object { $_.toolsVer -ne 'guestToolsNotInstalled' -and $_.tools -and $_.tools -ne 'guestToolsRunning' }) 'VMware Tools no está corriendo' 'Verificar el servicio de VMware Tools en el guest.' '' 'tools-notrunning'
-Add-GroupFinding 'Info' 'VMware Tools' @($onVms | Where-Object { $_.toolsVer -in 'guestToolsNeedUpgrade', 'guestToolsTooOld' }) 'VMware Tools desactualizado' 'Actualizar en la próxima ventana de mantenimiento.' '' 'tools-old'
+Add-GroupFinding 'Advertencia' 'VMware Tools' @($onVms | Where-Object { $_.toolsVer -eq 'guestToolsNotInstalled' }) 'VMware Tools no instalado' '' 'tools-missing'
+Add-GroupFinding 'Advertencia' 'VMware Tools' @($onVms | Where-Object { $_.toolsVer -ne 'guestToolsNotInstalled' -and $_.tools -and $_.tools -ne 'guestToolsRunning' }) 'VMware Tools no está corriendo' '' 'tools-notrunning'
+Add-GroupFinding 'Info' 'VMware Tools' @($onVms | Where-Object { $_.toolsVer -in 'guestToolsNeedUpgrade', 'guestToolsTooOld' }) 'VMware Tools desactualizado' '' 'tools-old'
 
 # Configuración de VMs (sin llamadas extra: todo viene del mismo object.collect).
-Add-GroupFinding 'Advertencia' 'Configuración VM' @($realVms | Where-Object consolidate) 'Consolidación de discos pendiente' 'Consolidar discos (Snapshots → Consolidar) en ventana; los delta sin consolidar degradan I/O y consumen espacio.' '' 'vm-consolidate'
-Add-GroupFinding 'Advertencia' 'Configuración VM' @($realVms | Where-Object { $_.cpuLimit -ge 0 -or $_.memLimit -ge 0 }) 'Límite de CPU o memoria configurado' 'Los límites provocan contención aunque el host tenga recursos; revisar si son intencionales.' '' 'vm-limits'
+Add-GroupFinding 'Advertencia' 'Configuración VM' @($realVms | Where-Object consolidate) 'Consolidación de discos pendiente' '' 'vm-consolidate'
+Add-GroupFinding 'Advertencia' 'Configuración VM' @($realVms | Where-Object { $_.cpuLimit -ge 0 -or $_.memLimit -ge 0 }) 'Límite de CPU o memoria configurado' '' 'vm-limits'
 
 # Presión de memoria por VM (quickStats, instantáneo). Invoke-PerfCheck.ps1 lo mide en una ventana de tiempo.
-Add-GroupFinding 'Advertencia' 'Capacidad' @($onVms | Where-Object { $_.balloonMB -gt 0 }) 'Memoria recuperada por balloon' 'El host está reclamando memoria al guest: revisar la presión de memoria del host y el tamaño de la VM.' '' 'vm-balloon'
-Add-GroupFinding 'Advertencia' 'Capacidad' @($onVms | Where-Object { $_.swapMB -gt 0 }) 'Memoria en swap del hipervisor' 'El swap del host degrada mucho el rendimiento: liberar memoria en el host o redistribuir cargas.' '' 'vm-swap'
-Add-GroupFinding 'Info' 'Capacidad' @($onVms | Where-Object { $_.compMB -gt 0 }) 'Memoria comprimida por el host' 'Señal temprana de presión de memoria; revisar junto con balloon y swap.' '' 'vm-compressed'
+Add-GroupFinding 'Advertencia' 'Capacidad' @($onVms | Where-Object { $_.balloonMB -gt 0 }) 'Memoria recuperada por balloon' '' 'vm-balloon'
+Add-GroupFinding 'Advertencia' 'Capacidad' @($onVms | Where-Object { $_.swapMB -gt 0 }) 'Memoria en swap del hipervisor' '' 'vm-swap'
+Add-GroupFinding 'Info' 'Capacidad' @($onVms | Where-Object { $_.compMB -gt 0 }) 'Memoria comprimida por el host' '' 'vm-compressed'
 foreach ($p in $pools | Where-Object { $_.cpuLimit -ge 0 -or $_.memLimit -ge 0 }) {
     $lim = @($(if ($p.cpuLimit -ge 0) { "CPU $($p.cpuLimit) MHz" }), $(if ($p.memLimit -ge 0) { "memoria $($p.memLimit) MB" }) | Where-Object { $_ }) -join ', '
-    Add-Finding 'Advertencia' 'Capacidad' $p.name "Resource pool con límite: $lim" 'Un límite en el pool provoca contención para todas sus VMs aunque el clúster tenga recursos; confirmar que es intencional.' (& $rc 'pool.info', "ResourcePool:$($p.id)") 'rp-limit'
+    Add-Finding 'Advertencia' 'Capacidad' $p.name "Resource pool con límite: $lim" (& $rc 'pool.info', "ResourcePool:$($p.id)") 'rp-limit'
 }
 
 $deviceScanned = if ($FromRaw) { [bool](P $meta 'deviceScan' $true) } else { -not $SkipDeviceScan }
 if ($deviceScanned) {
-    Add-GroupFinding 'Info' 'Configuración VM' @($realVms | Where-Object { $_.isos.Count }) 'CD/DVD conectado a ISO de datastore' 'Desconectar la ISO cuando no se use: impide vMotion/DRS hacia hosts sin acceso al datastore.' '' 'vm-iso'
+    Add-GroupFinding 'Info' 'Configuración VM' @($realVms | Where-Object { $_.isos.Count }) 'CD/DVD conectado a ISO de datastore' '' 'vm-iso'
 } else {
     # Se declara como limitación: la auditoría la muestra en «Cobertura» y no la puntúa.
-    Add-Finding 'Info' 'Cobertura' 'Detección de ISO conectada' 'Omitida en esta corrida (-SkipDeviceScan)' 'Ejecutar sin -SkipDeviceScan (o por clúster) para revisar unidades de CD/DVD con ISO conectada.' '' 'coverage-devices'
+    Add-Finding 'Info' 'Cobertura' 'Detección de ISO conectada' 'Omitida en esta corrida (-SkipDeviceScan)' '' 'coverage-devices'
 }
-Add-GroupFinding 'Info' 'Configuración VM' @($realVms | Where-Object { $_.hwNum -gt 0 -and $_.hwNum -lt $MinHwVersion }) "Hardware virtual anterior a vmx-$MinHwVersion" 'Planificar actualización de hardware virtual (requiere reinicio y validación de compatibilidad).' '' 'vm-hwversion'
+Add-GroupFinding 'Info' 'Configuración VM' @($realVms | Where-Object { $_.hwNum -gt 0 -and $_.hwNum -lt $MinHwVersion }) "Hardware virtual anterior a vmx-$MinHwVersion" '' 'vm-hwversion'
 
 foreach ($a in $data.alarms) {
     $sev = switch ($a.status) { 'red' { 'Crítico' } 'yellow' { 'Advertencia' } default { 'Info' } }
     $obj = if ($nameById[$a.entity]) { $nameById[$a.entity] } else { "$($a.entityType):$($a.entity)" }
-    Add-Finding $sev 'Alarmas' "$obj / $($a.alarm)" "$($a.alarm) ($($a.status))$(if ($a.acknowledged) { ', reconocida' })" 'Atender según el runbook de la alarma.' (& $rc 'events', '-n', '20', "$($a.entityType):$($a.entity)") 'alarm'
+    Add-Finding $sev 'Alarmas' "$obj / $($a.alarm)" "$($a.alarm) ($($a.status))$(if ($a.acknowledged) { ', reconocida' })" (& $rc 'events', '-n', '20', "$($a.entityType):$($a.entity)") 'alarm'
 }
 
 # Certificado de vCenter y licencias.
@@ -408,8 +409,8 @@ if ($vcenter) {
         $na = ([datetimeoffset]::Parse("$($vcenter.cert.notAfter)", [Globalization.CultureInfo]::InvariantCulture)).LocalDateTime
         $left = [math]::Floor(($na - $now).TotalDays)
         $certRow = [pscustomobject]@{ item = 'Certificado de vCenter'; detail = $vcenter.cert.subject; expires = $na.ToString('yyyy-MM-dd'); days = $left }
-        if ($left -lt 0) { Add-Finding 'Crítico' 'Certificados' 'vCenter' "Certificado vencido el $($na.ToString('yyyy-MM-dd'))" 'Renovar el certificado de vCenter (VMCA o CA interna) mediante cambio aprobado.' (& $rc 'about.cert') 'cert-vc' }
-        elseif ($left -le $CertWarnDays) { Add-Finding 'Advertencia' 'Certificados' 'vCenter' "Certificado vence en $left días ($($na.ToString('yyyy-MM-dd')))" 'Planificar la renovación antes del vencimiento.' (& $rc 'about.cert') 'cert-vc' }
+        if ($left -lt 0) { Add-Finding 'Crítico' 'Certificados' 'vCenter' "Certificado vencido el $($na.ToString('yyyy-MM-dd'))" (& $rc 'about.cert') 'cert-vc' }
+        elseif ($left -le $CertWarnDays) { Add-Finding 'Advertencia' 'Certificados' 'vCenter' "Certificado vence en $left días ($($na.ToString('yyyy-MM-dd')))" (& $rc 'about.cert') 'cert-vc' }
     }
     foreach ($l in @($vcenter.licenses)) {
         $exp = $null; if ($l.expiration) { try { $exp = ([datetimeoffset]::Parse("$($l.expiration)", [Globalization.CultureInfo]::InvariantCulture)).LocalDateTime } catch { } }
@@ -417,7 +418,7 @@ if ($vcenter) {
         $licRows += [pscustomobject]@{ item = $l.name; detail = "$($l.edition) · uso $($l.used)/$($l.total)"; expires = $(if ($exp) { $exp.ToString('yyyy-MM-dd') } else { 'sin vencimiento' }); days = $left }
         if ($null -ne $left -and $left -le $LicenseWarnDays) {
             $sev = if ($left -lt 0) { 'Crítico' } else { 'Advertencia' }
-            Add-Finding $sev 'Licencias' $l.name "$(if ($left -lt 0) { 'Vencida' } else { "Vence en $left días" }) ($($exp.ToString('yyyy-MM-dd')))" 'Gestionar la renovación con el área de licenciamiento.' (& $rc 'license.ls') 'license'
+            Add-Finding $sev 'Licencias' $l.name "$(if ($left -lt 0) { 'Vencida' } else { "Vence en $left días" }) ($($exp.ToString('yyyy-MM-dd')))" (& $rc 'license.ls') 'license'
         }
     }
 }
@@ -438,11 +439,120 @@ $kpis = [ordered]@{
     'Advertencias'  = @($sorted | Where-Object severity -eq 'Advertencia').Count
 }
 
+# --- Métricas (paneles) -----------------------------------------------------------
+$pctOf = { param($a, $b) if ($b) { [math]::Round(100 * $a / $b, 1) } else { $null } }
+$fmtPct = { param($v) if ($null -eq $v) { '—' } else { '{0:0.#} %' -f $v } }
+
+# Capacidad y holgura por clúster: uso físico (quickStats), uso tras perder el host mayor y VMs que aún caben.
+$capCards = foreach ($c in @($clusters | Where-Object { $_.hosts -gt 0 })) {
+    $act = if ($capByCl[$c.id]) { $capByCl[$c.id].ToArray() } else { @() }
+    $cpuCap = [double]($act | Measure-Object cpuCap -Sum).Sum; $cpuUsed = [double]($act | Measure-Object cpuUsed -Sum).Sum
+    $memCap = [double]($act | Measure-Object memCap -Sum).Sum; $memUsed = [double]($act | Measure-Object memUsed -Sum).Sum
+    $cpuP = & $pctOf $cpuUsed $cpuCap; $memP = & $pctOf $memUsed $memCap
+    New-PanelCard -Group $c.name -Key 'cl-cpu-used' -Label 'CPU en uso' -Value (& $fmtPct $cpuP) -Number $cpuP -Pct $cpuP -Level (Get-MetricLevel $cpuP 70 85) -Note ('{0:0.#} de {1:0.#} GHz' -f ($cpuUsed / 1000), ($cpuCap / 1000))
+    New-PanelCard -Group $c.name -Key 'cl-mem-used' -Label 'RAM en uso' -Value (& $fmtPct $memP) -Number $memP -Pct $memP -Level (Get-MetricLevel $memP 75 90) -Note ('{0:0.#} de {1:0.#} GB' -f ($memUsed / 1024), ($memCap / 1024))
+    if ($null -ne $c.n1MemPct) {
+        $cpuN1 = if ($null -ne $c.n1CpuPct) { [double]$c.n1CpuPct } else { 0 }
+        $n1 = [math]::Max([double]$c.n1MemPct, $cpuN1)
+        $res = if ($cpuN1 -gt [double]$c.n1MemPct) { 'CPU' } else { 'RAM' }
+        New-PanelCard -Group $c.name -Key 'cl-n1' -Label 'Uso si falla el host mayor' -Value (& $fmtPct $n1) -Number $n1 -Pct $n1 -Level (Get-MetricLevel $n1 $N1WarnPct 100) `
+            -Note $(if ($n1 -gt 100) { "No cabe ($res): HA no reinicia todo" } else { "Recurso limitante: $res" })
+        # VMs que aún caben con N+1, por RAM, con el tamaño medio de las VMs encendidas del clúster.
+        $on = if ($onByCl[$c.id]) { $onByCl[$c.id].ToArray() } else { @() }
+        $avgMB = if ($on.Count) { [double]($on | Measure-Object memMB -Average).Average } else { 0 }
+        if ($avgMB -gt 0) {
+            $fit = [int][math]::Max(0, [math]::Floor(($c.n1Mem.left - $c.n1Mem.used) / $avgMB))
+            New-PanelCard -Group $c.name -Key 'cl-fit' -Label 'VMs que aún caben (N+1)' -Value "$fit" -Number $fit -Level $(if ($fit -eq 0) { 'crit' } elseif ($fit -lt 3) { 'warn' } else { 'ok' }) `
+                -Note $(if ($avgMB -ge 1024) { 'VM media de {0:0.#} GB de RAM' -f ($avgMB / 1024) } else { 'VM media de {0:0} MB de RAM' -f $avgMB })
+        }
+    } elseif ($c.activeHosts -eq 1) {
+        New-PanelCard -Group $c.name -Key 'cl-n1' -Label 'Uso si falla el host mayor' -Value 'Sin N+1' -Level 'warn' -Note 'Un solo host activo'
+    }
+    $vr = [double]$c.vcpuRatio
+    New-PanelCard -Group $c.name -Key 'cl-vcpu' -Label 'vCPU:pCore' -Value ('{0:0.##}:1' -f $vr) -Number $vr -Pct (100 * $vr / $VcpuRatioCrit) -Level (Get-MetricLevel $vr $VcpuRatioWarn $VcpuRatioCrit) `
+        -Note "$($c.vcpu) vCPU en $($c.cores) cores"
+}
+
+# Datastores: totales y los más llenos, con los días hasta el 90 % según la corrida anterior del entorno.
+# Historial: carpetas hermanas de la salida (reports/<env>/); dentro de una auditoría, las de la auditoría.
+$prevDs = $null; $prevAt = $null
+$here = (Resolve-Path -LiteralPath $outDir).Path
+$envDir = Split-Path $here -Parent
+if (Test-Path -LiteralPath (Join-Path $envDir 'raw/meta-audit.json')) { $envDir = Split-Path $envDir -Parent }
+if ($envDir -and (Test-Path -LiteralPath $envDir)) {
+    $cands = foreach ($d in Get-ChildItem -LiteralPath $envDir -Directory) {
+        foreach ($r in @((Join-Path $d.FullName 'raw'), (Join-Path $d.FullName 'inventario/raw'))) {
+            $mf = Join-Path $r 'meta.json'; $df = Join-Path $r 'datastores.json'
+            if ((Split-Path $r -Parent) -ne $here -and (Test-Path -LiteralPath $mf) -and (Test-Path -LiteralPath $df)) {
+                $g = $null; try { $pm = Get-Content -LiteralPath $mf -Raw | ConvertFrom-Json; if ("$(P $pm 'env' '')" -eq $Env) { $g = [datetime]$pm.generated } } catch { }
+                # Al menos una hora antes: dos corridas seguidas no muestran crecimiento útil.
+                if ($g -and $g -lt $generated.AddHours(-1)) { [pscustomobject]@{ at = $g; file = $df } }
+            }
+        }
+    }
+    $last = @($cands | Sort-Object at -Descending | Select-Object -First 1)
+    if ($last.Count) { $prevAt = $last[0].at; $prevDs = @{}; foreach ($x in (Read-JsonFile $last[0].file @() -AsArray)) { $prevDs["$(P $x '_moref' '')"] = $x } }
+}
+$daysTo90 = {
+    param($d)
+    if (-not $prevDs) { return $null }
+    $p = $prevDs[$d.id]; if (-not $p) { return $null }
+    $usedPrev = ([double](P $p 'summary.capacity' 0) - [double](P $p 'summary.freeSpace' 0)) / $GB
+    $usedNow = $d.capGB - $d.freeGB
+    $perDay = ($usedNow - $usedPrev) / [math]::Max(0.04, ($generated - $prevAt).TotalDays)
+    if ($perDay -le 0) { return [double]::PositiveInfinity }
+    [math]::Max([double]0, [math]::Floor((0.9 * $d.capGB - $usedNow) / $perDay))
+}
+$okDs = @($datastores | Where-Object accessible)
+$capTB = [math]::Round([double]($okDs | Measure-Object capGB -Sum).Sum / 1024, 2); $freeTB = [math]::Round([double]($okDs | Measure-Object freeGB -Sum).Sum / 1024, 2)
+$dsUsedP = & $pctOf ($capTB - $freeTB) $capTB
+$overN = @($okDs | Where-Object { $_.usedPct -ge $DatastoreWarnPct }).Count
+$critN = @($okDs | Where-Object { $_.usedPct -ge $DatastoreCritPct }).Count
+$dsCards = @(
+    New-PanelCard -Key 'ds-total' -Label 'Almacenamiento en uso' -Value (& $fmtPct $dsUsedP) -Number $dsUsedP -Pct $dsUsedP -Level (Get-MetricLevel $dsUsedP $DatastoreWarnPct $DatastoreCritPct) -Note ('{0:0.##} TB libres de {1:0.##} TB' -f $freeTB, $capTB)
+    New-PanelCard -Key 'ds-over' -Label "Datastores ≥ $DatastoreWarnPct %" -Value "$overN de $($okDs.Count)" -Number $overN -Level $(if ($critN) { 'crit' } elseif ($overN) { 'warn' } else { 'ok' }) `
+        -Note $(if (@($datastores).Count -ne $okDs.Count) { "$(@($datastores).Count - $okDs.Count) no accesibles" } else { '' })
+    foreach ($d in @($okDs | Select-Object -First 5)) {
+        $dd = & $daysTo90 $d
+        $eta = if ($d.usedPct -ge 90) { ' · ya supera el 90 %' } elseif ($null -eq $dd) { '' } elseif ([double]::IsPositiveInfinity($dd)) { ' · sin crecimiento' } elseif ($dd -gt 3650) { ' · más de 10 años al 90 %' } else { " · 90 % en ~$dd días" }
+        New-PanelCard -Group 'Más llenos' -Key "ds-used:$($d.id)" -Label $d.name -Value (& $fmtPct $d.usedPct) -Number $d.usedPct -Pct $d.usedPct -Level (Get-MetricLevel $d.usedPct $DatastoreWarnPct $DatastoreCritPct) `
+            -Note (('libre {0:0.#} GB' -f $d.freeGB) + $eta)
+    }
+)
+$dsNote = if ($prevAt) { "Crecimiento calculado contra la corrida del $($prevAt.ToString('yyyy-MM-dd HH:mm'))." } else { 'Sin corrida anterior del entorno: los días hasta el 90 % aparecen desde la segunda corrida.' }
+
+# Salud e higiene en %.
+$toolsOk = @($onVms | Where-Object { $_.toolsVer -in 'guestToolsCurrent', 'guestToolsUnmanaged' }).Count
+$toolsP = & $pctOf $toolsOk $onVms.Count
+$hwKnown = @($realVms | Where-Object hwNum -gt 0); $hwOk = @($hwKnown | Where-Object hwNum -ge $MinHwVersion).Count
+$hwP = & $pctOf $hwOk $hwKnown.Count
+$onP = & $pctOf $onVms.Count $realVms.Count
+$conn = @($hosts | Where-Object state -eq 'connected').Count; $connP = & $pctOf $conn $hosts.Count
+$maintN = @($hosts | Where-Object maint).Count
+$snapVms = @($snapRows | Select-Object -ExpandProperty vm -Unique).Count
+$oldest = if ($snapRows.Count) { [int]$snapRows[0].ageDays } else { $null }
+$healthCards = @(
+    New-PanelCard -Key 'hosts-connected' -Label 'Hosts conectados' -Value (& $fmtPct $connP) -Number $connP -Pct $connP -Level $(if ($null -eq $connP) { '' } elseif ($connP -lt 100) { 'crit' } else { 'ok' }) `
+        -Note "$conn de $($hosts.Count)$(if ($maintN) { " · $maintN en mantenimiento" })"
+    New-PanelCard -Key 'tools-current' -Label 'VMware Tools al día' -Value (& $fmtPct $toolsP) -Number $toolsP -Pct $toolsP -Level (Get-MetricLevel $toolsP 90 75 -LowerIsWorse) -Note "$toolsOk de $($onVms.Count) VMs encendidas"
+    New-PanelCard -Key 'hw-current' -Label "Hardware virtual ≥ vmx-$MinHwVersion" -Value (& $fmtPct $hwP) -Number $hwP -Pct $hwP -Level (Get-MetricLevel $hwP 90 75 -LowerIsWorse) -Note "$hwOk de $($hwKnown.Count) VMs"
+    New-PanelCard -Key 'vms-on' -Label 'VMs encendidas' -Value (& $fmtPct $onP) -Number $onP -Pct $onP -Note "$($off.Count) apagadas"
+    New-PanelCard -Key 'snap-vms' -Label 'VMs con snapshot' -Value "$snapVms" -Number $snapVms -Level $(if ($null -eq $oldest) { 'ok' } elseif ($oldest -ge $SnapshotCritDays) { 'crit' } elseif ($oldest -ge $SnapshotWarnDays) { 'warn' } else { 'ok' }) `
+        -Note $(if ($null -ne $oldest) { "el más antiguo: $oldest días" } else { 'sin snapshots' })
+)
+
 $sections = New-Object System.Collections.Generic.List[object]
 $want = { param($t) $Type -eq 'all' -or $Type -eq $t }
 
+# Paneles primero: lo que se lee de un vistazo, antes de las tablas.
+if (& $want 'health') { $sections.Add((New-ReportPanel 'Salud e higiene' $healthCards)) }
+if (& $want 'capacity') {
+    $sections.Add((New-ReportPanel 'Capacidad y holgura' $capCards 'Uso si falla el host mayor: carga actual frente a lo que queda sin ese host (más de 100 % = no cabe). VMs que aún caben: por RAM, manteniendo N+1.'))
+    $sections.Add((New-ReportPanel 'Almacenamiento' $dsCards $dsNote))
+}
+
 if (& $want 'health') {
-    $sections.Add((New-ReportTable 'Hallazgos y sugerencias' (Get-FindingColumns) $sorted 'Los comandos son propuestas de consulta; ningún cambio se ejecutó.'))
+    $sections.Add((New-ReportTable 'Hallazgos y sugerencias' (Get-FindingColumns) $sorted (Get-NoteText 'review-commands')))
 }
 if (& $want 'capacity') {
     $sections.Add((New-ReportTable 'Capacidad por clúster' @('name:Clúster', 'ha:HA', 'drs:DRS', 'hosts:Hosts', 'cores:pCores', 'vcpu:vCPU (on)', 'vcpuRatio:vCPU:pCore', 'memGB:RAM física GB', 'vmemGB:RAM asignada GB', 'memRatio:Ratio RAM', 'n1CpuPct:CPU N+1 %', 'n1MemPct:RAM N+1 %') $clusters "N+1: uso actual frente a la capacidad que queda al perder el host mayor (más de 100 % = no cabe). Advertencia ≥ $N1WarnPct %."))

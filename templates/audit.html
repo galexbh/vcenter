@@ -109,6 +109,19 @@
   .finding dd { margin: 0; padding: 3px 0; }
   code { font: 8.5pt Consolas, "Cascadia Mono", monospace; background: var(--soft); padding: 1px 4px; border-radius: 3px; word-break: break-all; }
 
+  /* Métricas: tarjetas con barra (ancho calculado por el script; sin JavaScript). */
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin: 8px 0 10px; }
+  .card { border: 1px solid var(--line); border-left: 4px solid var(--line); border-radius: 4px; padding: 8px 10px; break-inside: avoid; }
+  .card.ok { border-left-color: var(--ok); } .card.warn { border-left-color: var(--warn); } .card.crit { border-left-color: var(--crit); }
+  .card .cl { color: var(--muted); font-size: 8.5pt; }
+  .card .cv { font-size: 15pt; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .card.warn .cv { color: var(--warn); } .card.crit .cv { color: var(--crit); } .card.ok .cv { color: var(--ok); }
+  .card .cn { color: var(--muted); font-size: 8.5pt; margin-top: 2px; }
+  .bar { height: 5px; border-radius: 3px; background: var(--soft); border: 1px solid var(--line); overflow: hidden; margin-top: 4px; }
+  .bar span { display: block; height: 100%; background: var(--accent); }
+  .card.ok .bar span { background: var(--ok); } .card.warn .bar span { background: var(--warn); } .card.crit .bar span { background: var(--crit); }
+  h3.pgroup { margin: 10px 0 4px; font-size: 9.5pt; color: var(--muted); }
+
   .signs { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 18px; }
   .sign { border-top: 1px solid var(--ink); padding-top: 6px; font-size: 9.5pt; }
   .sign .role { font-weight: 700; color: var(--heading); }
@@ -182,6 +195,10 @@
     <h3>Indicador por dominio</h3>
     <div class="scores">{{DOMAIN_SCORES}}</div>
     <p class="small muted">Indicador interno de priorización: 100 − (15 × críticos + 5 × advertencias + 1 × informativos), mínimo 0. No constituye una certificación ni una calificación de cumplimiento.</p>
+    <h3>Métricas clave</h3>
+    {{KEY_METRICS}}
+    <h3>Evolución</h3>
+    {{EVOLUTION}}
     <h3>Hallazgos por severidad</h3>
     <div class="counts">{{SEVERITY_COUNTS}}</div>
     <h3>Principales riesgos</h3>
@@ -202,7 +219,7 @@
 
   <section class="page brk">
     <h2><span class="num">4</span>Plan de remediación</h2>
-    <p>Completar responsable, fecha compromiso y estado de cada hallazgo. Las acciones que modifiquen la infraestructura requieren un cambio aprobado y la validación del área dueña.</p>
+    <p>Completar responsable, fecha compromiso y estado de cada hallazgo, atendiendo primero los críticos. Las acciones que modifiquen la plataforma requieren un cambio aprobado.</p>
     <div class="scroll">{{REMEDIATION}}</div>
   </section>
 
@@ -213,10 +230,10 @@
 
   <section class="page brk">
     <h2><span class="num">6</span>Revisión y aprobación</h2>
-    <p>Las firmas confirman la revisión del informe y la aceptación del plan de remediación. No implican conformidad con los hallazgos ni cierre de los mismos.</p>
+    <p>Las firmas confirman la revisión del informe y la aceptación del plan de remediación. No implican conformidad con los hallazgos ni cierre de los mismos. Cualquier conclusión de cumplimiento normativo corresponde a Auditoría Interna, Riesgo Tecnológico y Seguridad de la Información.</p>
     <div class="signs">
       <div class="sign"><div class="role">Elaborado por</div><div>{{PREPARED_BY}}</div><div class="line">Firma y fecha</div></div>
-      <div class="sign"><div class="role">Revisado por</div><div>Infraestructura / Arquitectura</div><div class="line">Nombre, firma y fecha</div></div>
+      <div class="sign"><div class="role">Revisado por</div><div>Arquitectura</div><div class="line">Nombre, firma y fecha</div></div>
       <div class="sign"><div class="role">Revisado por</div><div>Seguridad de la Información</div><div class="line">Nombre, firma y fecha</div></div>
       <div class="sign"><div class="role">Aprobado por</div><div>Responsable del servicio</div><div class="line">Nombre, firma y fecha</div></div>
     </div>

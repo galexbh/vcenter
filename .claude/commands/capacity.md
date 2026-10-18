@@ -13,4 +13,4 @@ Sigue la skill `govc-health` (criterio y reglas; umbrales en `govc-report`):
    - Presión de memoria instantánea (`vm-balloon`, `vm-swap`, `vm-compressed`) y límites (`rp-limit`).
    - Datastores: top 5 por uso y GB libres; aprovisionado thin (`ds-thin`).
 3. Si hay ratio vCPU:pCore alto o presión de memoria, ofrece medir en una ventana reutilizando el inventario del paso 1: `./scripts/Invoke-PerfCheck.ps1 -Env <entorno> -InventoryDir <carpeta del paso 1> [-Cluster '<clúster>'] [-Window 1h|24h|7d]` (detalle en `/perf`).
-4. Entrega: tabla por clúster, riesgos y 3 recomendaciones (right-sizing, rebalanceo, ampliación). Aclara que los ratios y umbrales son práctica común, no política del banco, y que decisiones de inversión van con Infraestructura/Arquitectura.
+4. Entrega: tabla por clúster, riesgos y 3 recomendaciones (right-sizing, rebalanceo, ampliación). Usa el panel *Capacidad y holgura* (`raw/metrics.json`: `cl-n1`, `cl-fit`, `cl-vcpu`, `ds-used:*`). Prioriza: primero lo que no cabe con N+1, después datastores sobre el umbral. Los ratios y umbrales son práctica común, no política interna; la ampliación (inversión) la decide Arquitectura.

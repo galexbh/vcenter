@@ -13,7 +13,8 @@
     4. Controles de acceso          permisos con rol Administrador en la raíz del inventario.
   Asigna ID (AUD-001…), dominio, riesgo y referencia a cada hallazgo; calcula un indicador por
   dominio y genera auditoria.html (imprimible / PDF) y auditoria.md a partir de templates/audit.*,
-  más raw/audit.json con el modelo consolidado. El seguimiento con Compare-Report.ps1 compara las
+  más raw/audit.json con el modelo consolidado (incluye métricas clave y la evolución frente a la
+  auditoría anterior del mismo entorno). El seguimiento con Compare-Report.ps1 compara las
   corridas de inventario (inventario/raw/), no audit.json.
 
 .EXAMPLE
@@ -75,39 +76,7 @@ $domainOf = @{
     'Seguridad' = 'Seguridad'; 'Logs' = 'Seguridad'; 'Certificados' = 'Seguridad'; 'Permisos' = 'Seguridad'
     'Snapshots' = 'Higiene'; 'Higiene' = 'Higiene'
 }
-$riskOf = @{
-    'Hosts'              = 'Pérdida de gestión o de protección HA para las VMs del host.'
-    'Alarmas'            = 'Condición activa reportada por vCenter; impacto según la alarma.'
-    'Storage'            = 'Pérdida de acceso a LUN o de redundancia de ruta; posible indisponibilidad de VMs.'
-    'Red física'         = 'Pérdida de redundancia o rendimiento de red; fallas en vMotion o almacenamiento IP.'
-    'Clúster'            = 'Las VMs no se reinician automáticamente ante falla de un host, o la carga no se balancea.'
-    'Almacenamiento'     = 'Si el datastore se llena, vSphere pausa las VMs que escriben en él.'
-    'Capacidad'          = 'Contención de CPU o memoria; capacidad insuficiente para tolerar la falla de un host.'
-    'Rendimiento'        = 'Latencia o contención que degradan el servicio aunque la capacidad asignada parezca suficiente.'
-    'VMware Tools'       = 'Sin apagado ordenado, sin quiesce para respaldos y sin métricas del sistema invitado.'
-    'Drift VIBs/drivers' = 'Comportamiento inconsistente entre hosts; riesgo en vMotion, HA y soporte del fabricante.'
-    'Tiempo'             = 'Desfase horario: afecta autenticación, certificados y correlación de eventos.'
-    'Diagnóstico'        = 'Sin evidencia para el fabricante ante una falla grave del host.'
-    'Plataforma'         = 'Heterogeneidad de hardware; restricciones de EVC y de balanceo.'
-    'Configuración VM'   = 'Configuraciones que limitan rendimiento, movilidad o mantenimiento de las VMs.'
-    'Licencias'          = 'Pérdida de funcionalidades al vencer la licencia.'
-    'Seguridad'          = 'Mayor superficie de ataque sobre el hipervisor.'
-    'Logs'               = 'Los eventos solo quedan en el host: se pierden ante falla y no llegan al monitoreo central.'
-    'Certificados'       = 'Interrupción de conexiones y alertas de confianza al vencer el certificado.'
-    'Permisos'           = 'Exceso de privilegios: mayor impacto ante credenciales comprometidas o errores.'
-    'Snapshots'          = 'Degradación de rendimiento y consumo de espacio; consolidaciones prolongadas.'
-    'Higiene'            = 'Consumo de recursos y licencias sin uso aparente.'
-}
-# Referencia temática (sin IDs de control): orienta la consulta a la guía oficial vigente.
-$scg = 'VMware vSphere Security Configuration Guide'; $cis = 'CIS Benchmark para VMware ESXi'
-$refOf = @{
-    'Seguridad'    = "$scg · $cis — servicios de acceso (SSH / ESXi Shell)"
-    'Logs'         = "$scg · $cis — registro remoto (syslog)"
-    'Tiempo'       = "$scg · $cis — sincronización de tiempo (NTP)"
-    'Certificados' = "$scg — gestión de certificados"
-    'Permisos'     = "$scg — control de acceso y roles de vCenter"
-    'Drift VIBs/drivers' = "$scg · $cis — nivel de aceptación e integridad de VIBs"
-}
+# Riesgo y referencia por categoría: templates/findings.psd1 (Categories).
 # --- Ejecución de las fuentes ---------------------------------------------------
 $ctx = Initialize-RunContext -Env $Env -FromRaw $FromRaw -Root $root -MetaFile 'meta-audit.json' -Suffix '-auditoria'
 $Env = $ctx.env; $outDir = $ctx.outDir; $generated = $ctx.generated
@@ -192,17 +161,17 @@ if ($access -and $access.ok) {
         Sort-Object principal -Unique)
     $users = @($adminPrincipals | Where-Object { -not $_.group })
     if ($adminPrincipals.Count -gt $MaxRootAdmins) {
-        Add-ReportFinding $extra 'Advertencia' 'Permisos' 'Raíz del inventario' "$($adminPrincipals.Count) principales con rol Administrador (umbral: $MaxRootAdmins)" 'Revisar necesidad de cada asignación; aplicar mínimo privilegio con roles personalizados acotados.' "./scripts/govc.ps1 -Env $Env permissions.ls /" -Rule 'perm-root-admins'
+        Add-ReportFinding $extra 'Advertencia' 'Permisos' 'Raíz del inventario' "$($adminPrincipals.Count) principales con rol Administrador (umbral: $MaxRootAdmins)" (Get-FindingText 'perm-root-admins') "./scripts/govc.ps1 -Env $Env permissions.ls /" -Rule 'perm-root-admins'
     }
     if ($users.Count) {
-        Add-ReportFinding $extra 'Info' 'Permisos' 'Raíz del inventario' "$($users.Count) usuario(s) individuales con rol Administrador (no grupos)" 'Preferir asignaciones a grupos del directorio para facilitar altas, bajas y revisiones de acceso.' "./scripts/govc.ps1 -Env $Env permissions.ls /" -Rule 'perm-root-users'
+        Add-ReportFinding $extra 'Info' 'Permisos' 'Raíz del inventario' "$($users.Count) usuario(s) individuales con rol Administrador (no grupos)" (Get-FindingText 'perm-root-users') "./scripts/govc.ps1 -Env $Env permissions.ls /" -Rule 'perm-root-users'
     }
 } else {
-    Add-ReportFinding $extra 'Info' 'Cobertura' 'Controles de acceso' 'No se pudo leer permissions.ls en la raíz' 'Verificar privilegios de lectura de permisos de la cuenta de servicio.' -Rule 'coverage-access'
+    Add-ReportFinding $extra 'Info' 'Cobertura' 'Controles de acceso' 'No se pudo leer permissions.ls en la raíz' (Get-FindingText 'coverage-access') -Rule 'coverage-access'
 }
 if (-not $perfMeta -and $perfInScope) {
     $why = if (P $meta 'perfSkipped' $false) { 'Omitida en esta corrida (-SkipPerf)' } elseif (P $meta 'perfError' '') { "No disponible: $(P $meta 'perfError' '')" } else { 'Auditoría recolectada sin la fuente de rendimiento' }
-    Add-ReportFinding $extra 'Info' 'Cobertura' 'Métricas de rendimiento' $why 'Ejecutar la auditoría con la fuente de rendimiento (o ./scripts/Invoke-PerfCheck.ps1) para evaluar latencia y contención.' -Rule 'coverage-perf'
+    Add-ReportFinding $extra 'Info' 'Cobertura' 'Métricas de rendimiento' $why (Get-FindingText 'coverage-perf') -Rule 'coverage-perf'
 }
 
 # --- Consolidación ------------------------------------------------------------------
@@ -222,8 +191,8 @@ $scored = @($all | Where-Object { $_.category -ne 'Cobertura' } |
     ForEach-Object {
         $d = $domainOf[$_.category]; if (-not $d) { $d = 'Configuración' }
         $_ | Add-Member domain $d -Force
-        $_ | Add-Member risk ($riskOf[$_.category] ?? '') -Force
-        $_ | Add-Member reference ($refOf[$_.category] ?? '') -Force
+        $_ | Add-Member risk (Get-CategoryText $_.category Risk) -Force
+        $_ | Add-Member reference (Get-CategoryText $_.category Reference) -Force
         $_ } |
     Where-Object { $_.domain -in $scopeDomains } |
     Sort-Object { $sevOrder[$_.severity] }, { [array]::IndexOf($domains, $_.domain) }, category, object)
@@ -240,6 +209,87 @@ foreach ($d in $scopeDomains) {
     $scores[$d] = [pscustomobject]@{ score = [math]::Max(0, 100 - (15 * $c + 5 * $w + $n)); crit = $c; warn = $w; info = $n }
 }
 $counts = [ordered]@{ 'Crítico' = @($scored | Where-Object severity -eq 'Crítico').Count; 'Advertencia' = @($scored | Where-Object severity -eq 'Advertencia').Count; 'Info' = @($scored | Where-Object severity -eq 'Info').Count }
+
+# --- Métricas clave (de los paneles de cada fuente: raw/metrics.json) ------------------------
+$metricsOf = @{}
+foreach ($s in 'inventario', 'hosts', 'perf') { $metricsOf[$s] = @(Read-Json (Join-Path $outDir "$s/raw/metrics.json")) }
+$pick = {
+    # La métrica con ese id (o prefijo) con el peor valor: máximo, o mínimo con -Min.
+    param([string]$Src, [string]$Key, [string]$Label, [switch]$Min, [switch]$Prefix)
+    $rows = @($metricsOf[$Src] | Where-Object { $k = "$(P $_ 'key' '')"; $null -ne (P $_ 'number') -and $(if ($Prefix) { $k.StartsWith($Key) } else { $k -eq $Key }) })
+    if (-not $rows.Count) { return }
+    $r = @($rows | Sort-Object { [double]$_.number } -Descending:(-not $Min))[0]
+    $where = (@((P $r 'group'), $(if ($Prefix) { P $r 'label' }), (P $r 'note')) | Where-Object { $_ -and $_ -ne 'Más llenos' }) -join ' · '
+    New-PanelCard -Key $Key.TrimEnd(':') -Label $Label -Value "$(P $r 'value' '')" -Number $r.number -Pct (P $r 'pct') -Level "$(P $r 'level' '')" -Note $where
+}
+$keyCards = @(@(
+    if ('Capacidad' -in $scopeDomains -or 'Disponibilidad' -in $scopeDomains) {
+        & $pick inventario 'cl-n1' 'Uso si falla el host mayor (peor clúster)'
+        & $pick inventario 'cl-fit' 'VMs que aún caben con N+1 (clúster más justo)' -Min
+        & $pick inventario 'ds-used:' 'Datastore más lleno' -Prefix
+        & $pick inventario 'ds-total' 'Almacenamiento en uso'
+    }
+    if ('Configuración' -in $scopeDomains) { & $pick inventario 'tools-current' 'VMware Tools al día' }
+    & $pick hosts 'hc-coverage' 'Cobertura de la revisión de hosts'
+    if ('Rendimiento' -in $scopeDomains) {
+        & $pick perf 'perf-ready-worst' 'CPU ready p95 (peor VM)'
+        & $pick perf 'perf-ds-worst' 'Latencia p95 (peor datastore)'
+    }
+) | Where-Object { $_ })
+$keyPanel = New-ReportPanel 'Métricas clave' $keyCards
+
+# --- Evolución frente a la auditoría anterior del mismo entorno ---------------------------------
+$keyOf = { param($f) if ($f.PSObject.Properties['key'] -and $f.key) { $f.key } else { [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes("$($f.rule)|$($f.object)"))).Substring(0, 12).ToLowerInvariant() } }
+# Historial: auditorías hermanas de esta carpeta (reports/<env>/), anteriores a esta.
+$prevAudit = $null
+$here = (Resolve-Path -LiteralPath $outDir).Path
+$envDir = Split-Path $here -Parent
+if ($envDir -and (Test-Path -LiteralPath $envDir)) {
+    $prevAudit = @(Get-ChildItem -LiteralPath $envDir -Directory | Where-Object { $_.FullName -ne $here } | ForEach-Object {
+            $j = Join-Path $_.FullName 'raw/audit.json'
+            if (Test-Path -LiteralPath $j) {
+                $o = $null; try { $o = Get-Content -LiteralPath $j -Raw | ConvertFrom-Json -DateKind String } catch { }
+                if ($o -and "$(P $o 'env' '')" -eq $Env -and (P $o 'generated') -and [datetime]$o.generated -lt $generated) { $o }
+            } } | Sort-Object { [datetime]$_.generated } -Descending | Select-Object -First 1)
+    $prevAudit = if ($prevAudit.Count) { $prevAudit[0] } else { $null }
+}
+$evolution = $null
+if ($prevAudit) {
+    $prevF = @{}; foreach ($f in @($prevAudit.findings)) { if ($f) { $prevF[(& $keyOf $f)] = $f } }
+    $curK = @{}; foreach ($f in $scored) { $curK[$f.key] = $f }
+    $new = @($scored | Where-Object { -not $prevF.ContainsKey($_.key) })
+    $resolved = @($prevF.Keys | Where-Object { -not $curK.ContainsKey($_) } | ForEach-Object { $prevF[$_] })
+    $persist = @($scored | Where-Object { $prevF.ContainsKey($_.key) })
+    $domDelta = foreach ($d in $scopeDomains) {
+        $before = if ($prevAudit.scores -and $prevAudit.scores.PSObject.Properties[$d]) { [int]$prevAudit.scores.$d.score } else { $null }
+        [pscustomobject]@{ domain = $d; before = $before; now = $scores[$d].score; delta = $(if ($null -ne $before) { $scores[$d].score - $before } else { $null }) }
+    }
+    $evolution = [ordered]@{
+        previous = "$($prevAudit.id)"; previousGenerated = "$($prevAudit.generated)"; previousScope = "$($prevAudit.scope)"
+        new = $new.Count; resolved = $resolved.Count; persistent = $persist.Count
+        domains = @($domDelta); newKeys = @($new | ForEach-Object { $_.key }); resolvedKeys = @($resolved | ForEach-Object { & $keyOf $_ })
+    }
+}
+$arrow = { param($d) if ($null -eq $d) { '—' } elseif ($d -gt 0) { "↑ +$d" } elseif ($d -lt 0) { "↓ $d" } else { '= 0' } }
+$evoCards = if ($evolution) {
+    @(
+        New-PanelCard -Key 'evo-new' -Label 'Hallazgos nuevos' -Value "$($evolution.new)" -Number $evolution.new -Level $(if (@($new | Where-Object severity -eq 'Crítico').Count) { 'crit' } elseif ($evolution.new) { 'warn' } else { 'ok' }) `
+            -Note "$(@($new | Where-Object severity -eq 'Crítico').Count) críticos · $(@($new | Where-Object severity -eq 'Advertencia').Count) advertencias"
+        New-PanelCard -Key 'evo-resolved' -Label 'Resueltos' -Value "$($evolution.resolved)" -Number $evolution.resolved -Level $(if ($evolution.resolved) { 'ok' } else { '' })
+        New-PanelCard -Key 'evo-persistent' -Label 'Persistentes' -Value "$($evolution.persistent)" -Number $evolution.persistent -Level $(if (@($persist | Where-Object severity -eq 'Crítico').Count) { 'crit' } elseif ($evolution.persistent) { 'warn' } else { 'ok' }) `
+            -Note "$(@($persist | Where-Object severity -eq 'Crítico').Count) críticos siguen abiertos"
+        foreach ($x in $domDelta) {
+            New-PanelCard -Group 'Indicador por dominio' -Key "evo-dom:$($x.domain)" -Label $x.domain -Value "$($x.now) ($(& $arrow $x.delta))" -Number $x.delta -Pct $x.now `
+                -Level $(if ($null -eq $x.delta) { '' } elseif ($x.delta -lt 0) { 'crit' } elseif ($x.delta -gt 0) { 'ok' } else { '' }) -Note $(if ($null -ne $x.before) { "antes $($x.before)" } else { 'sin dato anterior' })
+        }
+    )
+} else { @() }
+$evoNote = if ($evolution) {
+    $pa = ([datetime]$prevAudit.generated).ToString('yyyy-MM-dd HH:mm')
+    "Comparado con $($evolution.previous) ($pa)$(if ($evolution.previousScope -and $evolution.previousScope -ne $Scope) { "; alcance anterior distinto ($($evolution.previousScope)): los nuevos y resueltos pueden deberse al cambio de alcance" }). Un hallazgo se sigue por regla y objeto."
+} else { 'Primera auditoría del entorno: la evolución aparece desde la siguiente.' }
+$evoPanel = New-ReportPanel 'Evolución' $evoCards $evoNote
+$newTop = @(if ($evolution) { $new | Where-Object severity -ne 'Info' | Select-Object -First 10 })
 
 $invSum = Read-Json (Join-Path $outDir 'inventario/raw/summary.json') $null
 $hostSum = Read-Json (Join-Path $outDir 'hosts/raw/summary.json') $null
@@ -282,6 +332,10 @@ $topHtml = if ($top.Count) {
     (($top | ForEach-Object { "<tr><td>$($_.id)</td><td><span class=""sev $($sevCss[$_.severity])"">$(& $enc $_.severity)</span></td><td>$(& $enc $_.domain)</td><td>$(& $enc $_.object)</td><td>$(& $enc $_.risk)</td></tr>" }) -join '') + '</tbody></table>'
 } else { '<p class="muted">Sin hallazgos críticos ni advertencias.</p>' }
 
+$keyHtml = if ($keyCards.Count) { ConvertTo-PanelHtml $keyPanel -Bare } else { '<p class="muted">Sin métricas disponibles.</p>' }
+$evoHtml = (ConvertTo-PanelHtml $evoPanel -Bare) + $(if ($newTop.Count) {
+        '<h3>Hallazgos nuevos (críticos y advertencias)</h3><table class="t"><thead><tr><th>ID</th><th>Severidad</th><th>Dominio</th><th>Objeto</th></tr></thead><tbody>' +
+        (($newTop | ForEach-Object { "<tr><td>$($_.id)</td><td><span class=""sev $($sevCss[$_.severity])"">$(& $enc $_.severity)</span></td><td>$(& $enc $_.domain)</td><td>$(& $enc $_.object)</td></tr>" }) -join '') + '</tbody></table>' })
 $covRows = if ($coverage.Count) { ($coverage | ForEach-Object { "<tr><td>$(& $enc $_.object)</td><td>$(& $enc $_.evidence)</td></tr>" }) -join '' } else { '<tr><td colspan="2" class="muted">Cobertura completa.</td></tr>' }
 $methodHtml = @"
 <p>La evaluación se realizó mediante consultas de <strong>solo lectura</strong> a vCenter con el cliente govc, a través del wrapper controlado del proyecto. No se ejecutaron cambios en la infraestructura. Cada consulta quedó registrada en la bitácora de auditoría.</p>
@@ -297,7 +351,7 @@ $(if ($perfMeta) { "<tr><td>Rendimiento</td><td>metric.sample · metric.interval
 <ul>
 <li>No se evalúan sistemas operativos invitados, aplicaciones, respaldos, red física fuera del host ni seguridad perimetral.</li>
 <li>La sobresuscripción y la holgura N+1 se miden sobre recursos asignados y el uso al momento de la recolección. $(if ($perfMeta) { "Las métricas de rendimiento cubren la ventana de $(& $enc $perfWin); lo que el nivel de estadísticas de vCenter no conserva se declara como cobertura." } else { 'No se evaluó el consumo en una ventana de tiempo.' })</li>
-<li>Los umbrales de rendimiento (CPU ready, latencia) son de práctica habitual, no normativos; deben validarse con Infraestructura.</li>
+<li>$(& $enc (Get-NoteText 'thresholds'))</li>
 <li>Las referencias a guías de seguridad son temáticas y orientativas; deben contrastarse con la versión vigente de cada documento.</li>
 </ul>
 <h3>Cobertura</h3>
@@ -354,7 +408,7 @@ if ('html' -in $Format) {
     foreach ($k in $text.Keys) { $map[$k] = & $enc $text[$k] }
     $map += @{
         EXEC_SUMMARY = (($execText | ForEach-Object { "<p>$_</p>" }) -join ''); DOMAIN_SCORES = $domainHtml; SEVERITY_COUNTS = $countHtml
-        TOP_RISKS = $topHtml; METHODOLOGY = $methodHtml; MATRIX = $matrixHtml; FINDINGS = $findHtml; REMEDIATION = $remHtml; ANNEXES = $annexHtml
+        TOP_RISKS = $topHtml; KEY_METRICS = $keyHtml; EVOLUTION = $evoHtml; METHODOLOGY = $methodHtml; MATRIX = $matrixHtml; FINDINGS = $findHtml; REMEDIATION = $remHtml; ANNEXES = $annexHtml
     }
     $html = Expand-Template (Get-Content (Join-Path $root 'templates/audit.html') -Raw) $map
     $f = Join-Path $outDir 'auditoria.html'; Set-Content $f $html -Encoding utf8; $written += $f
@@ -369,12 +423,15 @@ if ('md' -in $Format) {
         DOMAIN_SCORES  = ("| Dominio | Indicador | Crítico | Advertencia | Info |`n|---|---:|---:|---:|---:|`n" + (($scores.GetEnumerator() | ForEach-Object { "| $($_.Key) | $($_.Value.score) | $($_.Value.crit) | $($_.Value.warn) | $($_.Value.info) |" }) -join "`n"))
         FINDINGS       = $(if ($scored.Count) { ($scored | ForEach-Object { "### $($_.id) · $(& $esc $_.object)`n`n| | |`n|---|---|`n| Severidad | $($_.severity) |`n| Dominio | $($_.domain) · $($_.category) |`n| Evidencia | $(& $esc $_.evidence) |`n| Riesgo | $(& $esc $_.risk) |`n| Recomendación | $(& $esc $_.suggestion) |$(if ($_.command) { "`n| Verificación | $(Format-MdCode ("$($_.command)" -replace '\|', '\|')) |" })$(if ($_.reference) { "`n| Referencia | $(& $esc $_.reference) |" })" }) -join "`n`n" } else { 'No se identificaron hallazgos.' })
         REMEDIATION    = ("| ID | Severidad | Objeto | Acción | Responsable | Fecha | Estado |`n|---|---|---|---|---|---|---|`n" + (($scored | Where-Object { $_.severity -ne 'Info' } | ForEach-Object { "| $($_.id) | $($_.severity) | $(& $esc $_.object) | $(& $esc $_.suggestion) |  |  | Abierto |" }) -join "`n"))
+        THRESHOLDS     = (Get-NoteText 'thresholds')
+        KEY_METRICS    = $(if ($keyCards.Count) { ConvertTo-PanelMd $keyPanel -Bare } else { 'Sin métricas disponibles.' })
+        EVOLUTION      = (ConvertTo-PanelMd $evoPanel -Bare) + $(if ($newTop.Count) { "`n`n**Hallazgos nuevos (críticos y advertencias)**`n`n| ID | Severidad | Dominio | Objeto |`n|---|---|---|---|`n" + (($newTop | ForEach-Object { "| $($_.id) | $($_.severity) | $($_.domain) | $(& $esc $_.object) |" }) -join "`n") })
         COVERAGE       = $(if ($coverage.Count) { ($coverage | ForEach-Object { "- $(& $esc $_.object): $(& $esc $_.evidence)" }) -join "`n" } else { 'Cobertura completa.' })
     }
     $f = Join-Path $outDir 'auditoria.md'; Set-Content $f $md -Encoding utf8; $written += $f
 }
 
-[ordered]@{ id = $auditId; env = $Env; generated = $generated.ToString('o'); scope = $Scope; cluster = @($Cluster); scores = $scores; counts = $counts; findings = $scored; coverage = $coverage } |
+[ordered]@{ id = $auditId; env = $Env; generated = $generated.ToString('o'); scope = $Scope; cluster = @($Cluster); scores = $scores; counts = $counts; metrics = @($keyCards); evolution = $evolution; findings = $scored; coverage = $coverage } |
     ConvertTo-Json -Depth 8 | Set-Content (Join-Path $outDir 'raw/audit.json') -Encoding utf8
 
 [pscustomobject]@{ Auditoria = $auditId; Carpeta = $outDir; Archivos = $written; Criticos = $counts['Crítico']; Advertencias = $counts['Advertencia']; Indicadores = (($scores.GetEnumerator() | ForEach-Object { "$($_.Key) $($_.Value.score)" }) -join ' · ') }

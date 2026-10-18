@@ -146,7 +146,7 @@ Rechaza su ejecución cuando lo invoca Claude.
 | `CredMan.psm1` | Acceso a la bóveda (uso exclusivo del wrapper) |
 | `GovcJson.psm1` | `ConvertFrom-GovcCollect`, `Split-JsonStream` |
 | `GovcBatch.psm1` | `Invoke-GovcBatch`, `Get-GovcBatchError` (lotes de lectura con una sesión) |
-| `Render.psm1` | `New-ReportTable`, `New-FindingList`, `Add-ReportFinding`, `Export-ReportFinding`, `Sort-ReportFinding`, `Get-FindingColumns`, `Write-GovcReport`, `ConvertTo-HtmlText`, `Expand-Template`, `Format-MdCode` |
+| `Render.psm1` | `New-ReportTable`, `New-ReportPanel`, `New-PanelCard`, `Get-MetricLevel`, `Format-TextBar`, `ConvertTo-PanelHtml`, `ConvertTo-PanelMd`, `New-FindingList`, `Add-ReportFinding`, `Export-ReportFinding`, `Sort-ReportFinding`, `Get-FindingColumns`, `Write-GovcReport`, `ConvertTo-HtmlText`, `Expand-Template`, `Format-MdCode` |
 | `Common.psm1` | Utilidades compartidas por los scripts de reportes (protegido, porque incluye el escape de textos de vCenter en los comandos sugeridos). Ver la tabla siguiente |
 
 Funciones de `Common.psm1`:
@@ -157,5 +157,6 @@ Funciones de `Common.psm1`:
 | Contexto de corrida | `Initialize-RunContext` (origen `-Env` o `-FromRaw`, carpeta de salida y metadatos), `Assert-EnvName`, `Get-RunUser`, `Write-RunMeta`, `Save-RawJson` (`-Depth 100`) |
 | Datos de vCenter | `ConvertFrom-CertJson`, `Get-SnapshotList` |
 | Comandos sugeridos y texto | `New-ReviewCommand`, `Format-PsLiteral`, `ConvertTo-MdText` |
+| Catálogo de textos | `Get-FindingCatalog`, `Get-FindingText`, `Get-CategoryText`, `Get-NoteText` (`templates/findings.psd1`) |
 | Hallazgos | `Get-SeverityRank`, `Add-GroupedFinding`, `Add-CoverageByError`, `Add-SeverityKpis` |
-| Cierre del reporte | `Export-GovcCsv`, `Complete-Report` (`findings.json`, `summary.json`, HTML/MD y CSV) |
+| Cierre del reporte | `Export-GovcCsv`, `Complete-Report` (`findings.json`, `summary.json`, `metrics.json`, HTML/MD y CSV) |

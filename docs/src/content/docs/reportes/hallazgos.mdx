@@ -129,6 +129,30 @@ Parámetros de `New-Report.ps1`:
 Los umbrales de sobresuscripción, holgura N+1, rendimiento y antigüedad son referencias habituales de la industria. Cuando exista una política interna de capacidad, los parámetros deben ajustarse a ella.
 :::
 
+## Catálogo de textos
+
+Las sugerencias de cada regla, el riesgo y la referencia de cada categoría de la auditoría y las notas comunes están en `templates/findings.psd1`. Los scripts calculan la evidencia; el catálogo dice **qué hacer**. Para ajustar el tono o adaptar una recomendación a la práctica interna basta con editar ese archivo, sin tocar código.
+
+```powershell
+'ds-used' = @{ Suggestion = @{
+        'Crítico'     = 'Liberar espacio ya (snapshots viejos, ISOs, VMs huérfanas) o mover VMs con Storage vMotion; …'
+        'Advertencia' = 'Planificar liberación o ampliación antes de llegar al umbral crítico.'
+    } }
+'svc' = @{ Suggestion = 'Detener {label} y dejar la política en off; habilitarlo solo durante una ventana de soporte.' }
+```
+
+| Sección | Contenido |
+|---|---|
+| `Rules` | `Suggestion` por código de regla: un texto, o una tabla por severidad (`Crítico`, `Advertencia`, `Info`) |
+| `Categories` | `Risk` y `Reference` por categoría (columnas *Riesgo* y *Referencia* del informe de auditoría) |
+| `Notes` | Textos comunes: nota de umbrales, nota de la tabla de rendimiento y alcance de los comandos de revisión |
+
+- **Formato:** archivo de datos de PowerShell, leído con `Import-PowerShellDataFile` (lenguaje restringido: no ejecuta código). Se carga una vez por proceso (`Get-FindingText`, `Get-CategoryText` y `Get-NoteText` en `Common.psm1`).
+- **Marcadores:** `{label}` o `{window}` se reemplazan como texto literal; nunca se evalúan.
+- **Estilo:** acción en imperativo, motivo breve y «cambio aprobado» cuando la acción modifica la plataforma. Sin «validar con…» ni «escalar a…»: el equipo que ejecuta la herramienta es el que decide.
+- **Menciones a otras áreas:** solo cuando cambian la acción. Storage en `path-dead` y el dueño de la VM en `snap-age` y `vm-off` (antes de eliminar).
+- **Control:** `Test-Reports.ps1` falla si un hallazgo queda sin sugerencia, si una entrada no se usa, si un texto está vacío o si un texto menciona un área fuera de esas excepciones.
+
 ## Del hallazgo a la acción
 
 1. Ejecutar el comando de verificación para confirmar el hallazgo.

@@ -183,7 +183,7 @@ $yesNo = { param($b) if ($b) { 'Sí' } else { 'No' } }
 # Hosts que no respondieron un chequeo (permisos, versión, host caído): un hallazgo por chequeo y causa.
 foreach ($c in $Checks) {
     Add-CoverageByError -List $findings -Rule "coverage-$c" -Entries @($results[$c] | Where-Object { -not $_.ok }) -What "Chequeo '$c'" `
-        -Suggestion 'Verificar estado de los hosts, la versión de ESXi o los privilegios de la cuenta de servicio sobre la configuración del host.'
+        -Suggestion (Get-FindingText 'coverage-check')
 }
 
 if ('vibs' -in $Checks) {
@@ -204,7 +204,7 @@ if ('vibs' -in $Checks) {
     $drift = @($drift | Sort-Object cluster, name)
     foreach ($d in $drift) {
         $ev = if ($d.missing -gt 0) { "Falta en $($d.missing) host(s). Versiones: $($d.versions)" } else { "Versiones distintas: $($d.versions)" }
-        Add-ReportFinding -Rule 'vib-drift' $findings 'Advertencia' 'Drift VIBs/drivers' "$($d.cluster) / $($d.name)" $ev 'Homologar con vLCM/baseline del clúster; versiones distintas pueden romper vMotion, HA o soporte del fabricante.' (& $rc 'host.esxcli', '-host', '<host>', 'software', 'vib', 'get', '-n', $d.name)
+        Add-ReportFinding -Rule 'vib-drift' $findings 'Advertencia' 'Drift VIBs/drivers' "$($d.cluster) / $($d.name)" $ev (Get-FindingText 'vib-drift') (& $rc 'host.esxcli', '-host', '<host>', 'software', 'vib', 'get', '-n', $d.name)
     }
     $sections.Add((New-ReportTable 'Drift de VIBs y drivers' @('cluster:Clúster', 'name:VIB', 'versions:Versiones (hosts)', 'missing:Hosts sin el VIB') $drift 'Solo se listan VIBs que no son idénticos en todos los hosts del clúster.'))
 }
@@ -216,16 +216,16 @@ if ('nics' -in $Checks) {
                     admin = F $r 'AdminStatus'; link = F $r @('LinkStatus', 'Link'); speed = F $r 'Speed'; duplex = F $r 'Duplex'; mtu = F $r 'MTU'
                 } } }) | Sort-Object cluster, host, nic)
     foreach ($n in $nicRows | Where-Object { $_.admin -match '^up$' -and $_.link -notmatch '^up$' }) {
-        Add-ReportFinding -Rule 'nic-nolink' $findings 'Advertencia' 'Red física' "$($n.host) / $($n.nic)" "NIC habilitada sin link (link: $($n.link))" 'Revisar cable/puerto del switch; si la NIC está en un vSwitch/DVS, hay pérdida de redundancia.' (& $rc 'host.esxcli', '-host', $n.host, 'network', 'nic', 'get', '-n', $n.nic)
+        Add-ReportFinding -Rule 'nic-nolink' $findings 'Advertencia' 'Red física' "$($n.host) / $($n.nic)" "NIC habilitada sin link (link: $($n.link))" (Get-FindingText 'nic-nolink') (& $rc 'host.esxcli', '-host', $n.host, 'network', 'nic', 'get', '-n', $n.nic)
     }
     foreach ($g in @($nicRows | Where-Object { $_.link -match '^up$' } | Group-Object cluster, nic)) {
         $speeds = @($g.Group | Group-Object speed)
         if ($speeds.Count -gt 1) {
-            Add-ReportFinding -Rule 'nic-speed' $findings 'Advertencia' 'Red física' "$($g.Group[0].cluster) / $($g.Group[0].nic)" "Velocidad distinta entre hosts: $(($speeds | ForEach-Object { "$($_.Name) Mb ($(($_.Group.host) -join ', '))" }) -join ' · ')" 'Verificar negociación y configuración de puertos; afecta vMotion y balanceo.'
+            Add-ReportFinding -Rule 'nic-speed' $findings 'Advertencia' 'Red física' "$($g.Group[0].cluster) / $($g.Group[0].nic)" "Velocidad distinta entre hosts: $(($speeds | ForEach-Object { "$($_.Name) Mb ($(($_.Group.host) -join ', '))" }) -join ' · ')" (Get-FindingText 'nic-speed')
         }
         $mtus = @($g.Group | Group-Object mtu)
         if ($mtus.Count -gt 1) {
-            Add-ReportFinding -Rule 'nic-mtu' $findings 'Advertencia' 'Red física' "$($g.Group[0].cluster) / $($g.Group[0].nic)" "MTU distinto entre hosts: $(($mtus | ForEach-Object { "$($_.Name) ($(($_.Group.host) -join ', '))" }) -join ' · ')" 'MTU inconsistente rompe jumbo frames (vMotion, iSCSI, vSAN).'
+            Add-ReportFinding -Rule 'nic-mtu' $findings 'Advertencia' 'Red física' "$($g.Group[0].cluster) / $($g.Group[0].nic)" "MTU distinto entre hosts: $(($mtus | ForEach-Object { "$($_.Name) ($(($_.Group.host) -join ', '))" }) -join ' · ')" (Get-FindingText 'nic-mtu')
         }
     }
     $sections.Add((New-ReportTable 'NIC físicas' @('cluster:Clúster', 'host:Host', 'nic:NIC', 'driver:Driver', 'admin:Admin', 'link:Link', 'speed:Mb/s', 'duplex:Dúplex', 'mtu:MTU') $nicRows))
@@ -242,7 +242,7 @@ if ('paths' -in $Checks) {
                 $devices[$dev] = $true
                 switch ($state) { 'active' { $active++ } 'standby' { $standby++ } 'dead' { $dead++ } }
                 if ($state -eq 'dead') {
-                    Add-ReportFinding -Rule 'path-dead' $findings 'Crítico' 'Storage' "$($e.host) / $dev" "Path muerto: $(F $row 'RuntimeName') ($tr)" 'Revisar zoning/fabric, HBA o target; escalar a Storage.' (& $rc 'host.esxcli', '-host', $e.host, 'storage', 'core', 'path', 'list', '-d', $dev)
+                    Add-ReportFinding -Rule 'path-dead' $findings 'Crítico' 'Storage' "$($e.host) / $dev" "Path muerto: $(F $row 'RuntimeName') ($tr)" (Get-FindingText 'path-dead') (& $rc 'host.esxcli', '-host', $e.host, 'storage', 'core', 'path', 'list', '-d', $dev)
                 }
                 if ($tr -match $shared) {
                     if (-not $perDev[$dev]) { $perDev[$dev] = [pscustomobject]@{ count = 0; transport = $tr } }
@@ -251,7 +251,7 @@ if ('paths' -in $Checks) {
             }
             foreach ($dev in $perDev.Keys) {
                 if ($perDev[$dev].count -eq 1) {
-                    Add-ReportFinding -Rule 'path-single' $findings 'Advertencia' 'Storage' "$($e.host) / $dev" "Un solo path ($($perDev[$dev].transport))" 'Sin redundancia de ruta: un fallo de HBA/switch deja el LUN inaccesible.' (& $rc 'host.esxcli', '-host', $e.host, 'storage', 'nmp', 'device', 'list', '-d', $dev)
+                    Add-ReportFinding -Rule 'path-single' $findings 'Advertencia' 'Storage' "$($e.host) / $dev" "Un solo path ($($perDev[$dev].transport))" (Get-FindingText 'path-single') (& $rc 'host.esxcli', '-host', $e.host, 'storage', 'nmp', 'device', 'list', '-d', $dev)
                 }
             }
             [pscustomobject]@{ cluster = $e.cluster; host = $e.host; devices = $devices.Count; paths = $n; active = $active; standby = $standby; dead = $dead }
@@ -266,26 +266,26 @@ if ('ntp' -in $Checks) {
     $ntpRows = foreach ($e in $okBy['ntp']) {
         $r = @($e.rows)[0]; $enabled = "$(F $r 'Enabled')"; $servers = @(F $r @('Server', 'Servers') @()) -join ', '
         $s = SysRow $e; $s.ntp = $enabled; $s.ntpServers = $servers
-        if ($enabled -notmatch '^true$') { Add-ReportFinding -Rule 'ntp-disabled' $findings 'Advertencia' 'Tiempo' $e.host 'NTP deshabilitado (servicio ntpd detenido)' 'Hora inconsistente afecta logs, Kerberos/AD, certificados y correlación de eventos.' (& $rc 'host.date.info', '-host', $e.host) }
+        if ($enabled -notmatch '^true$') { Add-ReportFinding -Rule 'ntp-disabled' $findings 'Advertencia' 'Tiempo' $e.host 'NTP deshabilitado (servicio ntpd detenido)' (Get-FindingText 'ntp-disabled') (& $rc 'host.date.info', '-host', $e.host) }
         [pscustomobject]@{ cluster = $e.cluster; host = $e.host; servers = $servers }
     }
     foreach ($g in @($ntpRows | Group-Object cluster)) {
         $distinct = @($g.Group | Group-Object servers)
-        if ($distinct.Count -gt 1) { Add-ReportFinding -Rule 'ntp-servers' $findings 'Advertencia' 'Tiempo' $g.Name "Servidores NTP distintos: $(($distinct | ForEach-Object { "[$($_.Name)] ($(($_.Group.host) -join ', '))" }) -join ' · ')" 'Homologar fuentes NTP en el clúster.' }
+        if ($distinct.Count -gt 1) { Add-ReportFinding -Rule 'ntp-servers' $findings 'Advertencia' 'Tiempo' $g.Name "Servidores NTP distintos: $(($distinct | ForEach-Object { "[$($_.Name)] ($(($_.Group.host) -join ', '))" }) -join ' · ')" (Get-FindingText 'ntp-servers') }
     }
 }
 if ('syslog' -in $Checks) {
     foreach ($e in $okBy['syslog']) {
         $r = @($e.rows)[0]; $remote = "$(F $r @('RemoteHost', 'Remotehost', 'LogHost'))"
         (SysRow $e).syslog = $remote
-        if (-not $remote -or $remote -match '^<?none>?$') { Add-ReportFinding -Rule 'syslog-remote' $findings 'Advertencia' 'Logs' $e.host 'Sin syslog remoto' 'Los logs quedan solo en el host: se pierden ante falla y no llegan al SIEM. Validar con Seguridad de la Información.' (& $rc 'host.esxcli', '-host', $e.host, 'system', 'syslog', 'config', 'get') }
+        if (-not $remote -or $remote -match '^<?none>?$') { Add-ReportFinding -Rule 'syslog-remote' $findings 'Advertencia' 'Logs' $e.host 'Sin syslog remoto' (Get-FindingText 'syslog-remote') (& $rc 'host.esxcli', '-host', $e.host, 'system', 'syslog', 'config', 'get') }
     }
 }
 if ('coredump' -in $Checks) {
     foreach ($e in $okBy['coredump']) {
         $r = @($e.rows)[0]; $en = "$(F $r 'Enabled')"
         (SysRow $e).coredump = if ($en -match '^true$') { "red $(F $r @('NetworkServerIP', 'NetworkServerIPv4'))" } else { 'red: no' }
-        if ($en -notmatch '^true$') { Add-ReportFinding -Rule 'coredump' $findings 'Info' 'Diagnóstico' $e.host 'Coredump por red no configurado' 'Verificar que exista partición/archivo de coredump local; sin destino, un PSOD no deja evidencia para soporte.' (& $rc 'host.esxcli', '-host', $e.host, 'system', 'coredump', 'partition', 'get') }
+        if ($en -notmatch '^true$') { Add-ReportFinding -Rule 'coredump' $findings 'Info' 'Diagnóstico' $e.host 'Coredump por red no configurado' (Get-FindingText 'coredump') (& $rc 'host.esxcli', '-host', $e.host, 'system', 'coredump', 'partition', 'get') }
     }
 }
 if ('platform' -in $Checks) {
@@ -296,7 +296,7 @@ if ('platform' -in $Checks) {
     }
     foreach ($g in @($plat | Group-Object cluster)) {
         $m = @($g.Group | Group-Object model)
-        if ($m.Count -gt 1) { Add-ReportFinding -Rule 'platform-mixed' $findings 'Info' 'Plataforma' $g.Name "Modelos distintos: $(($m | ForEach-Object { "$($_.Name) ($(($_.Group.host) -join ', '))" }) -join ' · ')" 'Revisar compatibilidad EVC y homogeneidad para HA/DRS.' }
+        if ($m.Count -gt 1) { Add-ReportFinding -Rule 'platform-mixed' $findings 'Info' 'Plataforma' $g.Name "Modelos distintos: $(($m | ForEach-Object { "$($_.Name) ($(($_.Group.host) -join ', '))" }) -join ' · ')" (Get-FindingText 'platform-mixed') }
     }
 }
 if ('services' -in $Checks) {
@@ -307,7 +307,7 @@ if ('services' -in $Checks) {
             $running = [bool](P $s 'running' $false)
             $label = if ($k -eq 'TSM-SSH') { 'SSH' } else { 'ESXi Shell' }
             $row = SysRow $e; if ($k -eq 'TSM-SSH') { $row.ssh = & $yesNo $running } else { $row.shell = & $yesNo $running }
-            if ($running) { Add-ReportFinding -Rule "svc-$($k.ToLowerInvariant())" $findings 'Advertencia' 'Seguridad' $e.host "$label en ejecución (política: $(P $s 'policy' '?'))" "Mantener $label detenido salvo ventana de soporte; es superficie de ataque. Validar con Seguridad de la Información." (& $rc 'host.service.ls', '-host', $e.host) }
+            if ($running) { Add-ReportFinding -Rule "svc-$($k.ToLowerInvariant())" $findings 'Advertencia' 'Seguridad' $e.host "$label en ejecución (política: $(P $s 'policy' '?'))" (Get-FindingText 'svc' -Vars @{ label = $label }) (& $rc 'host.service.ls', '-host', $e.host) }
         }
     }
 }
@@ -317,9 +317,9 @@ if ('certs' -in $Checks) {
             $na = $null; try { $na = ([datetimeoffset]::Parse("$($r.notAfter)", [Globalization.CultureInfo]::InvariantCulture)).LocalDateTime } catch { }
             $daysLeft = if ($na) { [math]::Floor(($na - $generated).TotalDays) } else { $null }
             if ($null -ne $daysLeft -and $daysLeft -lt 0) {
-                Add-ReportFinding -Rule 'cert-host-expired' $findings 'Crítico' 'Certificados' $e.host "Certificado vencido el $($na.ToString('yyyy-MM-dd'))" 'Renovar el certificado del host (VMCA o CA interna) mediante cambio aprobado.' (& $rc 'host.cert.info', '-host', $e.host)
+                Add-ReportFinding -Rule 'cert-host-expired' $findings 'Crítico' 'Certificados' $e.host "Certificado vencido el $($na.ToString('yyyy-MM-dd'))" (Get-FindingText 'cert-host-expired') (& $rc 'host.cert.info', '-host', $e.host)
             } elseif ($null -ne $daysLeft -and $daysLeft -le $CertWarnDays) {
-                Add-ReportFinding -Rule 'cert-host-expiring' $findings 'Advertencia' 'Certificados' $e.host "Certificado vence en $daysLeft días ($($na.ToString('yyyy-MM-dd')))" 'Planificar la renovación antes del vencimiento.' (& $rc 'host.cert.info', '-host', $e.host)
+                Add-ReportFinding -Rule 'cert-host-expiring' $findings 'Advertencia' 'Certificados' $e.host "Certificado vence en $daysLeft días ($($na.ToString('yyyy-MM-dd')))" (Get-FindingText 'cert-host-expiring') (& $rc 'host.cert.info', '-host', $e.host)
             }
             [pscustomobject]@{ cluster = $e.cluster; host = $e.host; subject = $r.subject; issuer = $r.issuer; notAfter = $(if ($na) { $na.ToString('yyyy-MM-dd') } else { '' }); days = $daysLeft; status = $r.status }
         })
@@ -330,7 +330,30 @@ if ($sysRows.Count) {
 }
 
 $sorted = Sort-ReportFinding $findings
-$sections.Insert(0, (New-ReportTable 'Hallazgos y sugerencias' (Get-FindingColumns) $sorted 'Consultas de solo lectura vía vCenter (object.collect y esxcli list/get). Los comandos son propuestas de revisión; ningún cambio se ejecutó.'))
+
+# Panel: cobertura de los chequeos y hosts/clústeres sin hallazgos (homogeneidad).
+$pctOf = { param($a, $b) if ($b) { [math]::Round(100 * $a / $b, 1) } else { $null } }
+$cells = 0; $okCells = 0; foreach ($c in $Checks) { $cells += $results[$c].Count; $okCells += $okBy[$c].Count }
+$covP = & $pctOf $okCells $cells
+$real = @($sorted | Where-Object category -ne 'Cobertura')
+$hitObj = @($real | Where-Object severity -ne 'Info' | ForEach-Object { ("$($_.object)" -split ' / ', 2)[0] } | Sort-Object -Unique)
+$hostNames = @($hostList.name); $clNames = @($hostList.cluster | Where-Object { $_ } | Sort-Object -Unique)
+$cleanHosts = @($hostNames | Where-Object { $_ -notin $hitObj }).Count
+$driftRules = 'vib-drift', 'nic-speed', 'nic-mtu', 'ntp-servers', 'platform-mixed'
+$driftCl = @($real | Where-Object rule -in $driftRules | ForEach-Object { ("$($_.object)" -split ' / ', 2)[0] } | Sort-Object -Unique)
+$cleanCl = @($clNames | Where-Object { $_ -notin $driftCl }).Count
+$hostP = & $pctOf $cleanHosts $hostNames.Count; $clP = & $pctOf $cleanCl $clNames.Count
+$hcCards = @(
+    New-PanelCard -Key 'hc-coverage' -Label 'Cobertura de los chequeos' -Value ('{0:0.#} %' -f $covP) -Number $covP -Pct $covP -Level (Get-MetricLevel $covP 95 80 -LowerIsWorse) -Note "$okCells de $cells (chequeo × host)"
+    New-PanelCard -Key 'hc-clean-hosts' -Label 'Hosts sin críticos ni advertencias' -Value ('{0:0.#} %' -f $hostP) -Number $hostP -Pct $hostP -Level (Get-MetricLevel $hostP 80 50 -LowerIsWorse) -Note "$cleanHosts de $($hostNames.Count) hosts"
+    New-PanelCard -Key 'hc-no-drift' -Label 'Clústeres homogéneos' -Value ('{0:0.#} %' -f $clP) -Number $clP -Pct $clP -Level $(if ($null -eq $clP) { '' } elseif ($clP -lt 100) { 'warn' } else { 'ok' }) -Note "$cleanCl de $($clNames.Count) sin drift de VIBs, NIC, NTP o modelo"
+    foreach ($c in $Checks) {
+        $n = $results[$c].Count; $p = & $pctOf $okBy[$c].Count $n
+        New-PanelCard -Group 'Cobertura por chequeo' -Key "hc-check:$c" -Label $c -Value ('{0:0.#} %' -f $p) -Number $p -Pct $p -Level (Get-MetricLevel $p 95 80 -LowerIsWorse) -Note "$($okBy[$c].Count) de $n hosts"
+    }
+)
+$sections.Insert(0, (New-ReportPanel 'Cobertura y homogeneidad' $hcCards))
+$sections.Insert(1, (New-ReportTable 'Hallazgos y sugerencias' (Get-FindingColumns) $sorted "Consultas de solo lectura vía vCenter (object.collect y esxcli list/get). $(Get-NoteText 'review-commands')"))
 
 $kpis = [ordered]@{
     'Hosts'     = $hostList.Count

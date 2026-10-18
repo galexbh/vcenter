@@ -90,7 +90,7 @@ Para identificar el caso, se abre `https://<vcenter>` en el navegador y se revis
 </Steps>
 
 :::caution[Validación de la huella]
-La primera descarga se realiza sin una CA de confianza, por lo que podría ser interceptada. La huella SHA-256 debe compararse con la que proporcione Infraestructura por un canal independiente, en especial para `prod` y `dr`. `certutil -hashfile` calcula la huella del archivo; si se compara con la que muestra el navegador, se calcula sobre el `.crt` original.
+La primera descarga se realiza sin una CA de confianza, por lo que podría ser interceptada. La huella SHA-256 debe compararse con la que muestra la administración de vCenter (o la que entrega PKI) por un canal independiente, en especial para `prod` y `dr`. `certutil -hashfile` calcula la huella del archivo; si se compara con la que muestra el navegador, se calcula sobre el `.crt` original.
 :::
 
 ### Cuándo no es necesario
@@ -102,7 +102,7 @@ Si la raíz de VMCA o de la CA corporativa ya está instalada en el almacén de 
 - El archivo se guarda fuera del repositorio (por ejemplo, `C:/certs/`). Si se coloca dentro, no debe versionarse.
 - Cuando vCenter renueva o reemplaza su CA, hay que actualizar el archivo; el síntoma es el error `x509: certificate signed by unknown authority` (ver [solución de problemas](/vcenter/referencia/solucion-problemas/)).
 - `insecure: true` desactiva precisamente esta verificación: solo es aceptable en `lab` o con el simulador.
-- La CA que corresponde a cada entorno y su huella esperada las confirma Infraestructura (equipo dueño de vCenter) junto con Seguridad de la Información.
+- La CA de cada entorno y su huella esperada se toman de la administración de vCenter o de la PKI interna, nunca de la misma conexión que se quiere validar.
 
 ## Registro de credenciales
 

@@ -5,6 +5,26 @@ sidebar:
   order: 6
 ---
 
+## 1.9 — Octubre 2026
+
+**Mensajes directos y catálogo de textos**
+- Nuevo `templates/findings.psd1`: sugerencias por regla (por severidad cuando corresponde), riesgo y referencia por categoría, y notas comunes. Reemplaza los textos dispersos en `New-Report.ps1`, `Invoke-HostCheck.ps1`, `Invoke-PerfCheck.ps1` e `Invoke-Audit.ps1`. Ver [Catálogo de textos](/vcenter/reportes/hallazgos/#catálogo-de-textos).
+- Sugerencias reescritas en imperativo con el motivo, sin «validar con…» ni «escalar a…». Otras áreas solo cuando cambian la acción: Storage en `path-dead` y el dueño de la VM en `snap-age` y `vm-off`. `Test-Reports.ps1` controla la política.
+- Plantillas: pie del reporte «Ningún cambio se ejecutó; las acciones en prod/dr requieren cambio aprobado»; plan de remediación con prioridad a los críticos; revisión del informe de auditoría por **Arquitectura**; la conclusión de cumplimiento normativo corresponde, una vez al cierre, a Auditoría Interna, Riesgo Tecnológico y Seguridad de la Información.
+- `CLAUDE.md`, skills y comandos: Claude da su propia recomendación priorizada (qué hacer primero, por qué y con qué comando revisarlo) y lee `raw/metrics.json`.
+- Configuración de `caCerts`: la huella de la CA se compara con la que muestra la administración de vCenter o la que entrega PKI.
+
+**Métricas en los reportes**
+- Paneles de tarjetas con barras CSS (sin JavaScript nuevo; la CSP no cambia) y barra de texto en Markdown: *Salud e higiene*, *Capacidad y holgura* (incluye VMs que aún caben con N+1), *Almacenamiento* (con días hasta el 90 % desde la corrida anterior), *Cobertura y homogeneidad* en la revisión de hosts y *Rendimiento* en la revisión de rendimiento. Ver [Métricas](/vcenter/reportes/generar/#métricas).
+- Auditoría: paneles *Métricas clave* y *Evolución* frente a la auditoría anterior del mismo entorno (nuevos, resueltos y persistentes por `key`; variación del indicador por dominio). Ver [Métricas clave y evolución](/vcenter/auditoria/interpretar/#métricas-clave-y-evolución).
+- Nuevo `raw/metrics.json` en cada reporte; `raw/audit.json` incluye `metrics` y `evolution`.
+
+**Pruebas**
+- `Test-Reports.ps1`: 173 verificaciones (catálogo, política de menciones, métricas con valores conocidos, días hasta el 90 %, evolución con dos auditorías).
+
+**Compatibilidad**
+- `-FromRaw` funciona con corridas anteriores: las métricas se calculan desde `raw/`. La evolución compara también con auditorías anteriores a 1.9 (la clave se recalcula si falta).
+
 ## 1.8 — Octubre 2026
 
 **Seguridad**

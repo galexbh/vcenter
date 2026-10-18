@@ -195,5 +195,5 @@ Para trabajar en local: `task docs` (servidor en http://localhost:4321/vcenter/)
 ## Consideraciones
 
 - Los reportes y la bitácora contienen inventario interno. Se quedan en `reports/` y `logs/`, y no deben publicarse en otros sistemas sin la validación de Seguridad de la Información.
-- Los cambios en `prod` o `dr` necesitan un número de cambio aprobado y la validación del equipo dueño (Infraestructura o Seguridad).
+- Los cambios en `prod` o `dr` necesitan un número de cambio aprobado.
 - Las auditorías son técnicas y no constituyen una certificación de cumplimiento normativo. Sus resultados deben validarlos Auditoría Interna, Riesgo Tecnológico y Seguridad de la Información.

@@ -99,7 +99,7 @@ La operación queda registrada en la bitácora de auditoría.
 | Holgura N+1 (RAM) | Sí | No | — |
 
 :::caution
-La decisión de ampliar capacidad corresponde a Infraestructura y Arquitectura. El análisis es un insumo para esa decisión.
+Claude entrega una recomendación priorizada (qué rebalancear o ajustar primero). Si hace falta ampliar, la decisión de inversión es de Arquitectura y el análisis es su insumo.
 :::
 
 ## 4. Preparación de un ciclo de parcheo
@@ -139,7 +139,7 @@ La decisión de ampliar capacidad corresponde a Infraestructura y Arquitectura. 
 **Procedimiento**
 1. Consulta estado, modo de mantenimiento y eventos del host (`host.info`, `events -n 30`).
 2. Identifica las VMs afectadas con `object.collect -json -type m / name runtime.host runtime.powerState`.
-3. Recomienda escalar a Infraestructura con la evidencia recopilada.
+3. Propone los pasos en orden: red de gestión, servicios hostd/vpxa y, si el hardware no responde, caso con el fabricante.
 
 :::note
 Un host sin conexión con vCenter tampoco responde a esxcli. En `/host-check` se registra como hallazgo de **Cobertura**.
@@ -171,7 +171,7 @@ Diferencias respecto del laboratorio:
 - Se exige un número de cambio (`change: CHG-…`) antes de planificar.
 - Se toma `app-pagos02` como referencia (`vm.info -json -r`) y se presentan las diferencias.
 - Cada escritura requiere aprobación; la provisión no incluye pasos destructivos.
-- Si intervienen red o almacenamiento compartidos, se recomienda la validación de Redes o Infraestructura.
+- Si el portgroup o la VLAN son nuevos, la VLAN la asigna Redes.
 
 En **dr** (modo `readonly`) la provisión no está permitida y no se ejecuta ningún comando.
 

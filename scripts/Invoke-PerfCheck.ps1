@@ -253,33 +253,33 @@ $findings = New-FindingList
 $review = "./scripts/Invoke-PerfCheck.ps1 -Env $Env -Window 1h"
 $intervalS = [int](P $meta 'interval' 0)
 $nOrNull = { param($s, $k) if ($s -and $null -ne (P $s $k)) { [double]$s.$k } else { $null } }
-function Add-Group($sev, $hit, $label, $tip, $rule) {
-    Add-GroupedFinding -List $findings -Severity $sev -Category 'Rendimiento' -Items $hit -Label $label -Suggestion $tip -Command $review -Rule $rule
+function Add-Group($sev, $hit, $label, $rule) {
+    Add-GroupedFinding -List $findings -Severity $sev -Category 'Rendimiento' -Items $hit -Label $label -Suggestion (Get-FindingText $rule $sev) -Command $review -Rule $rule
 }
 
 # CPU ready por vCPU (p95).
 $ready = @($vmPerf | ForEach-Object { $p = & $nOrNull $_.readyPct 'p95'; if ($null -ne $p) { [pscustomobject]@{ name = $_.name; p95 = $p; text = "$($_.name) ($p %)" } } } | Sort-Object p95 -Descending)
-Add-Group 'Crítico' @($ready | Where-Object { $_.p95 -ge $CpuReadyCritPct }) "CPU ready p95 ≥ $CpuReadyCritPct % por vCPU" 'Contención de CPU: la VM espera para ejecutarse. Revisar sobresuscripción del host, reducir vCPU sobredimensionadas o redistribuir con DRS.' 'perf-cpu-ready'
-Add-Group 'Advertencia' @($ready | Where-Object { $_.p95 -ge $CpuReadyWarnPct -and $_.p95 -lt $CpuReadyCritPct }) "CPU ready p95 ≥ $CpuReadyWarnPct % por vCPU" 'Contención de CPU moderada; vigilar la tendencia y el dimensionamiento de vCPU.' 'perf-cpu-ready'
+Add-Group 'Crítico' @($ready | Where-Object { $_.p95 -ge $CpuReadyCritPct }) "CPU ready p95 ≥ $CpuReadyCritPct % por vCPU" 'perf-cpu-ready'
+Add-Group 'Advertencia' @($ready | Where-Object { $_.p95 -ge $CpuReadyWarnPct -and $_.p95 -lt $CpuReadyCritPct }) "CPU ready p95 ≥ $CpuReadyWarnPct % por vCPU" 'perf-cpu-ready'
 
 # Ballooning y swap de VMs en la ventana.
 $bal = @($vmPerf | ForEach-Object { $m = & $nOrNull $_.balloonMB 'max'; if ($m -gt 0) { [pscustomobject]@{ name = $_.name; text = "$($_.name) (máx. $([math]::Round($m)) MB)" } } })
-Add-Group 'Advertencia' $bal 'Ballooning en la ventana' 'El host recuperó memoria del guest: indica presión de memoria en el host.' 'perf-balloon'
+Add-Group 'Advertencia' $bal 'Ballooning en la ventana' 'perf-balloon'
 $swSust = @($vmPerf | ForEach-Object { $p = & $nOrNull $_.swapinKBps 'p95'; if ($p -gt 0) { [pscustomobject]@{ name = $_.name; text = "$($_.name) (p95 $p KB/s)" } } })
 $swPeak = @($vmPerf | ForEach-Object { $p = & $nOrNull $_.swapinKBps 'p95'; $m = & $nOrNull $_.swapinKBps 'max'; if ($m -gt 0 -and -not ($p -gt 0)) { [pscustomobject]@{ name = $_.name; text = "$($_.name) (máx. $m KB/s)" } } })
-Add-Group 'Advertencia' $swSust 'Swap-in sostenido del hipervisor' 'El swap del host degrada mucho el rendimiento: liberar memoria en el host o redistribuir cargas.' 'perf-swap'
-Add-Group 'Info' $swPeak 'Swap-in puntual del hipervisor' 'Pico aislado de swap: revisar si coincide con arranques, vMotion o respaldos.' 'perf-swap'
+Add-Group 'Advertencia' $swSust 'Swap-in sostenido del hipervisor' 'perf-swap'
+Add-Group 'Info' $swPeak 'Swap-in puntual del hipervisor' 'perf-swap'
 
 # CPU de hosts (p95) y caídas de red.
 foreach ($h in $hostPerf | Where-Object ok) {
     $p = & $nOrNull $h.cpuPct 'p95'
     if ($null -ne $p) {
         $ev = "CPU p95 $p % (promedio $(& $nOrNull $h.cpuPct 'avg') %, máx. $(& $nOrNull $h.cpuPct 'max') %)"
-        if ($p -ge $HostCpuCritPct) { Add-ReportFinding -Rule 'perf-host-cpu' $findings 'Crítico' 'Rendimiento' $h.name $ev 'Host saturado de CPU durante la ventana: redistribuir cargas (DRS) o agregar capacidad.' $review }
-        elseif ($p -ge $HostCpuWarnPct) { Add-ReportFinding -Rule 'perf-host-cpu' $findings 'Advertencia' 'Rendimiento' $h.name $ev 'Uso de CPU alto y sostenido; vigilar CPU ready de sus VMs.' $review }
+        if ($p -ge $HostCpuCritPct) { Add-ReportFinding -Rule 'perf-host-cpu' $findings 'Crítico' 'Rendimiento' $h.name $ev (Get-FindingText 'perf-host-cpu' 'Crítico') $review }
+        elseif ($p -ge $HostCpuWarnPct) { Add-ReportFinding -Rule 'perf-host-cpu' $findings 'Advertencia' 'Rendimiento' $h.name $ev (Get-FindingText 'perf-host-cpu' 'Advertencia') $review }
     }
     $drops = [long](P $h 'dropsRx' 0) + [long](P $h 'dropsTx' 0)
-    if ($drops -gt 0) { Add-ReportFinding -Rule 'perf-net-drops' $findings 'Advertencia' 'Rendimiento' $h.name "Paquetes descartados en la ventana: recepción $([long](P $h 'dropsRx' 0)), transmisión $([long](P $h 'dropsTx' 0))" 'Revisar saturación de uplinks, tamaño de buffers/anillos de la NIC y configuración del switch físico.' $review }
+    if ($drops -gt 0) { Add-ReportFinding -Rule 'perf-net-drops' $findings 'Advertencia' 'Rendimiento' $h.name "Paquetes descartados en la ventana: recepción $([long](P $h 'dropsRx' 0)), transmisión $([long](P $h 'dropsTx' 0))" (Get-FindingText 'perf-net-drops') $review }
 }
 
 # Latencia por datastore: peor host (p95 de lectura o escritura).
@@ -292,29 +292,56 @@ $dsRows = @(@(foreach ($g in ($dsPerf | Group-Object datastore)) {
     }) | Sort-Object worstP95 -Descending)
 foreach ($d in $dsRows) {
     $ev = "Latencia p95 $($d.worstP95) ms (lectura $($d.readP95) / escritura $($d.writeP95) ms) en $($d.host); máx. $($d.maxMs) ms"
-    if ($d.worstP95 -ge $DsLatencyCritMs) { Add-ReportFinding -Rule 'perf-ds-latency' $findings 'Crítico' 'Rendimiento' $d.datastore $ev 'Latencia de almacenamiento alta: revisar carga del arreglo, paths, colas (queue depth) y VMs más demandantes con el equipo de Storage.' $review }
-    elseif ($d.worstP95 -ge $DsLatencyWarnMs) { Add-ReportFinding -Rule 'perf-ds-latency' $findings 'Advertencia' 'Rendimiento' $d.datastore $ev 'Latencia de almacenamiento elevada; vigilar y correlacionar con la carga del arreglo.' $review }
+    if ($d.worstP95 -ge $DsLatencyCritMs) { Add-ReportFinding -Rule 'perf-ds-latency' $findings 'Crítico' 'Rendimiento' $d.datastore $ev (Get-FindingText 'perf-ds-latency' 'Crítico') $review }
+    elseif ($d.worstP95 -ge $DsLatencyWarnMs) { Add-ReportFinding -Rule 'perf-ds-latency' $findings 'Advertencia' 'Rendimiento' $d.datastore $ev (Get-FindingText 'perf-ds-latency' 'Advertencia') $review }
 }
 
 # Cobertura: contadores sin datos, hosts sin consulta y consultas con error.
 $missingNow = @(P $meta 'missing' @())
 if ($missingNow.Count) {
     $lv = P $meta 'intervalLevel'
-    Add-ReportFinding -Rule 'coverage-perf-counters' $findings 'Info' 'Cobertura' 'Contadores de rendimiento' "Sin datos en la ventana $Window (intervalo $intervalS s$(if ($null -ne $lv) { ", nivel de estadísticas $lv" })): $($missingNow -join ', ')" 'Probablemente el nivel de estadísticas del intervalo no conserva estos contadores: usar la ventana 1h (tiempo real) o pedir a Infraestructura evaluar el nivel de estadísticas.'
+    Add-ReportFinding -Rule 'coverage-perf-counters' $findings 'Info' 'Cobertura' 'Contadores de rendimiento' "Sin datos en la ventana $Window (intervalo $intervalS s$(if ($null -ne $lv) { ", nivel de estadísticas $lv" })): $($missingNow -join ', ')" (Get-FindingText 'coverage-perf-counters')
 }
 $down = @($hostPerf | Where-Object { -not $_.ok })
-if ($down.Count) { Add-ReportFinding -Rule 'coverage-perf-hosts' $findings 'Info' 'Cobertura' $(if ($down.Count -eq 1) { $down[0].name } else { "$($down.Count) hosts" }) "Hosts sin métricas: $((($down | ForEach-Object { "$($_.name) ($($_.error))" })) -join ', ')" 'Revisar la conexión de los hosts con vCenter.' }
+if ($down.Count) { Add-ReportFinding -Rule 'coverage-perf-hosts' $findings 'Info' 'Cobertura' $(if ($down.Count -eq 1) { $down[0].name } else { "$($down.Count) hosts" }) "Hosts sin métricas: $((($down | ForEach-Object { "$($_.name) ($($_.error))" })) -join ', ')" (Get-FindingText 'coverage-perf-hosts') }
 foreach ($g in @($errors | Group-Object { ("$($_.error)" -replace '<.*$', '').Trim() })) {
     $n = ($g.Group | Measure-Object entities -Sum).Sum
-    Add-ReportFinding -Rule 'coverage-perf-error' $findings 'Info' 'Cobertura' "$n entidades" "Consulta de métricas fallida ($((@($g.Group.kind | Sort-Object -Unique)) -join ', ')): $($g.Name)" 'Verificar privilegios de la cuenta de servicio sobre las estadísticas de rendimiento y el estado de los hosts.'
+    Add-ReportFinding -Rule 'coverage-perf-error' $findings 'Info' 'Cobertura' "$n entidades" "Consulta de métricas fallida ($((@($g.Group.kind | Sort-Object -Unique)) -join ', ')): $($g.Name)" (Get-FindingText 'coverage-perf-error')
 }
 
 $sorted = Sort-ReportFinding $findings
 
 # --- Secciones ----------------------------------------------------------------------------
 $fmt = { param($s, $k) $v = & $nOrNull $s $k; if ($null -ne $v) { $v } else { '' } }
+# Panel de rendimiento: lo peor de la ventana y cuántos superan cada umbral. La barra llega al 100 % en el umbral crítico.
+$hostCpu = @($hostPerf | Where-Object ok | ForEach-Object { $p = & $nOrNull $_.cpuPct 'p95'; if ($null -ne $p) { [pscustomobject]@{ name = $_.name; p95 = $p } } } | Sort-Object p95 -Descending)
+$perfCards = New-Object System.Collections.Generic.List[object]
+$worstCard = {
+    param($key, $label, $rows, $prop, $unit, $warn, $crit, $what, $nameProp = 'name')
+    if (-not @($rows).Count) { $perfCards.Add((New-PanelCard -Key $key -Label $label -Value '—' -Note 'sin datos en la ventana')); return }
+    $top = @($rows)[0]; $v = [double]$top.$prop
+    $over = @($rows | Where-Object { [double]$_.$prop -ge $warn }).Count
+    $perfCards.Add((New-PanelCard -Key $key -Label $label -Value ('{0:0.#} {1}' -f $v, $unit) -Number $v -Pct (100 * $v / $crit) -Level (Get-MetricLevel $v $warn $crit) `
+                -Note "$($top.$nameProp) · $over de $(@($rows).Count) $what ≥ $warn $unit"))
+}
+& $worstCard 'perf-ready-worst' 'CPU ready p95 (peor VM)' $ready 'p95' '%' $CpuReadyWarnPct $CpuReadyCritPct 'VMs'
+& $worstCard 'perf-ds-worst' 'Latencia p95 (peor datastore)' $dsRows 'worstP95' 'ms' $DsLatencyWarnMs $DsLatencyCritMs 'datastores' 'datastore'
+& $worstCard 'perf-host-worst' 'CPU p95 (peor host)' $hostCpu 'p95' '%' $HostCpuWarnPct $HostCpuCritPct 'hosts'
+$memHit = @(@($bal) + @($swSust) | Where-Object { $_ } | Select-Object -ExpandProperty name -Unique).Count
+$perfCards.Add((New-PanelCard -Key 'perf-mem-pressure' -Label 'VMs con balloon o swap sostenido' -Value "$memHit" -Number $memHit -Level $(if ($memHit) { 'warn' } else { 'ok' }) -Note "de $($vmPerf.Count) VMs evaluadas"))
+foreach ($t in @(
+        @{ g = 'Más CPU ready (p95)'; rows = $ready; prop = 'p95'; unit = '%'; warn = $CpuReadyWarnPct; crit = $CpuReadyCritPct }
+        @{ g = 'Más latencia (p95)'; rows = $dsRows; prop = 'worstP95'; unit = 'ms'; warn = $DsLatencyWarnMs; crit = $DsLatencyCritMs; nameProp = 'datastore' }
+        @{ g = 'Más CPU de host (p95)'; rows = $hostCpu; prop = 'p95'; unit = '%'; warn = $HostCpuWarnPct; crit = $HostCpuCritPct })) {
+    foreach ($r in @($t.rows | Select-Object -First 5)) {
+        $v = [double]$r.($t.prop); $np = $t['nameProp'] ?? 'name'
+        $perfCards.Add((New-PanelCard -Group $t.g -Label $r.$np -Value ('{0:0.#} {1}' -f $v, $t.unit) -Number $v -Pct (100 * $v / $t.crit) -Level (Get-MetricLevel $v $t.warn $t.crit) `
+                    -Note $(if ($np -eq 'datastore') { "peor host: $($r.host)" } else { '' })))
+    }
+}
 $sections = New-Object System.Collections.Generic.List[object]
-$sections.Add((New-ReportTable 'Hallazgos y sugerencias' (Get-FindingColumns) $sorted "Métricas de solo lectura (metric.sample), ventana $Window. Umbrales de práctica habitual; validar con Infraestructura."))
+$sections.Add((New-ReportPanel 'Rendimiento' $perfCards.ToArray() "Ventana $Window. La barra llega al 100 % en el umbral crítico de cada métrica."))
+$sections.Add((New-ReportTable 'Hallazgos y sugerencias' (Get-FindingColumns) $sorted (Get-NoteText 'perf-table' -Vars @{ window = $Window })))
 $sections.Add((New-ReportTable 'Hosts' @('cluster:Clúster', 'name:Host', 'cpuAvg:CPU prom. %', 'cpuP95:CPU p95 %', 'cpuMax:CPU máx. %', 'balloon:Balloon máx. MB', 'drops:Paquetes descartados') @($hostPerf | Where-Object ok | ForEach-Object {
                 [pscustomobject]@{ cluster = $_.cluster; name = $_.name; cpuAvg = & $fmt $_.cpuPct 'avg'; cpuP95 = & $fmt $_.cpuPct 'p95'; cpuMax = & $fmt $_.cpuPct 'max'; balloon = & $fmt $_.balloonMB 'max'; drops = $(if ($null -ne (P $_ 'dropsRx') -or $null -ne (P $_ 'dropsTx')) { [long](P $_ 'dropsRx' 0) + [long](P $_ 'dropsTx' 0) } else { '' }) } }) "Umbrales de CPU: advertencia ≥ $HostCpuWarnPct %, crítico ≥ $HostCpuCritPct % (p95)."))
 $sections.Add((New-ReportTable 'Latencia por datastore' @('datastore:Datastore', 'host:Peor host', 'readP95:Lectura p95 ms', 'writeP95:Escritura p95 ms', 'maxMs:Máx. ms', 'hosts:Hosts') $dsRows "Umbrales: advertencia ≥ $DsLatencyWarnMs ms, crítico ≥ $DsLatencyCritMs ms (p95 del peor host)."))

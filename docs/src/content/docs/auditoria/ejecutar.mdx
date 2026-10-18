@@ -94,7 +94,7 @@ Una falla en el paso de rendimiento no detiene la auditoría. Cuando no hay dato
   - hosts/ revisión de hosts y datos crudos
   - perf/
     - perf-check.html revisión de rendimiento
-    - raw/ meta-perf.json, perf-host.json, perf-vm.json, perf-datastore.json, perf-errors.json, findings.json, summary.json
+    - raw/ meta-perf.json, perf-host.json, perf-vm.json, perf-datastore.json, perf-errors.json, findings.json, summary.json, metrics.json
   - raw/
     - audit.json modelo consolidado del informe (referencia)
     - meta-audit.json entorno, fecha, alcance, clústeres, usuario, versión, ventana de rendimiento (perfWindow), omisión (perfSkipped) y error (perfError)
@@ -109,7 +109,7 @@ Tras un período de remediación, ejecutar una nueva auditoría y compararla con
 ./scripts/Compare-Report.ps1 -Base reports/prod/20261017-090000-auditoria -Current reports/prod/20261117-090000-auditoria
 ```
 
-`Compare-Report.ps1` compara los datos de inventario de ambas auditorías (subcarpeta `inventario/`): cambios en VMs, asignación por clúster, crecimiento de datastores, snapshots y, en la sección *Evolución de hallazgos*, los hallazgos de inventario y configuración nuevos, resueltos y con cambio de severidad. No incorpora los hallazgos de la revisión de hosts (`hosts/raw/findings.json`), los de rendimiento (`perf/raw/findings.json`) ni los de controles de acceso (administradores en la raíz), y no lee `audit.json`; el seguimiento de esos hallazgos se realiza contrastando los dos informes de auditoría. Ver [Tendencias](/vcenter/reportes/tendencias/).
+`Compare-Report.ps1` compara los datos de inventario de ambas auditorías (subcarpeta `inventario/`): cambios en VMs, asignación por clúster, crecimiento de datastores, snapshots y, en la sección *Evolución de hallazgos*, los hallazgos de inventario y configuración nuevos, resueltos y con cambio de severidad. No incorpora los hallazgos de la revisión de hosts (`hosts/raw/findings.json`), los de rendimiento (`perf/raw/findings.json`) ni los de controles de acceso (administradores en la raíz), y no lee `audit.json`; el seguimiento de todos los hallazgos de la auditoría lo muestra el panel *Evolución* del propio informe (ver [Métricas clave y evolución](/vcenter/auditoria/interpretar/#métricas-clave-y-evolución)). Ver [Tendencias](/vcenter/reportes/tendencias/).
 
 `audit.json` es el modelo consolidado del informe (identificadores, dominios, indicadores y hallazgos). Se conserva como referencia y se vuelve a escribir cada vez que se regenera el informe.
 

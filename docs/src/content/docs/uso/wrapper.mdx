@@ -90,7 +90,7 @@ Por defecto, los comandos de un lote se ejecutan en secuencia. Si el perfil defi
 Medido con vcsim (21 hosts, 50 VMs), una auditoría completa pasó de 12,7 s con `batchParallel` en `1` a 6,0 s con `4`, con hallazgos idénticos.
 
 :::caution[Carga sobre vCenter]
-La concurrencia multiplica las consultas simultáneas contra vCenter y los hosts. Se valida primero en `lab`; para `prod` y `dr` se recomienda mantener `1` hasta que Arquitectura y el equipo dueño de vCenter validen el valor.
+La concurrencia multiplica las consultas simultáneas contra vCenter y los hosts. Se valida primero en `lab`; para `prod` y `dr` se recomienda mantener `1` hasta medir en `lab` el efecto sobre vCenter.
 :::
 
 ## Uso por personas

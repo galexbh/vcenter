@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
-  Pruebas de regresión de los reportes: New-Report, CSV, Invoke-HostCheck, Invoke-Audit y
-  Compare-Report, sobre datos demo generados con New-DemoData.ps1 -EdgeCases. No contacta vCenter.
+  Pruebas de regresión de los reportes: New-Report, CSV, métricas, Invoke-HostCheck, Invoke-PerfCheck,
+  Invoke-Audit (con evolución), catálogo de textos y Compare-Report, sobre datos demo generados con New-DemoData.ps1 -EdgeCases. No contacta vCenter.
 
 .DESCRIPTION
   Trabaja en una carpeta temporal (%TEMP%\govc-tests-<guid>) que se elimina al terminar.
@@ -89,6 +89,36 @@ try {
 
     $html = Get-Content (Join-Path $rep 'reporte-all.html') -Raw
     $md = Get-Content (Join-Path $rep 'reporte-all.md') -Raw
+    # Paneles de métricas (raw/metrics.json) con valores conocidos de los datos demo.
+    $mt = @(Json (Join-Path $rep 'raw/metrics.json'))
+    $metric = { param($rows, $key, $group = '*') @($rows | Where-Object { $_.key -eq $key -and "$($_.group)" -like $group }) | Select-Object -First 1 }
+    Check 'Métricas: N+1 de CL-PROD-02 > 100 %' ((& $metric $mt 'cl-n1' 'CL-PROD-02').number -gt 100)
+    Check 'Métricas: VMs que aún caben en CL-PROD-01 > 0' ((& $metric $mt 'cl-fit' 'CL-PROD-01').number -gt 0)
+    Check 'Métricas: VMs que aún caben en CL-PROD-02 = 0' ((& $metric $mt 'cl-fit' 'CL-PROD-02').number -eq 0)
+    $onRaw = @($realVms | Where-Object { $_.'runtime.powerState' -eq 'poweredOn' })
+    $toolsCalc = [math]::Round(100 * @($onRaw | Where-Object { $_.'guest.toolsVersionStatus2' -in 'guestToolsCurrent', 'guestToolsUnmanaged' }).Count / $onRaw.Count, 1)
+    Check 'Métricas: % de Tools al día' ((& $metric $mt 'tools-current').number -eq $toolsCalc) "$((& $metric $mt 'tools-current').number) vs $toolsCalc"
+    Check 'Métricas: sin corrida anterior no hay días al 90 %' (-not @($mt | Where-Object { "$($_.note)" -match '90 % en' }).Count)
+    Check 'HTML: paneles con tarjetas y barras' ($html -match 'class="cards"' -and $html -match '<span style="width:\d+%">')
+    Check 'HTML: ancho de barra entre 0 y 100' (-not @([regex]::Matches($html, 'style="width:(\d+)%"') | Where-Object { [int]$_.Groups[1].Value -gt 100 }).Count)
+    Check 'MD: paneles con barra de texto' ($md -match '## Capacidad y holgura' -and $md -match '█')
+    Check 'CSV: panel exportado' (Test-Path (Join-Path $rep 'reporte-all-capacidad-y-holgura.csv'))
+    # Días hasta el 90 %: corrida hermana de hace 10 días con DS-PROD-02 100 GB más libre (10 GB/día).
+    $hist = Join-Path $work 'historial-anterior'
+    New-Item -ItemType Directory -Force (Join-Path $hist 'raw') | Out-Null
+    $hm = Json (Join-Path $rep 'raw/meta.json'); $hm.generated = ([datetime]$hm.generated).AddDays(-10).ToString('o')
+    $hm | ConvertTo-Json | Set-Content (Join-Path $hist 'raw/meta.json') -Encoding utf8
+    $hd = @(Json (Join-Path $rep 'raw/datastores.json'))
+    $ds2 = $hd | Where-Object name -eq 'DS-PROD-02'; $ds2.'summary.freeSpace' = [long]$ds2.'summary.freeSpace' + 100GB
+    ConvertTo-Json -InputObject $hd -Depth 100 | Set-Content (Join-Path $hist 'raw/datastores.json') -Encoding utf8
+    Quiet { & "$S/New-Report.ps1" -FromRaw $rep -Type capacity -Format md } | Out-Null
+    $now2 = @(Json (Join-Path $rep 'raw/datastores.json')) | Where-Object name -eq 'DS-PROD-02'
+    $capG = [double]$now2.'summary.capacity' / 1GB; $usedG = $capG - [double]$now2.'summary.freeSpace' / 1GB
+    $exp90 = [math]::Floor((0.9 * $capG - [math]::Round($usedG, 1)) / 10)
+    $d2 = @(Json (Join-Path $rep 'raw/metrics.json')) | Where-Object label -eq 'DS-PROD-02'
+    Check 'Métricas: días hasta el 90 % según la corrida anterior' ("$($d2.note)" -match '90 % en ~(\d+) días' -and [math]::Abs([int]$Matches[1] - $exp90) -le 1) "$($d2.note) (esperado ~$exp90)"
+    Remove-Item -LiteralPath $hist -Recurse -Force
+    Quiet { & "$S/New-Report.ps1" -FromRaw $rep -Format html, md, csv } | Out-Null
     # Los datos demo contienen {{SECTIONS}}/{{ANNEXES}}/{{REMEDIATION}} a propósito: deben quedar literales.
     $tplMarkers = '\{\{(TITLE|ENV|GENERATED|SOURCE|KPIS)\}\}'
     Check 'HTML: marcadores de plantilla reemplazados' ($html -notmatch $tplMarkers)
@@ -171,6 +201,8 @@ try {
     )
     foreach ($e in $hostRules) { Check "HostCheck: regla $($e[0]) ($($e[1]))" (HasRule $hf $e[0] $e[1]) }
     Check 'HostCheck: no marca discos locales (mpx) como un solo path' (-not @($hf | Where-Object { $_.rule -eq 'path-single' -and $_.object -match 'mpx\.' }).Count)
+    $hm3 = @(Json (Join-Path $hdir 'raw/metrics.json'))
+    Check 'HostCheck: panel de cobertura (un % por chequeo)' (@($hm3 | Where-Object { "$($_.key)" -like 'hc-check:*' }).Count -eq 9 -and $null -ne ($hm3 | Where-Object key -eq 'hc-coverage').number)
     $cov = @($hf | Where-Object rule -eq 'coverage-coredump')
     Check 'HostCheck: cobertura agrupada por chequeo' ($cov.Count -eq 1 -and $cov[0].object -eq '2 hosts') "$($cov.Count) hallazgos"
 
@@ -187,6 +219,10 @@ try {
     foreach ($e in $perfRules) { Check "PerfCheck: regla $($e[0]) ($($e[1]))" (HasRule $pf $e[0] $e[1]) }
     Check 'PerfCheck: hallazgos en categoría Rendimiento o Cobertura' (-not @($pf | Where-Object { $_.category -notin 'Rendimiento', 'Cobertura' }).Count)
     Check 'PerfCheck: latencia por datastore (un hallazgo por datastore)' (@($pf | Where-Object { $_.rule -eq 'perf-ds-latency' -and $_.object -eq 'DS-PROD-01' }).Count -eq 1)
+    $pm3 = @(Json (Join-Path $pdir 'raw/metrics.json'))
+    $worstDs = $pm3 | Where-Object key -eq 'perf-ds-worst'
+    Check 'PerfCheck: peor latencia p95 = 35,2 ms en DS-PROD-01' ($worstDs.number -eq 35.2 -and "$($worstDs.note)" -like 'DS-PROD-01*') "$($worstDs.number) $($worstDs.note)"
+    Check 'PerfCheck: top 5 por métrica' (@($pm3 | Where-Object group -eq 'Más CPU ready (p95)').Count -eq 5)
     Check 'PerfCheck: host sin métricas no se evalúa' (-not @($pf | Where-Object { $_.rule -eq 'perf-host-cpu' -and $_.object -eq 'esx07.demo.local' }).Count)
     # -FromRaw recalcula con otros umbrales sin volver a consultar.
     Quiet { & "$S/Invoke-PerfCheck.ps1" -FromRaw $pdir -Format md -DsLatencyWarnMs 40 -DsLatencyCritMs 50 } | Out-Null
@@ -233,6 +269,48 @@ try {
     $amd = Get-Content (Join-Path $audit 'auditoria.md') -Raw
     Check 'Audit MD: marcador en datos no se expande (un solo plan de remediación)' (([regex]::Matches($amd, '\| ID \| Severidad \| Objeto \| Acción')).Count -eq 1)
     Check 'Audit HTML: codifica contenido de vCenter' ($ah -notmatch '<script>alert')
+    Check 'Audit: métricas clave en audit.json' (@($aj.metrics | Where-Object key -eq 'cl-n1').Count -eq 1 -and @($aj.metrics).Count -ge 6)
+    Check 'Audit: primera auditoría sin evolución' ($null -eq $aj.evolution -and $ah -match [regex]::Escape([System.Net.WebUtility]::HtmlEncode('Primera auditoría del entorno')))
+    Check 'Audit HTML: firma de Arquitectura' ($ah -match '<div class="role">Revisado por</div><div>Arquitectura</div>')
+    # Evolución: auditoría hermana de hace 7 días con un hallazgo menos, uno ya resuelto y Disponibilidad +10.
+    $prevA = Join-Path $work 'auditoria-anterior'
+    New-Item -ItemType Directory -Force (Join-Path $prevA 'raw') | Out-Null
+    $pa = Json (Join-Path $audit 'raw/audit.json')
+    $pa.generated = ([datetime]$pa.generated).AddDays(-7).ToString('o')
+    $gone1 = $pa.findings[0]
+    $pa.findings = @(@($pa.findings | Select-Object -Skip 1) + [pscustomobject]@{ id = 'AUD-999'; key = 'ffffffffffff'; rule = 'ds-used'; object = 'DS-RETIRADO'; severity = 'Advertencia'; domain = 'Capacidad' })
+    $pa.scores.Disponibilidad.score = [int]$pa.scores.Disponibilidad.score + 10
+    $pa | ConvertTo-Json -Depth 10 | Set-Content (Join-Path $prevA 'raw/audit.json') -Encoding utf8
+    Quiet { & "$S/Invoke-Audit.ps1" -FromRaw $audit -Format html, md } | Out-Null
+    $ej = (Json (Join-Path $audit 'raw/audit.json')).evolution
+    Check 'Evolución: nuevos, resueltos y persistentes' ($ej -and $ej.new -eq 1 -and $ej.resolved -eq 1 -and $ej.persistent -eq (@($aj.findings).Count - 1) -and @($ej.newKeys) -contains $gone1.key) "$($ej | ConvertTo-Json -Compress -Depth 2)"
+    Check 'Evolución: delta por dominio' ((@($ej.domains | Where-Object domain -eq 'Disponibilidad')[0]).delta -eq -10)
+    $eh = Get-Content (Join-Path $audit 'auditoria.html') -Raw
+    Check 'Audit HTML: panel de evolución' ($eh -match 'Comparado con AUD-' -and $eh -match '↓ -10')
+    Remove-Item -LiteralPath $prevA -Recurse -Force
+    Quiet { & "$S/Invoke-Audit.ps1" -FromRaw $audit -Format html, md } | Out-Null
+
+    # --- 4b. Catálogo de textos y política de menciones ------------------------------------------------
+    $cat = Get-FindingCatalog
+    $allF = @($nf) + @($hf) + @($pf) + @($aj.findings) + @($aj.coverage)
+    Check 'Catálogo: todo hallazgo tiene sugerencia' (-not @($allF | Where-Object { -not "$($_.suggestion)".Trim() }).Count) (@($allF | Where-Object { -not "$($_.suggestion)".Trim() } | ForEach-Object { "$($_.rule)/$($_.severity)" }) -join ', ')
+    $srcText = (@('New-Report.ps1', 'Invoke-HostCheck.ps1', 'Invoke-PerfCheck.ps1', 'Invoke-Audit.ps1') | ForEach-Object { Get-Content (Join-Path $S $_) -Raw }) -join "`n"
+    $emitted = @($allF | ForEach-Object { $_.rule } | Sort-Object -Unique)
+    $unused = @($cat.Rules.Keys | Where-Object { $srcText -notmatch [regex]::Escape("'$_'") -and $_ -notin $emitted -and -not ($_ -like 'cl-n1-*' -and $srcText -match 'cl-n1-\$\(') })
+    Check 'Catálogo: sin entradas sin uso' (-not $unused.Count) ($unused -join ', ')
+    $texts = foreach ($k in $cat.Rules.Keys) { $sg = $cat.Rules[$k].Suggestion; if ($sg -is [System.Collections.IDictionary]) { foreach ($sv in $sg.Keys) { [pscustomobject]@{ rule = $k; text = "$($sg[$sv])"; sev = $sv } } } else { [pscustomobject]@{ rule = $k; text = "$sg"; sev = '' } } }
+    Check 'Catálogo: ningún texto vacío' (-not @($texts | Where-Object { -not $_.text.Trim() }).Count)
+    Check 'Catálogo: severidades válidas' (-not @($texts | Where-Object { $_.sev -and $_.sev -notin 'Crítico', 'Advertencia', 'Info' }).Count)
+    Check 'Catálogo: riesgo para cada categoría puntuada' (-not @($aj.findings | ForEach-Object { $_.category } | Sort-Object -Unique | Where-Object { -not (Get-CategoryText $_) }).Count)
+    Check 'Catálogo: marcadores reemplazados como texto literal' ((Get-FindingText 'svc' -Vars @{ label = '$(Get-Date)' }) -match [regex]::Escape('Detener $(Get-Date) y'))
+    Check 'Catálogo: regla inexistente = texto vacío' ((Get-FindingText 'no-existe') -eq '')
+    $areas = '(?i)infraestructura|arquitectura|seguridad de la informaci|storage(?! vmotion)|dueño|redes\b|licenciamiento|validar con|validación del|escalar|equipo de'
+    $allowed = @{ 'path-dead' = 'storage'; 'snap-age' = 'dueño'; 'vm-off' = 'dueño' }
+    $bad = @($texts | Where-Object { $_.text -match $areas -and -not ($allowed[$_.rule] -and $Matches[0].ToLowerInvariant() -eq $allowed[$_.rule]) } | ForEach-Object { "$($_.rule): $($Matches[0])" })
+    $bad += @($cat.Notes.Keys | Where-Object { "$($cat.Notes[$_])" -match $areas } | ForEach-Object { "nota $_" })
+    Check 'Menciones: solo path-dead (Storage), snap-age y vm-off (dueño)' (-not $bad.Count) ($bad -join '; ')
+    $tplText = (@('templates/report.html', 'templates/report.md', 'templates/audit.md') | ForEach-Object { Get-Content (Join-Path $root $_) -Raw }) -join "`n"
+    Check 'Menciones: scripts y plantillas sin derivar a Infraestructura' (($srcText + $tplText) -cnotmatch '[Vv]alidar con|[Ee]scalar a|validación del área|Infraestructura')
     Quiet { & "$S/Invoke-Audit.ps1" -FromRaw $audit -Scope security -Format md } | Out-Null
     $sj = Json (Join-Path $audit 'raw/audit.json')
     $domSec = @($sj.findings | ForEach-Object { $_.domain } | Sort-Object -Unique)

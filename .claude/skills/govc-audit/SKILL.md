@@ -32,10 +32,14 @@ Alcance: … · Cobertura: <completa | n limitaciones>
 Indicadores: Disponibilidad NN · Capacidad NN · Rendimiento NN (o «no evaluado») · Configuración NN · Seguridad NN · Higiene NN
 Rendimiento: ventana <1h|24h|7d>, intervalo <s> (de perf/raw/summary.json)
 Hallazgos: X críticos · Y advertencias · Z informativos
+Métricas clave: N+1 peor clúster NN % · datastore más lleno NN % · Tools al día NN % (de raw/audit.json → metrics)
+Evolución: +N nuevos · N resueltos · N persistentes vs <ID anterior> (o «primera auditoría»)
 
 Principales riesgos
 1. AUD-001 — <objeto>: <evidencia>. Riesgo: … Recomendación: …
 …
+
+Recomendación: los 3 primeros pasos, en orden, con el motivo y el comando de revisión.
 
 Informe: <ruta auditoria.html> (Imprimir → Guardar como PDF, A4)
 ```

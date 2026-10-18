@@ -1,4 +1,4 @@
-# Render de reportes HTML/Markdown a partir de un modelo común (KPIs + secciones de tabla).
+# Render de reportes HTML/Markdown a partir de un modelo común (KPIs + tablas + paneles de métricas).
 # Usado por New-Report, Invoke-HostCheck, Invoke-PerfCheck, Invoke-Audit y Compare-Report.
 # Todo texto que pueda venir de vCenter (incluidos indicadores, títulos y notas) se escapa.
 
@@ -11,6 +11,95 @@ function New-ReportTable {
     <# Sección de reporte. Columnas como 'propiedad:Encabezado'. #>
     param([string]$Title, [string[]]$Columns, $Rows, [string]$Note = '')
     [pscustomobject]@{ title = $Title; columns = $Columns; rows = @($Rows); note = $Note }
+}
+
+function New-PanelCard {
+    <#
+    .SYNOPSIS  Métrica de un panel: valor ya formateado, % para la barra (opcional) y nivel ok/warn/crit.
+    .PARAMETER Group  Agrupa tarjetas bajo un subtítulo (p. ej. el clúster).
+    .PARAMETER Key    Id estable de la métrica (raw/metrics.json; lo usan la auditoría y la evolución).
+    .PARAMETER Number Valor numérico sin formato, para comparar entre corridas.
+    #>
+    param([Parameter(Mandatory)][string]$Label, [Parameter(Mandatory)][AllowEmptyString()][string]$Value, $Pct = $null,
+        [ValidateSet('', 'ok', 'warn', 'crit')][string]$Level = '', [string]$Note = '', [string]$Group = '', [string]$Key = '', $Number = $null)
+    [pscustomobject]@{ key = $Key; group = $Group; label = $Label; value = $Value; number = $(if ($null -ne $Number) { [double]$Number } else { $null })
+        pct = $(if ($null -ne $Pct) { [double]$Pct } else { $null }); level = $Level; note = $Note }
+}
+
+function Get-MetricLevel {
+    <# Nivel de una métrica según umbrales; -LowerIsWorse para métricas donde menos es peor (holgura, % al día). #>
+    param($Value, [double]$Warn, [double]$Crit, [switch]$LowerIsWorse)
+    if ($null -eq $Value) { return '' }
+    $v = [double]$Value
+    if ($LowerIsWorse) { if ($v -le $Crit) { 'crit' } elseif ($v -le $Warn) { 'warn' } else { 'ok' } }
+    else { if ($v -ge $Crit) { 'crit' } elseif ($v -ge $Warn) { 'warn' } else { 'ok' } }
+}
+
+function New-ReportPanel {
+    <#
+    .SYNOPSIS  Sección de métricas (tarjetas con barra). También expone columns/rows para el CSV.
+    #>
+    param([string]$Title, $Cards, [string]$Note = '')
+    $list = @($Cards | Where-Object { $_ })
+    [pscustomobject]@{ kind = 'panel'; title = $Title; cards = $list; note = $Note
+        columns = @('group:Grupo', 'label:Métrica', 'value:Valor', 'note:Nota'); rows = $list }
+}
+
+function Format-TextBar {
+    <# Barra de texto para Markdown: ████░░░░░░ (10 posiciones). #>
+    param($Pct)
+    if ($null -eq $Pct) { return '' }
+    $n = [int][math]::Round([math]::Min(100, [math]::Max(0, [double]$Pct)) / 10)
+    ('█' * $n) + ('░' * (10 - $n))
+}
+
+function ConvertTo-PanelHtml {
+    <#
+    .SYNOPSIS  Tarjetas en HTML. Solo números calculados llegan al atributo style; todo texto se escapa.
+    .PARAMETER Bare  Solo las tarjetas, sin <section> ni título (para insertarlas en el informe de auditoría).
+    #>
+    param($Panel, [switch]$Bare)
+    $enc = [System.Net.WebUtility]
+    $sb = [System.Text.StringBuilder]::new()
+    $note = if ($Panel.note) { "<p class=""note"">$($enc::HtmlEncode("$($Panel.note)"))</p>" } else { '' }
+    if (-not $Bare) { [void]$sb.Append("<section class=""panel""><h2>$($enc::HtmlEncode("$($Panel.title)"))</h2>$note") }
+    foreach ($g in @($Panel.cards | Group-Object group)) {
+        if ($g.Name) { [void]$sb.Append("<h3 class=""pgroup"">$($enc::HtmlEncode($g.Name))</h3>") }
+        [void]$sb.Append('<div class="cards">')
+        foreach ($c in $g.Group) {
+            $lv = if ($c.level) { " $($c.level)" } else { '' }
+            [void]$sb.Append("<div class=""card$lv""><div class=""cl"">$($enc::HtmlEncode($c.label))</div><div class=""cv"">$($enc::HtmlEncode($c.value))</div>")
+            if ($null -ne $c.pct) {
+                $w = [int][math]::Round([math]::Min(100, [math]::Max(0, [double]$c.pct)))
+                [void]$sb.Append("<div class=""bar"" role=""presentation""><span style=""width:$w%""></span></div>")
+            }
+            if ($c.note) { [void]$sb.Append("<div class=""cn"">$($enc::HtmlEncode($c.note))</div>") }
+            [void]$sb.Append('</div>')
+        }
+        [void]$sb.Append('</div>')
+    }
+    if (-not $Bare) { [void]$sb.Append("</section>`n") } elseif ($note) { [void]$sb.Append($note) }
+    $sb.ToString()
+}
+
+function ConvertTo-PanelMd {
+    <# Panel en Markdown: tabla con valor y barra de texto. -Bare omite el título. #>
+    param($Panel, [switch]$Bare)
+    $mdEsc = { param($s) ("$s" -replace '[\r\n]+', ' ' -replace '([\\`*_\[\]<>|#])', '\$1') }
+    $grouped = @($Panel.cards | Where-Object { $_.group }).Count -gt 0
+    $lines = New-Object System.Collections.Generic.List[string]
+    if (-not $Bare) { $lines.Add("## $(& $mdEsc $Panel.title)"); $lines.Add('') }
+    if ($Panel.note) { $lines.Add("_$(& $mdEsc $Panel.note)_"); $lines.Add('') }
+    if (-not @($Panel.cards).Count) { $lines.Add('Sin datos.'); return $lines -join "`n" }
+    $lines.Add("|$(if ($grouped) { ' Grupo |' }) Métrica | Valor | Nivel | Nota |")
+    $lines.Add("|$(if ($grouped) { '---|' })---|---:|---|---|")
+    $lvText = @{ ok = 'ok'; warn = 'atención'; crit = 'crítico' }
+    foreach ($c in $Panel.cards) {
+        $bar = Format-TextBar $c.pct
+        $lv = if ($c.level) { $lvText[$c.level] } else { '' }
+        $lines.Add("|$(if ($grouped) { " $(& $mdEsc $c.group) |" }) $(& $mdEsc $c.label) | $(& $mdEsc $c.value) | $(if ($bar) { "$bar " })$lv | $(& $mdEsc $c.note) |")
+    }
+    $lines -join "`n"
 }
 
 function New-FindingList { return , (New-Object System.Collections.Generic.List[object]) }
@@ -90,6 +179,7 @@ function Write-GovcReport {
         $kpiHtml = ($Kpis.GetEnumerator() | ForEach-Object { "<div class=""kpi""><span class=""v"">$($enc::HtmlEncode("$($_.Value)"))</span><span class=""l"">$($enc::HtmlEncode("$($_.Key)"))</span></div>" }) -join "`n"
         $sb = [System.Text.StringBuilder]::new()
         foreach ($s in $Sections) {
+            if ($s.PSObject.Properties['kind'] -and $s.kind -eq 'panel') { [void]$sb.Append((ConvertTo-PanelHtml $s)); continue }
             $cols = @($s.columns | ForEach-Object { , ($_ -split ':', 2) })
             $note = if ($s.note) { "<p class=""note"">$($enc::HtmlEncode("$($s.note)"))</p>" } else { '' }
             [void]$sb.Append("<section><h2>$($enc::HtmlEncode("$($s.title)")) <small>($($s.rows.Count))</small></h2>$note<div class=""scroll""><table><thead><tr>")
@@ -118,6 +208,7 @@ function Write-GovcReport {
     if ('md' -in $Format) {
         $kpiMd = "| Indicador | Valor |`n|---|---:|`n" + (($Kpis.GetEnumerator() | ForEach-Object { "| $(& $mdEsc $_.Key) | $(& $mdEsc $_.Value) |" }) -join "`n")
         $secMd = foreach ($s in $Sections) {
+            if ($s.PSObject.Properties['kind'] -and $s.kind -eq 'panel') { ConvertTo-PanelMd $s; continue }
             $cols = @($s.columns | ForEach-Object { , ($_ -split ':', 2) })
             $lines = New-Object System.Collections.Generic.List[string]
             $lines.Add("## $(& $mdEsc $s.title) ($($s.rows.Count))"); $lines.Add('')
@@ -143,4 +234,4 @@ function Write-GovcReport {
 
 function ConvertTo-HtmlText { param($s) [System.Net.WebUtility]::HtmlEncode("$s") }
 
-Export-ModuleMember -Function New-ReportTable, New-FindingList, Add-ReportFinding, Export-ReportFinding, Sort-ReportFinding, Get-FindingColumns, Write-GovcReport, ConvertTo-HtmlText, Expand-Template, Format-MdCode
+Export-ModuleMember -Function New-ReportTable, New-PanelCard, Get-MetricLevel, New-ReportPanel, Format-TextBar, ConvertTo-PanelHtml, ConvertTo-PanelMd, New-FindingList, Add-ReportFinding, Export-ReportFinding, Sort-ReportFinding, Get-FindingColumns, Write-GovcReport, ConvertTo-HtmlText, Expand-Template, Format-MdCode

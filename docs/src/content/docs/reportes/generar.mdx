@@ -52,6 +52,20 @@ El número de consultas es fijo e independiente del tamaño del inventario. Toda
 
 Con `-SkipDeviceScan` no se recolectan las unidades de CD/DVD de las VMs y, por lo tanto, no se evalúa la regla de ISO conectada. Se recomienda en inventarios de miles de VMs, porque reduce de forma considerable el volumen de datos y el consumo de memoria. La omisión no pasa inadvertida: se declara como un hallazgo Info de cobertura (`coverage-devices`), que la auditoría presenta como limitación y no puntúa.
 
+## Métricas
+
+Antes de las tablas, el reporte muestra paneles de métricas con barras (ancho calculado por el script, sin JavaScript; también al imprimir). En Markdown, cada panel es una tabla con una barra de texto (`████░░░░░░`). Los valores también quedan en `raw/metrics.json`, con un `key` estable y el valor numérico, para que Claude, la auditoría y la evolución los lean sin abrir el HTML.
+
+| Panel | Métricas | Tipo |
+|---|---|---|
+| Salud e higiene | Hosts conectados, % de VMware Tools al día, % de hardware virtual vigente, % de VMs encendidas, VMs con snapshot y antigüedad del más viejo | `health` |
+| Capacidad y holgura | Por clúster: CPU y RAM en uso frente a la capacidad física, uso si falla el host mayor (N+1), VMs que aún caben con N+1 (por RAM, con el tamaño medio de las VMs del clúster), vCPU:pCore | `capacity` |
+| Almacenamiento | Uso total, datastores sobre el umbral y los 5 más llenos con los **días hasta el 90 %** | `capacity` |
+
+Los días hasta el 90 % se calculan con el crecimiento desde la corrida anterior del mismo entorno (la más reciente, al menos una hora antes, entre las carpetas hermanas de `reports/<env>/`, incluido el inventario de una auditoría). Sin corrida anterior, el panel lo indica.
+
+`Invoke-HostCheck.ps1` agrega el panel *Cobertura y homogeneidad* (cobertura por chequeo, hosts sin críticos ni advertencias, clústeres sin drift) e `Invoke-PerfCheck.ps1` el panel *Rendimiento* (ver [Revisión de rendimiento](/vcenter/reportes/rendimiento/)).
+
 ## Estructura de salida
 
 <FileTree>
@@ -64,6 +78,7 @@ Con `-SkipDeviceScan` no se recolectan las unidades de CD/DVD de las VMs y, por 
       - raw/
         - meta.json entorno, fecha, usuario y deviceScan (si se recolectaron las unidades de CD/DVD)
         - summary.json indicadores
+        - metrics.json métricas de los paneles (key, valor, %, nivel)
         - findings.json hallazgos (entrada para auditoría y tendencias)
         - vms.json
         - hosts.json

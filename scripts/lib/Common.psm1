@@ -169,6 +169,58 @@ function ConvertTo-MdText {
 
 function Get-SeverityRank { param([string]$Severity) $r = $script:SevRank[$Severity]; if ($null -eq $r) { 9 } else { $r } }
 
+# --- Catálogo de textos (templates/findings.psd1) ---------------------------------------------
+
+$script:CatalogPath = Join-Path $PSScriptRoot '../../templates/findings.psd1'
+$script:Catalog = $null
+
+function Get-FindingCatalog {
+    <#
+    .SYNOPSIS  Catálogo de sugerencias, riesgos y notas; se lee una vez por proceso.
+    .NOTES     Import-PowerShellDataFile usa el lenguaje restringido: el archivo no puede ejecutar código.
+    #>
+    if ($null -eq $script:Catalog) {
+        $script:Catalog = if (Test-Path -LiteralPath $script:CatalogPath) { Import-PowerShellDataFile -LiteralPath $script:CatalogPath } else { @{} }
+        foreach ($k in 'Rules', 'Categories', 'Notes') { if (-not $script:Catalog.ContainsKey($k)) { $script:Catalog[$k] = @{} } }
+    }
+    $script:Catalog
+}
+
+function Expand-CatalogText {
+    <# Reemplaza {nombre} como texto literal (nunca se evalúa). #>
+    param([string]$Text, [System.Collections.IDictionary]$Vars)
+    if (-not $Text -or -not $Vars) { return "$Text" }
+    foreach ($k in $Vars.Keys) { $Text = $Text.Replace("{$k}", "$($Vars[$k])") }
+    $Text
+}
+
+function Get-FindingText {
+    <#
+    .SYNOPSIS  Sugerencia de una regla del catálogo; por severidad si la entrada la distingue.
+    .OUTPUTS   Texto, o '' si la regla no tiene entrada (Test-Reports lo detecta; el reporte no se cae).
+    #>
+    param([Parameter(Mandatory, Position = 0)][string]$Rule, [Parameter(Position = 1)][string]$Severity, [System.Collections.IDictionary]$Vars)
+    $e = (Get-FindingCatalog).Rules[$Rule]
+    if (-not $e) { return '' }
+    $s = $e['Suggestion']
+    if ($s -is [System.Collections.IDictionary]) { $s = $s[$Severity] }
+    Expand-CatalogText "$s" $Vars
+}
+
+function Get-CategoryText {
+    <# Riesgo o referencia de una categoría (informe de auditoría). #>
+    param([Parameter(Mandatory, Position = 0)][string]$Category, [Parameter(Position = 1)][ValidateSet('Risk', 'Reference')][string]$Field = 'Risk')
+    $e = (Get-FindingCatalog).Categories[$Category]
+    if (-not $e) { return '' }
+    "$($e[$Field])"
+}
+
+function Get-NoteText {
+    <# Nota común del catálogo (umbrales, alcance de los comandos…). #>
+    param([Parameter(Mandatory, Position = 0)][string]$Name, [System.Collections.IDictionary]$Vars)
+    Expand-CatalogText "$((Get-FindingCatalog).Notes[$Name])" $Vars
+}
+
 function Add-GroupedFinding {
     <#
     .SYNOPSIS  Un hallazgo agregado por condición (evita cientos de filas repetidas).
@@ -248,7 +300,7 @@ function Export-GovcCsv {
 
 function Complete-Report {
     <#
-    .SYNOPSIS  Cierre común: findings.json + summary.json, HTML/MD (y CSV si se pide). Devuelve el resumen de salida.
+    .SYNOPSIS  Cierre común: findings.json + summary.json + metrics.json, HTML/MD (y CSV si se pide). Devuelve el resumen de salida.
     #>
     param(
         [Parameter(Mandatory)][string]$Root, [Parameter(Mandatory)][string]$OutDir, [Parameter(Mandatory)][string]$RawDir,
@@ -259,6 +311,10 @@ function Complete-Report {
     )
     Export-ReportFinding $Sorted (Join-Path $RawDir 'findings.json')
     $Kpis | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $RawDir 'summary.json') -Encoding utf8
+    # Métricas de los paneles con su valor numérico: las lee Claude, la auditoría y la evolución sin abrir el HTML.
+    $metrics = @(foreach ($s in $Sections) { if ($s.PSObject.Properties['kind'] -and $s.kind -eq 'panel') {
+                foreach ($c in $s.cards) { [pscustomobject]@{ panel = $s.title; key = $c.key; group = $c.group; label = $c.label; value = $c.value; number = $c.number; pct = $c.pct; level = $c.level; note = $c.note } } } })
+    ConvertTo-Json -InputObject $metrics -Depth 4 | Set-Content -LiteralPath (Join-Path $RawDir 'metrics.json') -Encoding utf8
     $written = New-Object System.Collections.Generic.List[string]
     $doc = @($Format | Where-Object { $_ -ne 'csv' })
     if ($doc.Count) {
@@ -271,4 +327,4 @@ function Complete-Report {
 
 Export-ModuleMember -Function Get-Prop, Get-FirstProp, Read-JsonFile, Save-RawJson, Assert-EnvName, Initialize-RunContext, Get-RunUser, Write-RunMeta,
     ConvertFrom-CertJson, Get-SnapshotList, Format-PsLiteral, New-ReviewCommand, ConvertTo-MdText, Get-SeverityRank,
-    Add-GroupedFinding, Add-CoverageByError, Add-SeverityKpis, Export-GovcCsv, Complete-Report
+    Get-FindingCatalog, Get-FindingText, Get-CategoryText, Get-NoteText, Add-GroupedFinding, Add-CoverageByError, Add-SeverityKpis, Export-GovcCsv, Complete-Report

@@ -71,7 +71,7 @@ Para consultar el nivel configurado en cada intervalo:
 El nivel del intervalo utilizado se registra en `raw/meta-perf.json` y se indica en el hallazgo de cobertura y en la metodología de la auditoría.
 
 :::caution[Cambio del nivel de estadísticas]
-Modificar el nivel (`metric.interval.change`) es una escritura en vCenter: requiere aprobación y, en `prod` o `dr`, un cambio aprobado. Un nivel mayor incrementa el tamaño de la base de datos de vCenter y su carga; la decisión corresponde a Infraestructura. La herramienta no modifica el nivel.
+Modificar el nivel (`metric.interval.change`) es una escritura en vCenter: requiere aprobación y, en `prod` o `dr`, un cambio aprobado. Un nivel mayor incrementa el tamaño de la base de datos de vCenter y su carga: subir solo el intervalo necesario (por ejemplo, el de 5 minutos a nivel 2). La herramienta no modifica el nivel.
 :::
 
 ## Métricas y fórmulas
@@ -117,7 +117,7 @@ Un contador sin datos, un host desconectado o una consulta rechazada **no** se i
 
 | Situación | Hallazgo | Acción sugerida |
 |---|---|---|
-| El nivel de estadísticas del intervalo no conserva un contador | `coverage-perf-counters`, con la ventana, el intervalo, el nivel y los contadores afectados | Repetir con `-Window 1h` o solicitar a Infraestructura la evaluación del nivel de estadísticas |
+| El nivel de estadísticas del intervalo no conserva un contador | `coverage-perf-counters`, con la ventana, el intervalo, el nivel y los contadores afectados | Repetir con `-Window 1h` o subir el nivel de estadísticas del intervalo a 2 (escritura con cambio aprobado) |
 | Host no conectado a vCenter | `coverage-perf-hosts` | Revisar la conexión del host |
 | Consulta fallida (por ejemplo, falta de privilegios) | `coverage-perf-error`, con el tipo de entidad y el número de entidades afectadas | Verificar los privilegios de la cuenta de servicio sobre las estadísticas de rendimiento |
 
@@ -132,7 +132,7 @@ Un contador sin datos, un host desconectado o una consulta rechazada **no** se i
 La lista completa de parámetros está en [Scripts](/vcenter/referencia/scripts/#invoke-perfcheckps1).
 
 :::note[Práctica habitual, no norma]
-Los umbrales son referencias habituales de la industria, no requisitos normativos. Deben validarse con Infraestructura y Arquitectura y ajustarse a la política interna de capacidad, al tipo de almacenamiento y al perfil de carga de cada entorno.
+Los umbrales son referencias habituales de la industria, no requisitos normativos. Se ajustan con los parámetros del script a la política interna de capacidad, al tipo de almacenamiento y al perfil de carga de cada entorno.
 :::
 
 ## Recálculo sin consultar vCenter
@@ -141,7 +141,9 @@ Los umbrales son referencias habituales de la industria, no requisitos normativo
 ./scripts/Invoke-PerfCheck.ps1 -FromRaw reports/prod/20261018-090000 -CpuReadyWarnPct 3 -HostCpuWarnPct 80
 ```
 
-`-FromRaw` lee los agregados de `raw/` y vuelve a evaluar las reglas con los umbrales indicados. El entorno, la ventana y el intervalo se toman de `raw/meta-perf.json`. Se reescriben `raw/findings.json`, `raw/summary.json` y el reporte en la misma carpeta.
+`-FromRaw` lee los agregados de `raw/` y vuelve a evaluar las reglas con los umbrales indicados. El entorno, la ventana y el intervalo se toman de `raw/meta-perf.json`. Se reescriben `raw/findings.json`, `raw/summary.json`, `raw/metrics.json` y el reporte en la misma carpeta.
+
+El panel *Rendimiento* muestra el peor p95 de CPU ready, de latencia por datastore y de CPU de host, cuántos superan cada umbral, las VMs con balloon o swap sostenido y el top 5 de cada métrica. La barra llega al 100 % en el umbral crítico.
 
 ## Estructura de salida
 
@@ -158,6 +160,7 @@ Los umbrales son referencias habituales de la industria, no requisitos normativo
     - perf-errors.json consultas fallidas
     - findings.json hallazgos
     - summary.json indicadores
+    - metrics.json panel de rendimiento
 </FileTree>
 
 | Sección del reporte | Contenido |

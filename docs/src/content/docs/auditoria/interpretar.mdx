@@ -36,6 +36,15 @@ Indicador = 100 − (15 × críticos + 5 × advertencias + 1 × informativos), c
 El indicador es una herramienta interna de **priorización**. No es una calificación de cumplimiento ni es comparable entre entornos de distinto tamaño, ya que no se normaliza por cantidad de objetos.
 :::
 
+## Métricas clave y evolución
+
+El resumen ejecutivo incluye dos paneles:
+
+- **Métricas clave**, tomadas de `raw/metrics.json` de cada fuente según el alcance: uso si falla el host mayor (peor clúster), VMs que aún caben con N+1, datastore más lleno, almacenamiento en uso, % de VMware Tools al día, cobertura de la revisión de hosts, peor CPU ready y peor latencia.
+- **Evolución**, frente a la auditoría anterior del mismo entorno (la más reciente entre las carpetas hermanas en `reports/<env>/`): hallazgos nuevos, resueltos y persistentes, seguidos por la clave estable `key` (regla + objeto), y el indicador de cada dominio con su variación (↑/↓). Incluye la lista de hallazgos nuevos críticos y de advertencia. En la primera auditoría del entorno, el panel lo indica. Si el alcance anterior era distinto, la nota lo advierte.
+
+Ambos quedan en `raw/audit.json` (`metrics` y `evolution`).
+
 ## Severidades
 
 | Severidad | Criterio | Plazo orientativo |
@@ -59,6 +68,6 @@ Las referencias indican el tema de la guía (por ejemplo, «registro remoto (sys
 
 - La evaluación de configuración, capacidad y disponibilidad refleja el estado **en el momento de la recolección**. La sobresuscripción y la holgura N+1 se calculan sobre recursos asignados y el uso instantáneo.
 - Con datos de rendimiento, el consumo se evalúa solo en la ventana indicada en la metodología (1 h, 24 h o 7 días). Los contadores que el nivel de estadísticas de vCenter no conserva se declaran como cobertura, no como ausencia de problemas. Sin datos de rendimiento, no se evalúa el consumo en una ventana de tiempo.
-- Los umbrales de rendimiento (CPU ready, latencia, CPU de hosts) son de práctica habitual, no normativos; deben validarse con Infraestructura y Arquitectura.
+- Los umbrales de rendimiento (CPU ready, latencia, CPU de hosts) son de práctica habitual, no normativos; se ajustan a la política interna de capacidad con los parámetros de cada script.
 - La ausencia de hallazgos en un dominio no implica ausencia de riesgo fuera del alcance evaluado.
-- Las recomendaciones requieren la validación del área dueña antes de ejecutarse.
+- Las acciones que modifican la plataforma requieren un cambio aprobado.

@@ -61,4 +61,4 @@ Ajusta rutas a lo que devolvió la validación; nunca a los ejemplos.
 - `vm.markastemplate` requiere la VM apagada; apagar es destructivo: fuera de `lab` lo hace una persona en su terminal.
 - Nada destructivo como parte de una provisión (si algo debe borrarse, la persona lo hace en su terminal).
 - No enciendas VMs si la spec no lo pide.
-- Cambios de red, almacenamiento compartido o clúster: recomendar validación con Redes/Infraestructura antes de aprobar.
+- Portgroups y VLAN: la VLAN la asigna Redes; confírmala antes de crear el portgroup.

@@ -13,7 +13,7 @@ description: Genera reportes de vCenter en HTML, Markdown y CSV (inventario, sna
 
 - Solo lectura: número fijo de consultas en un lote (object.collect de VMs, hosts, compute resources, clústeres, datastores y pools; alarmas; about.cert; license.ls), sin importar el tamaño del inventario.
 - Salida: `reports/<env>/<yyyyMMdd-HHmmss>/reporte-<tipo>.{html,md}` y `raw/*.json` (datos normalizados + `meta.json`).
-- Siempre escribe, para cualquier `-Type`: `raw/findings.json` (todos los hallazgos, ya ordenados por severidad; campos `severity`, `category`, `object`, `evidence`, `suggestion`, `command`, `rule`) y `raw/summary.json` (KPIs: VMs, encendidas, apagadas, plantillas, hosts, clústeres, datastores, snapshots, críticos, advertencias). Son la entrada de `/audit` y `/trend`.
+- Siempre escribe, para cualquier `-Type`: `raw/findings.json` (todos los hallazgos, ya ordenados por severidad; campos `severity`, `category`, `object`, `evidence`, `suggestion`, `command`, `rule`) `raw/summary.json` (KPIs: VMs, encendidas, apagadas, plantillas, hosts, clústeres, datastores, snapshots, críticos, advertencias) y `raw/metrics.json` (paneles: `key`, `group`, `label`, `value`, `number`, `pct`, `level`, `note`; p. ej. `cl-n1`, `cl-fit`, `ds-used:<id>`, `tools-current`). Son la entrada de `/audit` y `/trend`. Las sugerencias salen de `templates/findings.psd1`.
 - Chequeos además de capacidad y salud: consolidación pendiente, límites de CPU/RAM, ISO conectada, hardware virtual antiguo, HA/DRS, certificado de vCenter y licencias.
 - `-Format csv`: un archivo por tabla (`reporte-<tipo>-<tabla>.csv`, incluye `resumen` y `hallazgos-y-sugerencias`), encabezados en español, UTF-8 con BOM, separador y decimales de la configuración regional de Windows (`-CsvDelimiter` para forzar otro). Los textos que empiezan con `= + - @` se prefijan con `'` para evitar inyección de fórmulas. Úsalo cuando pidan Excel, CSV o planilla.
 - No tiene `-Cluster`: cubre todo el entorno; filtra por clúster al resumir.
@@ -56,7 +56,7 @@ Las demás skills y comandos citan reglas; los números viven aquí. Son prácti
 
 ## Después de generar
 
-1. Resume desde `raw/summary.json` (KPIs) y `raw/findings.json` (ya ordenado: toma los primeros 5 relevantes, con su `suggestion` y `command`). Abre el `.md` solo para una sección concreta (p. ej. la tabla de capacidad o de snapshots); no leas el HTML.
+1. Resume desde `raw/summary.json` (KPIs), `raw/metrics.json` (métricas en nivel `crit`/`warn` primero) y `raw/findings.json` (ya ordenado: toma los primeros 5 relevantes, con su `suggestion` y `command`). Abre el `.md` solo para una sección concreta (p. ej. la tabla de capacidad o de snapshots); no leas el HTML.
 2. Da la ruta completa de los archivos generados.
 3. Sugerencias priorizadas con el criterio de la skill `govc-health`.
 4. Recuerda que el reporte es de uso interno.

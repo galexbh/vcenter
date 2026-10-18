@@ -55,5 +55,5 @@ Chequeos: `vibs`, `nics`, `paths`, `ntp`, `syslog`, `coredump`, `platform`, `ser
 ## Reglas
 
 - Nunca propongas habilitar SSH para "ver mejor": todo lo de lectura se puede hacer por vCenter.
-- Cambios en un host (VIB, firewall, NTP, syslog, mantenimiento) son **destructive**: escríbelos como propuesta, con impacto y rollback, para que los ejecute una persona con cambio aprobado. Recomienda validar con Infraestructura y, si tocan logs, SSH o firewall, con Seguridad de la Información.
+- Cambios en un host (VIB, firewall, NTP, syslog, mantenimiento) son **destructive**: escríbelos como propuesta, con impacto y rollback, para que los ejecute una persona con cambio aprobado. Indica el orden recomendado (primero lo que reduce riesgo: SSH detenido, syslog remoto, NTP) y la verificación posterior.
 - Si una lectura falla con `NoPermission`, repórtalo: la cuenta de servicio puede necesitar privilegios de lectura de configuración de host. No cambies de cuenta.
