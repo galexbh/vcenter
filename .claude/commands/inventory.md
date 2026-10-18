@@ -5,12 +5,12 @@ argument-hint: "<entorno> [filtro de clúster o carpeta]"
 
 Argumentos: `$ARGUMENTS` (primer valor = entorno; si falta, pregunta cuál).
 
-Usa la skill `govc-core`. Solo lectura, sin generar archivos:
+Solo lectura. Sigue la skill `govc-report`:
 
-1. Con `object.collect -json -type <m|h|r|s> / …` + `ConvertFrom-GovcCollect` (una llamada por tipo) obtén:
-   - VMs: total, encendidas, apagadas, plantillas; vCPU y RAM totales asignadas.
-   - Hosts: total, por estado de conexión, en mantenimiento, versiones de ESXi.
-   - Clústeres/compute resources: hosts y cores por clúster.
-   - Datastores: capacidad, libre y % de uso (ordenado desc.).
-2. Si hay filtro, limita a VMs cuyo host pertenezca a ese clúster, o usa `find <ruta> -type m`.
-3. Presenta tablas compactas y 3 observaciones relevantes. Si piden exportarlo, usa `/report <entorno> inventory` (HTML/MD) o `/report <entorno> inventory csv` (Excel).
+1. Si existe una corrida de hoy en `reports/<entorno>/`, ofrece reutilizarla; si no, ejecuta `./scripts/New-Report.ps1 -Env <entorno> -Type inventory -Format md`.
+2. Resume sin reconstruir datos a mano:
+   - KPIs de `raw/summary.json`: VMs, encendidas, apagadas, plantillas, hosts, clústeres, datastores, snapshots, críticos y advertencias.
+   - Tabla *Máquinas virtuales* de `reporte-inventory.md`: vCPU y RAM asignadas, SO, Tools y hardware (respeta el límite `-MdMaxRows`; si se truncó, dilo).
+   - Hosts, clústeres y datastores (estado, versiones, % de uso): re-renderiza sin consultar vCenter con `./scripts/New-Report.ps1 -FromRaw <carpeta> -Type capacity -Format md` y lee esas tablas.
+3. Filtro: `New-Report.ps1` no filtra por clúster ni carpeta; aplícalo al resumir (VMs cuyo host pertenece al clúster, según la tabla *Hosts*). Para una carpeta, una lectura puntual: `./scripts/govc.ps1 -Env <entorno> find <ruta> -type m`.
+4. Presenta tablas compactas, 3 observaciones relevantes y la ruta de la carpeta. Para exportar: `/report <entorno> inventory` (HTML/MD) o `/report <entorno> inventory csv` (Excel).

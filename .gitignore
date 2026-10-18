@@ -21,3 +21,6 @@ specs/*
 reporte-*.html
 reporte-*.md
 *.raw.json
+
+# Caché de Task (sources/generates)
+.task/

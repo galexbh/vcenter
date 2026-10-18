@@ -8,6 +8,6 @@ Argumentos: `$ARGUMENTS` → entorno (obligatorio; si falta, pregunta), tipo (de
 Sigue la skill `govc-report`:
 
 1. Ejecuta `./scripts/New-Report.ps1 -Env <entorno> -Type <tipo> [-Format <formato>]`.
-2. Si se generó `.md`, léelo y resume: KPIs, críticos/advertencias y los hallazgos principales con su acción sugerida. Si solo se pidió CSV, resume a partir de `raw/summary.json` y `raw/findings.json`.
+2. Resume desde `raw/summary.json` (KPIs) y `raw/findings.json` (ya ordenado por severidad): conteo de críticos/advertencias y los 5 hallazgos principales con su acción sugerida. Abre el `.md` solo si necesitas una sección concreta; no lo leas completo.
 3. Entrega las rutas completas de los archivos.
 4. Recuerda: uso interno, no versionar ni compartir fuera del equipo autorizado.

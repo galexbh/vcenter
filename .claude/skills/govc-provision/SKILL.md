@@ -1,6 +1,6 @@
 ---
 name: govc-provision
-description: Provisión controlada de recursos en vCenter con govc — clonar VM desde plantilla o Content Library, ajustar CPU/RAM/discos/red, personalización de guest, tags, carpetas y snapshots previos a cambios. Flujo validar → planear → aprobar → ejecutar → verificar. Úsala para /vm-create o cualquier petición de crear/modificar recursos.
+description: Provisión controlada de recursos en vCenter con govc — clonar VM desde plantilla o Content Library, ajustar CPU/RAM/discos/red, personalización de guest, tags, carpetas y snapshots previos a cambios. Flujo validar → planear → aprobar → ejecutar → verificar. Úsala para /vm-create o cualquier petición de crear/modificar recursos (también "provision VM", "clone VM", "create VM from template").
 ---
 
 # Provisión segura
@@ -14,7 +14,7 @@ description: Provisión controlada de recursos en vCenter con govc — clonar VM
    - Destinos existen: `ls <folder>`, `datastore.info <ds>` (y espacio libre suficiente), `ls /<DC>/network/<pg>`, `ls <pool>`.
    - Tags/categorías existen: `tags.ls -c <categoría>`.
    - Customization spec: `object.collect` no la lista; usa `vm.customize` solo con spec existente confirmada por la persona.
-   - En `prod`: exige número de cambio en la spec (`change`).
+   - Consulta el `mode` del perfil (`/env`): en `readonly` no hay escrituras posibles; en `prod` (y cualquier entorno productivo) exige número de cambio en la spec (`change`).
 3. **Plan**: muestra una tabla con lo que se creará y la lista **exacta** de comandos, en orden, cada uno con su clase (write/destructive). Indica capacidad que consumirá (vCPU, RAM, GB).
 4. **Ejecución**: un comando por llamada; el hook pedirá aprobación en cada escritura. Si un paso falla, detente, informa y propone cómo revertir (no reviertas por tu cuenta en prod).
 5. **Verificación**: `vm.info -json -r <nombre>` y `vm.ip -wait 5m <nombre>` si se encendió. Resume estado final vs. spec.
@@ -58,7 +58,7 @@ Ajusta rutas a lo que devolvió la validación; nunca a los ejemplos.
 
 - Nunca sobrescribas ni reutilices un nombre existente; nunca uses `-force`.
 - `... resolves to multiple instances, please specify`: pasa `-pool`, `-ds` o `-host` explícitos (el perfil puede no definirlos).
-- `vm.markastemplate` requiere la VM apagada; apagar es destructivo y en prod lo hace una persona.
+- `vm.markastemplate` requiere la VM apagada; apagar es destructivo: fuera de `lab` lo hace una persona en su terminal.
 - Nada destructivo como parte de una provisión (si algo debe borrarse, la persona lo hace en su terminal).
 - No enciendas VMs si la spec no lo pide.
 - Cambios de red, almacenamiento compartido o clúster: recomendar validación con Redes/Infraestructura antes de aprobar.
