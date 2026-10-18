@@ -17,7 +17,7 @@ Desde Claude: `/report prod health` o `/report prod inventory csv`. Desde una te
 
 | Formato | Resultado | Uso recomendado |
 |---|---|---|
-| `html` (por defecto) | Documento autocontenido con selector de tema claro/oscuro (botón superior; recuerda la elección en el navegador). Al imprimir se usa siempre el tema claro | Lectura y distribución interna |
+| `html` (por defecto) | Documento autocontenido con selector de tema claro/oscuro (botón superior; recuerda la elección en el navegador), índice, secciones plegables y tablas con filtro y orden (ver [Navegación e interacción](#navegación-e-interacción)). Al imprimir se usa siempre el tema claro | Lectura y distribución interna |
 | `md` (por defecto) | Markdown con tablas (máximo `-MdMaxRows` filas por tabla) | Resumen por Claude, wikis internas |
 | `csv` | Un archivo por tabla | Filtrado, cruces y tablas dinámicas en Excel |
 
@@ -71,9 +71,78 @@ Los días hasta el 90 % se calculan con el crecimiento desde la corrida anterior
 Cada reporte empieza con dos secciones:
 
 - **Prioridades** (siempre): críticos y advertencias agrupados por regla y ordenados por severidad × VMs expuestas, con la acción, el motivo y el comando de revisión. Ver [VMs expuestas](/vcenter/reportes/hallazgos/).
-- **Análisis de Claude (IA)** (cuando el reporte se genera desde Claude con `/report`, `/health`, `/capacity`, `/perf`, `/host-check` o `/audit`): Claude lee `summary.json`, `metrics.json` y `findings.json`, escribe `raw/analysis.md` (diagnóstico, qué hacer primero, qué pasa si no se actúa y qué vigilar) y regenera el reporte con `-FromRaw`. El texto se trata como datos: se escapa y solo admite títulos, párrafos, listas, negrita, cursiva y código; enlaces y HTML se muestran como texto. Lleva la fecha de redacción y la indicación de revisarlo antes de usarlo como evidencia.
+- **Análisis de Claude (IA)** (cuando el reporte se genera desde Claude con `/report`, `/health`, `/capacity`, `/perf`, `/host-check`, `/audit` o `/trend`): Claude lee `summary.json`, `metrics.json`, `findings.json` y `fingerprint.txt`, escribe `raw/analysis.md` (diagnóstico, qué hacer primero, hallazgos relacionados, qué pasa si no se actúa y qué vigilar) y regenera el reporte con `-FromRaw`. El texto se trata como datos: se escapa y solo admite títulos, párrafos, listas, negrita, cursiva y código; enlaces y HTML se muestran como texto. Lleva la fecha de redacción y la indicación de revisarlo antes de usarlo como evidencia.
 
 `-FromRaw` sin `-Type` conserva el tipo original del reporte (guardado en `raw/meta.json`).
+
+### Resumen de Claude
+
+El primer párrafo de `## Diagnóstico` se muestra al inicio del reporte, debajo de los indicadores, en un recuadro con la etiqueta **IA** y el enlace *Ver análisis completo*. Claude lo redacta para que se entienda sin leer el resto: una o dos frases con el riesgo dominante y su cifra clave. Sin `raw/analysis.md`, el recuadro no aparece.
+
+### Vigencia del análisis
+
+Al cerrar cada reporte, el script escribe `raw/fingerprint.txt`: una **huella** de 12 caracteres hexadecimales, el SHA-256 de las líneas `regla|objeto|severidad` de los hallazgos, ordenadas. Claude la copia en la primera línea de `analysis.md` (`<!-- huella: … -->`); esa línea no se muestra. Al regenerar, el reporte compara ambas:
+
+| Situación | Aviso |
+|---|---|
+| La huella coincide | Ninguno |
+| La huella es distinta: `-FromRaw` con otros umbrales, hallazgos nuevos o resueltos, cambio de severidad | **Análisis desactualizado**, en el resumen y en el análisis, con estilo de advertencia: los hallazgos cambiaron desde que se redactó y hay que pedir a Claude que lo actualice |
+| El análisis no tiene línea de huella (por ejemplo, redactado antes de la versión 2.1) | **Vigencia no verificable**, en el análisis |
+
+Regenerar con los mismos datos y umbrales no cambia la huella. La evidencia (por ejemplo, un porcentaje) no forma parte de ella: solo cuentan la regla, el objeto y la severidad. En Markdown, el aviso aparece como cita al inicio del análisis.
+
+### Hallazgos relacionados
+
+El análisis puede incluir la sección `## Relacionados`, para hallazgos que tienen la misma causa y se resuelven con una sola acción. Por ejemplo, en los datos de demostración, `ds-used` y `alarm` sobre `DS-PROD-01`. El script los lista por separado; la relación solo surge de la lectura conjunta. Las tablas no cambian: cada hallazgo conserva su fila.
+
+### Dónde no se usa IA
+
+Claude solo redacta `raw/analysis.md`. El resto del reporte es determinista: con los mismos datos y parámetros, el resultado es idéntico.
+
+| Elemento | Origen |
+|---|---|
+| Umbrales, reglas y severidades | Parámetros de cada script (ver [Scripts](/vcenter/referencia/scripts/)) |
+| Métricas de los paneles | Cálculo del script (`raw/metrics.json`) |
+| VMs expuestas y *Prioridades* | Severidad × VMs expuestas (`impact`) |
+| Sugerencias, riesgos y notas | Catálogo `templates/findings.psd1` (ver [Catálogo de textos](/vcenter/reportes/hallazgos/#catálogo-de-textos)) |
+| Indicadores de la auditoría y proyecciones de la tendencia | Fórmulas fijas |
+
+El HTML no llama a ninguna IA ni a la red. El análisis se redacta fuera del reporte, con Claude, y el script lo inserta como datos.
+
+## Navegación e interacción
+
+El reporte HTML se lee completo sin JavaScript. Un script pequeño agrega búsqueda, orden y copia; si el navegador o el visor lo bloquean, solo se pierden esas funciones. El informe de auditoría usa el mismo script (ver [Navegación del informe](/vcenter/auditoria/interpretar/#navegación-del-informe)).
+
+### Sin JavaScript
+
+| Elemento | Comportamiento |
+|---|---|
+| Índice | Barra fija en la parte superior con un enlace a cada sección y su número de filas. En *Hallazgos y sugerencias*, insignias con la cantidad de críticos y advertencias. No se imprime |
+| Secciones plegables | Cada tabla va en una sección que se abre y se cierra con su título. Las de más de 100 filas empiezan cerradas; el resto, abiertas. Los paneles y el análisis no se pliegan |
+| Indicadores | *Críticos* en rojo, *Advertencias* en ámbar y *Sin cobertura* en el color informativo. *Críticos* y *Advertencias* son enlaces a la sección de hallazgos |
+| Insignia de entorno | Roja si el nombre del entorno empieza por `prod` o `dr`; neutra en otro caso. Es solo visual: la política la define `mode` |
+| Celdas | Números alineados a la derecha; «—» en gris en las celdas vacías |
+| Comandos | Se ajustan en varias líneas, sin cortarse a la derecha |
+
+### Con JavaScript
+
+| Función | Comportamiento |
+|---|---|
+| Filtro | Cuadro de búsqueda sobre cada tabla, con el contador «x de n filas». Ignora mayúsculas y acentos, y espera 150 ms entre teclas |
+| Chips de severidad | En las tablas con columna Severidad (*Prioridades* y *Hallazgos y sugerencias*): *Crítico*, *Advertencia* e *Info*, con su conteo. Filtran por severidad y se combinan con el texto |
+| Orden por columna | Clic, Enter o Espacio en un encabezado. Las columnas numéricas se ordenan por número, con las celdas vacías al final; el resto, alfabéticamente en español. Cada clic alterna el sentido, que se indica en el encabezado |
+| Copiar | Botón junto a cada comando de revisión. Usa el portapapeles; si no está disponible, selecciona el texto. Confirma con «Copiado» |
+| Indicadores | Un clic en *Críticos* o *Advertencias* abre la sección de hallazgos y deja activo solo el chip de esa severidad |
+| Enlaces | Un enlace del índice, o cualquier ancla, que apunta a una sección cerrada la abre |
+| Impresión | Al imprimir se abren todas las secciones y, al terminar, se restaura su estado. El índice, la barra de filtro y los botones no se imprimen |
+
+El script no guarda estado (el tema ya se recuerda en el navegador) y está pensado para tablas de miles de filas: el texto de cada fila se normaliza una sola vez, el orden reinserta las filas en una sola operación y el navegador no pinta las secciones de tabla que están fuera de pantalla (`content-visibility`).
+
+### Seguridad del script
+
+- **Un solo archivo:** `templates/report.js`, compartido por los reportes y el informe de auditoría. Se incluye en línea en cada HTML, que sigue siendo autocontenido.
+- **CSP con hash calculado:** la política de seguridad de contenido de los HTML mantiene `default-src 'none'` y autoriza tres scripts por su hash SHA-256: los dos del selector de tema, fijos en la plantilla, y el script compartido, cuyo hash calcula Render al generar el reporte (`Get-ReportScript`, sobre el texto normalizado a LF). Un cambio en `report.js` no requiere actualizar hashes a mano, y un script que no coincida con ninguno de los tres no se ejecuta.
+- **Sin red ni HTML dinámico:** el script no usa `fetch`, `XMLHttpRequest`, `import` ni URLs, y construye los elementos con `createElement` y `textContent`, sin `innerHTML` ni `eval`. `Test-Reports.ps1` verifica la ausencia de esas construcciones y que cada script en línea de los HTML generados esté autorizado por su hash (ver [Pruebas](/vcenter/referencia/pruebas/)).
 
 ## Estructura de salida
 
@@ -89,6 +158,7 @@ Cada reporte empieza con dos secciones:
         - summary.json indicadores
         - metrics.json métricas de los paneles (key, valor, %, nivel)
         - findings.json hallazgos con VMs expuestas (entrada para auditoría y tendencias)
+        - fingerprint.txt huella de los hallazgos (vigencia del análisis)
         - analysis.md análisis de Claude (opcional)
         - vms.json
         - hosts.json

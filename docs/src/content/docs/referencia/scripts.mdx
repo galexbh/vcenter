@@ -146,7 +146,7 @@ Rechaza su ejecución cuando lo invoca Claude.
 | `CredMan.psm1` | Acceso a la bóveda (uso exclusivo del wrapper) |
 | `GovcJson.psm1` | `ConvertFrom-GovcCollect`, `Split-JsonStream` |
 | `GovcBatch.psm1` | `Invoke-GovcBatch`, `Get-GovcBatchError` (lotes de lectura con una sesión) |
-| `Render.psm1` | Capa base, sin dependencias: `Get-SeverityRank`, `Get-SeverityClass`, `ConvertTo-MdText`, `ConvertTo-HtmlText`, `Get-CellValue`, `New-ReportTable`, `New-ReportPanel`, `New-PanelCard`, `New-ReportAnalysis`, `Get-MetricLevel`, `Format-TextBar`, `ConvertTo-PanelHtml`, `ConvertTo-PanelMd`, `ConvertTo-SafeHtml`, `ConvertTo-SafeMd`, `New-FindingList`, `Add-ReportFinding`, `Export-ReportFinding`, `Sort-ReportFinding`, `Get-FindingColumns`, `Write-GovcReport`, `ConvertTo-HtmlText`, `Expand-Template`, `Format-MdCode` |
+| `Render.psm1` | Capa base, sin dependencias: `Get-SeverityRank`, `Get-SeverityClass`, `ConvertTo-MdText`, `ConvertTo-HtmlText`, `Get-CellValue`, `New-ReportTable`, `New-ReportPanel`, `New-PanelCard`, `New-ReportAnalysis`, `Get-MetricLevel`, `Format-TextBar`, `ConvertTo-PanelHtml`, `ConvertTo-PanelMd`, `ConvertTo-SafeHtml`, `ConvertTo-SafeMd`, `New-FindingList`, `Add-ReportFinding`, `Export-ReportFinding`, `Sort-ReportFinding`, `Get-FindingColumns`, `Write-GovcReport`, `Expand-Template`, `Format-MdCode`. Desde 2.1: `Get-Slug` (identificador ASCII en minúscula para los ids de sección `sec-…` y los nombres de los CSV), `Get-ReportScript` (texto de `templates/report.js` normalizado a LF y su hash SHA-256 para la CSP; se lee una vez por proceso), `ConvertTo-TableSectionHtml` (tabla como sección plegable, con `data-filter`, `data-sev` y columnas numéricas), `Get-AnalysisLead` (primer párrafo de *Diagnóstico* para el resumen de Claude), `Get-AnalysisNotice`, `ConvertTo-AnalysisNoticeHtml` y `ConvertTo-AnalysisMd` (aviso de vigencia del análisis) |
 | `Common.psm1` | Utilidades compartidas por los scripts de reportes (protegido, porque incluye el escape de textos de vCenter en los comandos sugeridos). Ver la tabla siguiente |
 
 Funciones de `Common.psm1`:
@@ -158,7 +158,8 @@ Funciones de `Common.psm1`:
 | Datos de vCenter | `ConvertFrom-CertJson`, `Get-SnapshotList` |
 | Comandos sugeridos | `New-ReviewCommand`, `Format-PsLiteral` |
 | Cálculos compartidos | `Get-Percent`, `Format-Percent`, `Get-DaysToPct`, `Get-FindingKey`, `Find-PreviousRun` |
-| Impacto y prioridad | `Set-FindingImpact`, `Get-FindingScore`, `Get-ReportPriority`, `Get-PriorityColumns`, `Get-ReportAnalysis` |
+| Impacto y prioridad | `Set-FindingImpact`, `Get-FindingScore`, `Get-ReportPriority`, `Get-PriorityColumns` |
+| Análisis de Claude | `Get-FindingFingerprint` (huella de 12 caracteres hexadecimales: SHA-256 de regla, objeto y severidad de los hallazgos, ordenados), `Get-ReportAnalysis` (lee `raw/analysis.md`, quita la línea de huella y la compara con la actual) |
 | Catálogo de textos | `Get-FindingCatalog`, `Get-FindingText`, `Get-CategoryText`, `Get-NoteText` (`templates/findings.psd1`) |
 | Hallazgos | `Add-GroupedFinding`, `Add-CoverageByError`, `Add-SeverityKpis` |
-| Cierre del reporte | `Export-GovcCsv`, `Complete-Report` (`findings.json`, `summary.json`, `metrics.json`, secciones *Prioridades* y *Análisis de Claude*, HTML/MD y CSV) |
+| Cierre del reporte | `Export-GovcCsv`, `Complete-Report` (`findings.json`, `summary.json`, `metrics.json`, `fingerprint.txt`, secciones *Prioridades* y *Análisis de Claude*, HTML/MD y CSV) |

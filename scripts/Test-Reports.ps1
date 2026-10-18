@@ -33,6 +33,19 @@ function Rules($findings) { @($findings | ForEach-Object { $_.rule }) }
 function HasRule($findings, [string]$rule, [string]$sev = '', [string]$object = '*') {
     [bool](@($findings | Where-Object { $_.rule -like $rule -and $_.object -like $object -and (-not $sev -or $_.severity -eq $sev) }).Count)
 }
+function Test-CspHashes([string]$Html) {
+    # Cada script en línea autorizado por su hash; el navegador lo calcula sobre el texto con LF.
+    $csp = [regex]::Match($Html, 'http-equiv="Content-Security-Policy" content="([^"]+)"').Groups[1].Value
+    $scripts = @([regex]::Matches(($Html -replace "`r`n", "`n"), '<script>([\s\S]*?)</script>') | ForEach-Object { $_.Groups[1].Value })
+    $csp -and ($csp -match "default-src 'none'") -and $scripts.Count -and -not @($scripts | Where-Object {
+            $h = [Convert]::ToBase64String([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($_)))
+            $csp -notmatch [regex]::Escape("'sha256-$h'") }).Count
+}
+function Get-BrokenLinks([string]$Html) {
+    # Enlaces internos (#id) sin elemento destino.
+    $ids = @{}; foreach ($m in [regex]::Matches($Html, ' id="([^"]+)"')) { $ids[$m.Groups[1].Value] = 1 }
+    @([regex]::Matches($Html, 'href="#([^"]+)"') | ForEach-Object { $_.Groups[1].Value } | Where-Object { -not $ids.ContainsKey($_) } | Sort-Object -Unique)
+}
 function Quiet([scriptblock]$sb) {
     # Descarta errores y advertencias, salvo las de JSON truncado: esas son una falla (se perderían datos).
     foreach ($o in @(& $sb 2>$null 3>&1)) {
@@ -116,7 +129,7 @@ try {
     Check 'Impacto: VMs encendidas de CL-PROD-02 (N+1)' ($fN1.impact -eq $cl02Vms -and $cl02Vms -gt 0) "$($fN1.impact) vs $cl02Vms"
     Check 'Impacto: N+1 estima las VMs sin capacidad para reiniciarse' ("$($fN1.evidence)" -match '~\d+ VMs sin capacidad para reiniciarse')
     Check 'Impacto: snapshot = 1 VM; certificado sin dato' ((@($nf | Where-Object rule -eq 'snap-age')[0].impact -eq 1) -and $null -eq ($nf | Where-Object rule -eq 'cert-vc').impact)
-    Check 'HTML: columna VMs expuestas' ($html -match '<th>VMs expuestas</th>')
+    Check 'HTML: columna VMs expuestas' ($html -match '<th class="n">VMs expuestas</th>')
     # Prioridades: primera sección; el crítico con más VMs va antes que el crítico con una.
     Check 'HTML: Prioridades es la primera sección' (([regex]::Match($html, '<h2>([^<]+)')).Groups[1].Value -match '^Prioridades')
     $pr = @(Get-ReportPriority @(
@@ -148,7 +161,23 @@ try {
     Set-Content (Join-Path $rep 'raw/analysis.md') "# Diagnóstico`n`nTexto **clave**, *nota* y ``cmd <x>``. <script>alert(2)</script> [enlace](http://x)`n`n- uno`n- dos" -Encoding utf8
     Quiet { & "$S/New-Report.ps1" -FromRaw $rep -Format html, md } | Out-Null
     $ah2 = Get-Content (Join-Path $rep 'reporte-all.html') -Raw; $am2 = Get-Content (Join-Path $rep 'reporte-all.md') -Raw
-    Check 'Análisis: sección después de Prioridades' ($ah2 -match '<h2>Prioridades[\s\S]*?<section class="analysis"><h2>An')
+    Check 'Análisis: sección después de Prioridades' ($ah2 -match '<h2>Prioridades[\s\S]*?<section class="analysis" id="sec-analisis-de-claude-ia"><h2>An')
+    # IA: resumen arriba y vigencia por huella.
+    Check 'IA: resumen de Claude arriba, con enlace al análisis' ($ah2 -match '<aside class="ai-summary"' -and $ah2 -match 'href="#sec-analisis-de-claude-ia">Ver an')
+    Check 'IA: sin huella, vigencia no verificable' ($ah2 -match 'class="ai-unverified"' -and $ah2 -notmatch 'class="ai-stale"')
+    $fpNow = (Get-Content (Join-Path $rep 'raw/fingerprint.txt') -Raw).Trim()
+    Check 'IA: huella = Get-FindingFingerprint de los hallazgos' ($fpNow -eq (Get-FindingFingerprint @(Json (Join-Path $rep 'raw/findings.json'))) -and $fpNow -match '^[0-9a-f]{12}$')
+    Set-Content (Join-Path $rep 'raw/analysis.md') "<!-- huella: $fpNow -->`n## Diagnóstico`n`nTodo en orden." -Encoding utf8
+    Quiet { & "$S/New-Report.ps1" -FromRaw $rep -Format html } | Out-Null
+    $ah4 = Get-Content (Join-Path $rep 'reporte-all.html') -Raw
+    Check 'IA: huella vigente, sin aviso y sin la línea de huella visible' ($ah4 -notmatch 'class="ai-(stale|unverified)"' -and $ah4 -notmatch 'huella:' -and (Get-Content (Join-Path $rep 'raw/fingerprint.txt') -Raw).Trim() -eq $fpNow)
+    Set-Content (Join-Path $rep 'raw/analysis.md') "<!-- huella: 000000000000 -->`n## Diagnóstico`n`nViejo." -Encoding utf8
+    Quiet { & "$S/New-Report.ps1" -FromRaw $rep -Format html, md } | Out-Null
+    Check 'IA: huella distinta, análisis desactualizado (HTML y MD)' ((Get-Content (Join-Path $rep 'reporte-all.html') -Raw) -match 'class="ai-stale"' -and (Get-Content (Join-Path $rep 'reporte-all.md') -Raw) -match 'desactualizado')
+    $fpA = Get-FindingFingerprint @([pscustomobject]@{ rule = 'r'; object = 'o'; severity = 'Crítico' }, [pscustomobject]@{ rule = 'r2'; object = 'o'; severity = 'Info' })
+    $fpB = Get-FindingFingerprint @([pscustomobject]@{ rule = 'r2'; object = 'o'; severity = 'Info' }, [pscustomobject]@{ rule = 'r'; object = 'o'; severity = 'Crítico' })
+    $fpC = Get-FindingFingerprint @([pscustomobject]@{ rule = 'r'; object = 'o'; severity = 'Advertencia' }, [pscustomobject]@{ rule = 'r2'; object = 'o'; severity = 'Info' })
+    Check 'IA: la huella no depende del orden y cambia si cambia un hallazgo' ($fpA -eq $fpB -and $fpA -ne $fpC)
     Check 'Análisis: formato permitido (h3, strong, code, ul)' ($ah2 -match '<h3>Diagn' -and $ah2 -match '<strong>clave</strong>' -and $ah2 -match '<em>nota</em>' -and $ah2 -match '<code>cmd &lt;x&gt;</code>' -and $ah2 -match '<ul><li>uno</li><li>dos</li></ul>')
     Check 'Análisis: sin HTML ni enlaces inyectados' ($ah2 -notmatch '<script>alert\(2\)' -and $ah2 -notmatch '<a href="http://x' -and $am2 -notmatch '<script>alert\(2\)' -and $am2 -match '\\\[enlace\\\]')
     Check 'Análisis: títulos en Markdown como ###' ($am2 -match '(?m)^### Diagn')
@@ -209,16 +238,38 @@ try {
     Check 'Save-RawJson: 12 niveles sin truncar' ($lvlN -eq 12) "$lvlN niveles"
     Check 'HTML: codifica <script> de vCenter' (($html -notmatch '<script>alert') -and ($html -match '&lt;script&gt;alert'))
     Check 'HTML: incluye selector de tema' ($html -match 'id="theme-toggle"')
-    # CSP: cada script en línea debe estar autorizado por su hash; nada más puede ejecutarse.
-    foreach ($tpl in @(@('reporte', $html), @('plantilla de auditoría', (Get-Content (Join-Path $root 'templates/audit.html') -Raw)))) {
-        $csp = [regex]::Match($tpl[1], 'http-equiv="Content-Security-Policy" content="([^"]+)"').Groups[1].Value
-        # El navegador calcula el hash sobre el texto con saltos de línea normalizados a LF.
-        $scripts = [regex]::Matches(($tpl[1] -replace "`r`n", "`n"), '<script>([\s\S]*?)</script>') | ForEach-Object { $_.Groups[1].Value }
-        $okHashes = $csp -and ($csp -match "default-src 'none'") -and @($scripts).Count -and -not @($scripts | Where-Object {
-                $h = [Convert]::ToBase64String([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($_)))
-                $csp -notmatch [regex]::Escape("'sha256-$h'") }).Count
-        Check "CSP en $($tpl[0]): default-src 'none' y hashes de scripts válidos" $okHashes
+    # CSP: cada script en línea (tema y script compartido) autorizado por su hash; nada más puede ejecutarse.
+    Check 'CSP en el reporte: default-src none y hashes de los 3 scripts válidos' ((Test-CspHashes $html) -and ([regex]::Matches($html, '<script>')).Count -eq 3)
+    # --- UX: navegación, tablas e interacción ---------------------------------------------------
+    $js = Get-Content (Join-Path $root 'templates/report.js') -Raw
+    $forbidden = @('innerHTML', 'outerHTML', 'insertAdjacentHTML', 'document.write', 'eval(', 'new Function', 'fetch(', 'XMLHttpRequest', 'import(', 'http:', 'https:', 'localStorage', 'sessionStorage', '</script') | Where-Object { $js.Contains($_) }
+    Check 'report.js: sin red, sin HTML dinámico ni almacenamiento' (-not @($forbidden).Count) ($forbidden -join ', ')
+    if (Get-Command node -ErrorAction SilentlyContinue) {
+        $null = & node --check (Join-Path $root 'templates/report.js') 2>&1
+        Check 'report.js: sintaxis válida (node --check)' ($LASTEXITCODE -eq 0)
     }
+    $app = Get-ReportScript
+    Check 'Script compartido incluido una vez con su hash' ($html.Contains($app.text) -and $html.Contains("'sha256-$($app.hash)'"))
+    Check 'Índice: enlaces internos con destino' (-not @(Get-BrokenLinks $html).Count) ((Get-BrokenLinks $html) -join ', ')
+    Check 'Índice: una entrada por sección' (([regex]::Matches(([regex]::Match($html, '<nav class="toc"[\s\S]*?</nav>')).Value, '<a href="#sec-')).Count -eq ([regex]::Matches($html, ' id="sec-')).Count)
+    $nfCmd = @($nf | Where-Object { $_.command }).Count
+    $findTbl = [regex]::Match($html, '<details class="sec" id="sec-hallazgos-y-sugerencias"[\s\S]*?</details>').Value
+    Check 'Tablas: filtro, severidad por fila y comandos copiables' ($html -match '<table data-filter>' -and ([regex]::Matches($findTbl, '<tr data-sev="(crit|warn|info)"')).Count -eq $nf.Count -and ([regex]::Matches($findTbl, '<code class="cmd">')).Count -eq $nfCmd) "$nfCmd comandos"
+    Check 'Tablas: números a la derecha y vacías con —' ($html -match '<th class="n">VMs expuestas</th>' -and $html -match '<td class="n">\d+</td>' -and $html -match '<td class="empty-cell">—</td>')
+    Check 'KPIs: Críticos enlaza y filtra la sección de hallazgos' ($html -match '<a class="kpi crit" href="#sec-hallazgos-y-sugerencias" data-sev="crit">')
+    $uxDir = Join-Path $work 'ux'; New-Item -ItemType Directory -Force $uxDir | Out-Null
+    $many = @(1..150 | ForEach-Object { [pscustomobject]@{ a = "fila $_"; b = $_ } }); $few = @($many | Select-Object -First 10)
+    $null = Write-GovcReport -Root $root -OutDir $uxDir -BaseName 'ux' -Title 't' -Env 'prod' -Generated (Get-Date) -Kpis ([ordered]@{ x = 1 }) -Format html `
+        -Sections @((New-ReportTable 'Grande' @('a:A', 'b:B') $many), (New-ReportTable 'Chica' @('a:A', 'b:B') $few))
+    $ux = Get-Content (Join-Path $uxDir 'ux.html') -Raw
+    Check 'Plegables: más de 100 filas cerrada, 10 abierta' ($ux -match '<details class="sec" id="sec-grande">' -and $ux -match '<details class="sec" id="sec-chica" open>')
+    Check 'Insignia: prod en rojo, demo neutra' ($ux -match 'class="env env-prod"' -and $html -match 'class="env ">')
+    # Navegador real (opcional): el script corre con la CSP aplicada y agrega barra, chips y Copiar.
+    $browser = @("${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe", "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe", "$env:ProgramFiles\Google\Chrome\Application\chrome.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
+    if ($browser) {
+        $dom = & $browser --headless=new --disable-gpu --user-data-dir="$(Join-Path $work 'browser')" --dump-dom ([uri](Join-Path $rep 'reporte-all.html')).AbsoluteUri 2>$null | Out-String
+        Check 'Navegador: el script corre con la CSP (barra, chips y Copiar)' ($dom -match 'class="tbl-tools"' -and $dom -match 'class="chip' -and $dom -match 'class="copy"')
+    } else { Write-Host 'Aviso: prueba en navegador omitida (sin Edge ni Chrome).' -ForegroundColor Yellow }
     Check 'MD: escapa | y [ de vCenter' ($md -match 'SO \\\| con \\\[enlace\\\]')
     Check 'MD: no contiene <script> literal' ($md -notmatch '<script>')
     Check 'MD: sin filas vacías' ($md -notmatch '(?m)^\|(\s*\|)+\s*$')
@@ -342,11 +393,13 @@ try {
     $amd = Get-Content (Join-Path $audit 'auditoria.md') -Raw
     Check 'Audit MD: marcador en datos no se expande (un solo plan de remediación)' (([regex]::Matches($amd, '\| Prioridad \| ID \| Severidad \| Objeto \| VMs \| Acción')).Count -eq 1)
     Check 'Audit HTML: codifica contenido de vCenter' ($ah -notmatch '<script>alert')
+    Check 'Audit HTML: CSP con los hashes de sus scripts' (Test-CspHashes $ah)
+    Check 'Audit HTML: enlaces internos (Contenido y AUD-NNN) con destino' (-not @(Get-BrokenLinks $ah).Count -and $ah -match '<a class="aud" href="#aud-001">AUD-001</a>' -and $ah -match '<article class="finding \w+" id="aud-001">') ((Get-BrokenLinks $ah) -join ', ')
     Check 'Audit: métricas clave en audit.json' (@($aj.metrics | Where-Object key -eq 'cl-n1').Count -eq 1 -and @($aj.metrics).Count -ge 6)
     Check 'Audit: primera auditoría sin evolución' ($null -eq $aj.evolution -and $ah -match [regex]::Escape([System.Net.WebUtility]::HtmlEncode('Primera auditoría del entorno')))
     Check 'Audit HTML: firma de Arquitectura' ($ah -match '<div class="role">Revisado por</div><div>Arquitectura</div>')
     $pri = @($aj.findings | Where-Object { $_.priority -gt 0 } | Sort-Object priority -Descending)
-    Check 'Audit: prioridad por hallazgo y principales riesgos en ese orden' ($pri.Count -and $ah -match ('<td>' + [regex]::Escape($pri[0].id) + '</td>') -and ([regex]::Match($ah, 'Principales riesgos[\s\S]*?<td>(AUD-\d+)</td>')).Groups[1].Value -eq $pri[0].id)
+    Check 'Audit: prioridad por hallazgo y principales riesgos en ese orden' ($pri.Count -and $ah -match ('>' + [regex]::Escape($pri[0].id) + '</a></td>') -and ([regex]::Match($ah, 'Principales riesgos[\s\S]*?>(AUD-\d+)</a></td>')).Groups[1].Value -eq $pri[0].id)
     Check 'Audit: plan de remediación con prioridad y VMs' ($ah -match '<th class="n">Prioridad</th>' -and $amd -match '\| Prioridad \| ID \|')
     Check 'Get-FindingKey: igual a la clave de audit.json' ((Get-FindingKey ([pscustomobject]@{ rule = $aj.findings[0].rule; object = $aj.findings[0].object })) -eq $aj.findings[0].key)
     Set-Content (Join-Path $audit 'raw/analysis.md') "## Diagnóstico`n`nTexto de prueba <b>x</b>." -Encoding utf8
@@ -394,7 +447,7 @@ try {
     Check 'Menciones: solo path-dead (Storage) y snap-age, vm-off, perf-oversized (dueño)' (-not $bad.Count) ($bad -join '; ')
     # Sin duplicados: los helpers consolidados en lib/ no se vuelven a definir en los scripts.
     $libText = (Get-ChildItem (Join-Path $S 'lib') -Filter *.psm1 | ForEach-Object { Get-Content $_.FullName -Raw }) -join "`n"
-    $dupPatterns = '\$(pctOf|fmtPct|keyOf|sevCss|sevOrder|mdEsc|esc|enc)\s*=', 'SHA256\]::HashData\(\[Text\.Encoding\]::UTF8\.GetBytes\("\$\(\$\w+\.rule\)', '0\.9 \* \$', 'Round\(100 \* ', 'Measure-Object [^)]*-Sum\)\.Sum'
+    $dupPatterns = '\$(pctOf|fmtPct|keyOf|sevCss|sevOrder|mdEsc|esc|enc|slug)\s*=', 'SHA256\]::HashData\(\[Text\.Encoding\]::UTF8\.GetBytes\("\$\(\$\w+\.rule\)', '0\.9 \* \$', 'Round\(100 \* ', 'Measure-Object [^)]*-Sum\)\.Sum'
     $dups = @(foreach ($pt in $dupPatterns) { if ($srcText -match $pt) { $Matches[0] } })
     Check 'Sin duplicados: helpers locales consolidados en lib/' (-not $dups.Count) ($dups -join '; ')
     Check 'Sin duplicados: una sola definición por función en lib/' (-not @([regex]::Matches($libText, '(?m)^function ([\w-]+)') | Group-Object { $_.Groups[1].Value } | Where-Object Count -gt 1).Count)
@@ -448,6 +501,9 @@ try {
     Check 'Compare: claves anteriores a 1.8 traducidas (snapshots sin cambios no aparecen)' ($tmd -notmatch 'pre\\?-update\\?-CHG\\?-0912')
     Check 'Compare: crecimiento de datastore (20 GB/día)' ($tmd -match '\| DS\\?-PROD\\?-01 \|[^\r\n]*\| 20 \|')
     Check 'Compare: sin filas vacías' ($tmd -notmatch '(?m)^\|(\s*\|)+\s*$')
+    Set-Content (Join-Path $tdir 'raw/analysis.md') "## Diagnóstico`n`nDS-PROD-01 crece 20 GB/día." -Encoding utf8
+    Quiet { & "$S/Compare-Report.ps1" -Base $base -Current $rep -OutDir $tdir -Format md } | Out-Null
+    Check 'Compare: incluye el análisis de Claude (/trend)' ((Get-Content (Join-Path $tdir 'tendencia.md') -Raw) -match '## An[áa]lisis de Claude')
     Check 'Compare: snapshots sin cambios = 0 filas' ($tmd -match '## Snapshots \(0\)')
 
     # --- 5b. Test-AuditLog: cadena íntegra y ruptura detectada ----------------------------------------

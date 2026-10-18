@@ -48,7 +48,17 @@ Ambos quedan en `raw/audit.json` (`metrics` y `evolution`). Las métricas clave 
 ## Prioridad y análisis
 
 - Cada hallazgo lleva **VMs expuestas** y una **prioridad** (`priority` en `audit.json`): severidad × VMs expuestas. *Principales riesgos* y el *plan de remediación* se ordenan por prioridad; el plan numera la columna *Prioridad*. Los identificadores AUD-NNN siguen el orden de severidad y dominio.
-- Si existe `raw/analysis.md` en la carpeta de la auditoría, el resumen ejecutivo incluye el **Análisis de Claude (IA)**, con la misma protección que en los reportes (ver [Prioridades y análisis](/vcenter/reportes/generar/#prioridades-y-análisis)).
+- Si existe `raw/analysis.md` en la carpeta de la auditoría, el resumen ejecutivo incluye el **Análisis de Claude (IA)**, con la misma protección que en los reportes (ver [Prioridades y análisis](/vcenter/reportes/generar/#prioridades-y-análisis)). La auditoría escribe su propia huella en `<auditoría>/raw/fingerprint.txt`: si los hallazgos cambian al regenerar con `-FromRaw`, el análisis muestra el aviso «Análisis desactualizado» (ver [Vigencia del análisis](/vcenter/reportes/generar/#vigencia-del-análisis)).
+
+## Navegación del informe
+
+| Elemento | Comportamiento |
+|---|---|
+| Índice **Contenido** | Al inicio de la sección 1, con un enlace a cada una de las seis secciones (resumen ejecutivo, alcance y metodología, hallazgos detallados, plan de remediación, anexos, y revisión y aprobación). También se imprime |
+| Enlaces AUD-NNN | En *Principales riesgos*, en el plan de remediación y en la lista de hallazgos nuevos de *Evolución*, cada identificador lleva a su ficha en *Hallazgos detallados* |
+| Botón Copiar | Junto al comando de **Verificación** de cada ficha; copia el comando al portapapeles y confirma con «Copiado». No se imprime |
+
+El índice y los enlaces funcionan sin JavaScript. El botón Copiar lo agrega el script compartido de los reportes (`templates/report.js`), autorizado por su hash en la política de seguridad de contenido (ver [Seguridad del script](/vcenter/reportes/generar/#seguridad-del-script)). Las tablas de la auditoría no tienen filtro ni orden.
 
 ## Severidades
 

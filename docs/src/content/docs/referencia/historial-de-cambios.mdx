@@ -5,6 +5,38 @@ sidebar:
   order: 6
 ---
 
+## 2.1 — Octubre 2026
+
+**Navegación e interacción**
+- Índice fijo en la parte superior del reporte, con el número de filas de cada sección y las insignias de críticos y advertencias en *Hallazgos y sugerencias*; no se imprime.
+- Secciones de tabla plegables: abiertas, salvo las de más de 100 filas. Al imprimir se abren todas y luego se restauran.
+- Tablas con filtro de texto (sin distinguir mayúsculas ni acentos), chips de severidad en *Prioridades* y *Hallazgos y sugerencias*, contador «x de n filas» y orden por columna (numérico o alfabético, con `aria-sort`).
+- Botón **Copiar** en cada comando de revisión; los comandos se ajustan en varias líneas en lugar de cortarse.
+- Indicadores *Críticos*, *Advertencias* y *Sin cobertura* con color; los dos primeros llevan a la sección de hallazgos con esa severidad filtrada. Insignia de entorno roja para `prod*` y `dr*` (solo visual; la política sigue dependiendo de `mode`). Números alineados a la derecha y «—» en las celdas vacías.
+- Auditoría: índice *Contenido* al inicio del resumen ejecutivo, identificadores AUD-NNN enlazados a su ficha (*Principales riesgos*, plan de remediación y hallazgos nuevos de *Evolución*) y botón Copiar en la verificación.
+- Sin JavaScript, el reporte se lee igual: el índice, los plegables, los colores y los enlaces son HTML y CSS. Ver [Navegación e interacción](/vcenter/reportes/generar/#navegación-e-interacción) y [Navegación del informe](/vcenter/auditoria/interpretar/#navegación-del-informe).
+
+**IA donde aporta**
+- **Resumen de Claude** al inicio del reporte, debajo de los indicadores: el primer párrafo de *Diagnóstico* de `raw/analysis.md`, con la etiqueta IA y el enlace al análisis completo.
+- **Vigencia verificable:** cada reporte y cada auditoría escriben `raw/fingerprint.txt` (huella de los hallazgos por regla, objeto y severidad). Claude la registra en la primera línea del análisis; si al regenerar no coincide, el reporte muestra «Análisis desactualizado», y sin huella, «Vigencia no verificable». Ver [Vigencia del análisis](/vcenter/reportes/generar/#vigencia-del-análisis).
+- Sección opcional `## Relacionados` en el análisis, para hallazgos con la misma causa (por ejemplo, `ds-used` y `alarm` del mismo datastore).
+- `/trend` redacta el análisis de la tendencia (qué crece, qué se resolvió y qué se agota primero) y regenera en la misma carpeta. Ver [Análisis de Claude](/vcenter/reportes/tendencias/#análisis-de-claude).
+- Explícito en la skill `govc-report` y en la documentación: umbrales, métricas, reglas, VMs expuestas, prioridades y textos del catálogo son deterministas; el HTML no llama a ninguna IA ni a la red. Ver [Dónde no se usa IA](/vcenter/reportes/generar/#dónde-no-se-usa-ia).
+
+**Seguridad**
+- Script único `templates/report.js`, compartido por los reportes y la auditoría: JavaScript sin dependencias que construye el DOM con `createElement` y `textContent`, sin `innerHTML`, `eval`, `fetch`, `XMLHttpRequest`, `import` ni URLs, y sin guardar estado.
+- CSP: `script-src` suma un tercer hash, el del script compartido, que Render calcula al generar cada reporte (`Get-ReportScript`, texto normalizado a LF). Los hashes de los dos scripts del selector de tema siguen fijos en la plantilla. `default-src 'none'` no cambia. Ver [Seguridad del script](/vcenter/reportes/generar/#seguridad-del-script).
+- `Get-Slug` en Render reemplaza el bloque local de `Export-GovcCsv`: una sola función para los ids de sección y los nombres de los CSV.
+
+**Eficiencia**
+- `Get-ReportScript` lee el script y calcula su hash una vez por proceso (caché, como el catálogo); la huella se calcula una vez sobre los hallazgos ya ordenados. Sin consultas nuevas a vCenter.
+- En el navegador: una sola pasada al cargar, con barras, chips y botones creados en un `DocumentFragment`; texto normalizado de cada fila en caché (se calcula en el primer filtrado); orden que reinserta las filas en un único `DocumentFragment`.
+- `content-visibility: auto` en las secciones de tabla, para no pintar las que están fuera de pantalla; las secciones de más de 100 filas empiezan plegadas.
+- Claude redacta el análisis desde los JSON y `fingerprint.txt`, sin abrir el HTML.
+
+**Pruebas**
+- `Test-Reports.ps1`: 222 verificaciones (CSP de los HTML generados con el hash del script compartido, construcciones prohibidas en `report.js`, anclas del índice, KPIs y AUD-NNN con su `id`, `data-filter`, `data-sev`, `code.cmd` y columnas numéricas, secciones plegadas por tamaño, insignia de entorno, resumen de Claude y avisos de vigencia, estabilidad de la huella y análisis en `Compare-Report.ps1`).
+
 ## 2.0 — Octubre 2026
 
 **Decidir con impacto**

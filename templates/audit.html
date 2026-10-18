@@ -4,8 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
-<!-- CSP: solo se ejecutan los dos scripts del selector de tema (por hash). Si se modifican, recalcular con Test-Reports.ps1. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'; script-src 'sha256-ecCkpziKXKU9emoVp7BsPXxGFKgnH2vwens8et1nWVg=' 'sha256-ZLzDXJb3x+lFD9fupbDxeiIC5o6D9GBI0jJ4gpMQgwU='">
+<!-- CSP: solo se ejecutan los scripts autorizados por hash: los dos del selector de tema (si se modifican, recalcular con Test-Reports.ps1) y el de interacción (templates/report.js), cuyo hash calcula Render al generar el informe. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'; script-src 'sha256-ecCkpziKXKU9emoVp7BsPXxGFKgnH2vwens8et1nWVg=' 'sha256-ZLzDXJb3x+lFD9fupbDxeiIC5o6D9GBI0jJ4gpMQgwU=' 'sha256-{{APP_HASH}}'">
 <title>{{TITLE}}</title>
 <script>
   // Aplica el tema guardado antes de pintar (evita parpadeo). Sin preferencia guardada: tema del sistema.
@@ -131,6 +131,21 @@
   .sign .line { margin-top: 28px; color: var(--muted); }
   footer.run { color: var(--muted); font-size: 8.5pt; text-align: center; padding: 10px; }
 
+  /* Interacción (report.js): índice, enlaces a fichas y copiar comandos. */
+  nav.toc-audit { border: 1px solid var(--line); border-radius: 4px; background: var(--soft); padding: 8px 14px; margin: 0 0 14px; break-inside: avoid; }
+  nav.toc-audit .toc-title { font-weight: 700; color: var(--heading); font-size: 10pt; margin-bottom: 2px; }
+  nav.toc-audit ol { margin: 0; padding-left: 20px; columns: 2; column-gap: 24px; }
+  nav.toc-audit li { padding: 1px 0; }
+  nav.toc-audit a { color: var(--accent); text-decoration: none; }
+  nav.toc-audit a:hover { text-decoration: underline; }
+  section.page[id], .finding[id] { scroll-margin-top: 12px; }
+  a.aud { color: var(--accent); font-weight: 600; text-decoration: none; font-variant-numeric: tabular-nums; }
+  a.aud:hover { text-decoration: underline; }
+  code.cmd { white-space: pre-wrap; overflow-wrap: anywhere; word-break: normal; }
+  button.copy { margin-left: 6px; padding: 0 7px; border: 1px solid var(--line); border-radius: 3px; background: var(--paper); color: var(--muted); font: 8.5pt "Segoe UI", system-ui, sans-serif; line-height: 1.6; cursor: pointer; vertical-align: middle; }
+  button.copy:hover { border-color: var(--accent); color: var(--ink); }
+  a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  @media (max-width: 760px) { nav.toc-audit ol { columns: 1; } }
   @media (max-width: 760px) {
     .doc { margin: 0; box-shadow: none; }
     .page, .cover { padding: 20px 16px; }
@@ -151,7 +166,7 @@
       --ok: #1d6b3a; --ok-bg: #e6f4ea;
     }
     * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-    .theme-toggle { display: none !important; }
+    .theme-toggle, button.copy { display: none !important; }
     html { background: none; }
     .doc { margin: 0; box-shadow: none; max-width: none; }
     .page { padding: 0; }
@@ -192,8 +207,19 @@
     </div>
   </section>
 
-  <section class="page brk">
+  <section class="page brk" id="s1">
     <h2><span class="num">1</span>Resumen ejecutivo</h2>
+    <nav class="toc-audit" aria-label="Contenido">
+      <div class="toc-title">Contenido</div>
+      <ol>
+        <li><a href="#s1">Resumen ejecutivo</a></li>
+        <li><a href="#s2">Alcance y metodología</a></li>
+        <li><a href="#s3">Hallazgos detallados</a></li>
+        <li><a href="#s4">Plan de remediación</a></li>
+        <li><a href="#s5">Anexos</a></li>
+        <li><a href="#s6">Revisión y aprobación</a></li>
+      </ol>
+    </nav>
     {{EXEC_SUMMARY}}
     {{ANALYSIS}}
     <h3>Indicador por dominio</h3>
@@ -209,30 +235,30 @@
     {{TOP_RISKS}}
   </section>
 
-  <section class="page brk">
+  <section class="page brk" id="s2">
     <h2><span class="num">2</span>Alcance y metodología</h2>
     {{METHODOLOGY}}
     <h3>Matriz de hallazgos por dominio y severidad</h3>
     <div class="scroll">{{MATRIX}}</div>
   </section>
 
-  <section class="page brk">
+  <section class="page brk" id="s3">
     <h2><span class="num">3</span>Hallazgos detallados</h2>
     {{FINDINGS}}
   </section>
 
-  <section class="page brk">
+  <section class="page brk" id="s4">
     <h2><span class="num">4</span>Plan de remediación</h2>
     <p>Completar responsable, fecha compromiso y estado de cada hallazgo, atendiendo primero los críticos. Las acciones que modifiquen la plataforma requieren un cambio aprobado.</p>
     <div class="scroll">{{REMEDIATION}}</div>
   </section>
 
-  <section class="page brk">
+  <section class="page brk" id="s5">
     <h2><span class="num">5</span>Anexos</h2>
     {{ANNEXES}}
   </section>
 
-  <section class="page brk">
+  <section class="page brk" id="s6">
     <h2><span class="num">6</span>Revisión y aprobación</h2>
     <p>Las firmas confirman la revisión del informe y la aceptación del plan de remediación. No implican conformidad con los hallazgos ni cierre de los mismos. Cualquier conclusión de cumplimiento normativo corresponde a Auditoría Interna, Riesgo Tecnológico y Seguridad de la Información.</p>
     <div class="signs">
@@ -266,5 +292,6 @@
     render();
   })();
 </script>
+<script>{{APP_SCRIPT}}</script>
 </body>
 </html>

@@ -77,7 +77,7 @@ Una falla en el paso de rendimiento no detiene la auditoría. Cuando no hay dato
 | Sección | Contenido |
 |---|---|
 | Portada | Entorno, alcance, fecha, responsable de la elaboración, identificador, versión y clasificación |
-| 1. Resumen ejecutivo | Síntesis, indicador por dominio, hallazgos por severidad y principales riesgos |
+| 1. Resumen ejecutivo | Índice *Contenido*, síntesis, análisis de Claude (si existe), indicador por dominio, métricas clave, evolución, hallazgos por severidad y principales riesgos (ver [Navegación del informe](/vcenter/auditoria/interpretar/#navegación-del-informe)) |
 | 2. Alcance y metodología | Fuentes, métodos (con ventana, intervalo y nivel de estadísticas de la fuente de rendimiento), cuenta y ventana, limitaciones, cobertura, matriz dominio × severidad |
 | 3. Hallazgos detallados | Ficha por hallazgo: ID, objeto, severidad, dominio, evidencia, riesgo, recomendación, verificación, referencia y fuente |
 | 4. Plan de remediación | Tabla de críticos y advertencias para completar responsable, fecha y estado |
@@ -99,6 +99,8 @@ Una falla en el paso de rendimiento no detiene la auditoría. Cuando no hay dato
     - audit.json modelo consolidado del informe (referencia)
     - meta-audit.json entorno, fecha, alcance, clústeres, usuario, versión, ventana de rendimiento (perfWindow), omisión (perfSkipped) y error (perfError)
     - vcenter-access.json
+    - fingerprint.txt huella de los hallazgos (vigencia del análisis)
+    - analysis.md análisis de Claude (opcional)
 </FileTree>
 
 ## Auditoría de seguimiento

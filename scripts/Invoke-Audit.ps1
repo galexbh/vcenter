@@ -325,15 +325,18 @@ $vmsOf = { param($f) $v = Get-Prop $f 'impact'; if ($null -ne $v) { "$v" } else 
 $top = @($byPriority | Select-Object -First 5)
 $topHtml = if ($top.Count) {
     '<table class="t"><thead><tr><th>ID</th><th>Severidad</th><th>Dominio</th><th>Objeto</th><th class="n">VMs expuestas</th><th>Riesgo</th></tr></thead><tbody>' +
-    (($top | ForEach-Object { "<tr><td>$($_.id)</td><td><span class=""sev $(Get-SeverityClass $_.severity)"">$(ConvertTo-HtmlText $_.severity)</span></td><td>$(ConvertTo-HtmlText $_.domain)</td><td>$(ConvertTo-HtmlText $_.object)</td><td class=""n"">$(& $vmsOf $_)</td><td>$(ConvertTo-HtmlText $_.risk)</td></tr>" }) -join '') + '</tbody></table>'
+    (($top | ForEach-Object { "<tr><td><a class=""aud"" href=""#$($_.id.ToLowerInvariant())"">$($_.id)</a></td><td><span class=""sev $(Get-SeverityClass $_.severity)"">$(ConvertTo-HtmlText $_.severity)</span></td><td>$(ConvertTo-HtmlText $_.domain)</td><td>$(ConvertTo-HtmlText $_.object)</td><td class=""n"">$(& $vmsOf $_)</td><td>$(ConvertTo-HtmlText $_.risk)</td></tr>" }) -join '') + '</tbody></table>'
 } else { '<p class="muted">Sin hallazgos críticos ni advertencias.</p>' }
 
-$analysis = Get-ReportAnalysis -RawDir (Join-Path $outDir 'raw')
-$analysisHtml = if ($analysis) { "<h3>$(ConvertTo-HtmlText $analysis.title)</h3><p class=""small muted"">$(ConvertTo-HtmlText $analysis.note)</p><div class=""analysis"">$(ConvertTo-SafeHtml $analysis.text)</div>" } else { '' }
+# Huella de los hallazgos puntuados: vigencia del análisis de Claude (raw/analysis.md).
+$fingerprint = Get-FindingFingerprint $scored
+Set-Content -LiteralPath (Join-Path $outDir 'raw/fingerprint.txt') $fingerprint -Encoding utf8 -NoNewline
+$analysis = Get-ReportAnalysis -RawDir (Join-Path $outDir 'raw') -Fingerprint $fingerprint
+$analysisHtml = if ($analysis) { "<h3>$(ConvertTo-HtmlText $analysis.title)</h3><p class=""small muted"">$(ConvertTo-HtmlText $analysis.note)</p>$(ConvertTo-AnalysisNoticeHtml $analysis)<div class=""analysis"">$(ConvertTo-SafeHtml $analysis.text)</div>" } else { '' }
 $keyHtml = if ($keyCards.Count) { ConvertTo-PanelHtml $keyPanel -Bare } else { '<p class="muted">Sin métricas disponibles.</p>' }
 $evoHtml = (ConvertTo-PanelHtml $evoPanel -Bare) + $(if ($newTop.Count) {
         '<h3>Hallazgos nuevos (críticos y advertencias)</h3><table class="t"><thead><tr><th>ID</th><th>Severidad</th><th>Dominio</th><th>Objeto</th></tr></thead><tbody>' +
-        (($newTop | ForEach-Object { "<tr><td>$($_.id)</td><td><span class=""sev $(Get-SeverityClass $_.severity)"">$(ConvertTo-HtmlText $_.severity)</span></td><td>$(ConvertTo-HtmlText $_.domain)</td><td>$(ConvertTo-HtmlText $_.object)</td></tr>" }) -join '') + '</tbody></table>' })
+        (($newTop | ForEach-Object { "<tr><td><a class=""aud"" href=""#$($_.id.ToLowerInvariant())"">$($_.id)</a></td><td><span class=""sev $(Get-SeverityClass $_.severity)"">$(ConvertTo-HtmlText $_.severity)</span></td><td>$(ConvertTo-HtmlText $_.domain)</td><td>$(ConvertTo-HtmlText $_.object)</td></tr>" }) -join '') + '</tbody></table>' })
 $covRows = if ($coverage.Count) { ($coverage | ForEach-Object { "<tr><td>$(ConvertTo-HtmlText $_.object)</td><td>$(ConvertTo-HtmlText $_.evidence)</td></tr>" }) -join '' } else { '<tr><td colspan="2" class="muted">Cobertura completa.</td></tr>' }
 $methodHtml = @"
 <p>La evaluación se realizó mediante consultas de <strong>solo lectura</strong> a vCenter con el cliente govc, a través del wrapper controlado del proyecto. No se ejecutaron cambios en la infraestructura. Cada consulta quedó registrada en la bitácora de auditoría.</p>
@@ -363,9 +366,9 @@ $matrixHtml = '<table class="t"><thead><tr><th>Dominio</th><th class="n">Crític
 $findHtml = if ($scored.Count) {
     ($scored | ForEach-Object {
         $refRow = if ($_.reference) { "<dt>Referencia</dt><dd>$(ConvertTo-HtmlText $_.reference)</dd>" } else { '' }
-        $cmdRow = if ($_.command) { "<dt>Verificación</dt><dd><code>$(ConvertTo-HtmlText $_.command)</code></dd>" } else { '' }
+        $cmdRow = if ($_.command) { "<dt>Verificación</dt><dd><code class=""cmd"">$(ConvertTo-HtmlText $_.command)</code></dd>" } else { '' }
         @"
-<article class="finding $(Get-SeverityClass $_.severity)">
+<article class="finding $(Get-SeverityClass $_.severity)" id="$($_.id.ToLowerInvariant())">
 <header><span class="id">$($_.id)</span><span class="obj">$(ConvertTo-HtmlText $_.object)</span><span class="sev $(Get-SeverityClass $_.severity)">$(ConvertTo-HtmlText $_.severity)</span><span class="dom">$(ConvertTo-HtmlText $_.domain) · $(ConvertTo-HtmlText $_.category)</span></header>
 <dl><dt>Evidencia</dt><dd>$(ConvertTo-HtmlText $_.evidence)</dd>$(if ($null -ne (Get-Prop $_ 'impact')) { "<dt>VMs expuestas</dt><dd>$($_.impact)</dd>" })<dt>Riesgo</dt><dd>$(ConvertTo-HtmlText $_.risk)</dd><dt>Recomendación</dt><dd>$(ConvertTo-HtmlText $_.suggestion)</dd>$cmdRow$refRow<dt>Fuente</dt><dd>$(ConvertTo-HtmlText $_.source)</dd></dl>
 </article>
@@ -374,7 +377,7 @@ $findHtml = if ($scored.Count) {
 
 $rank = 0
 $remHtml = '<table class="t"><thead><tr><th class="n">Prioridad</th><th>ID</th><th>Sev.</th><th>Objeto</th><th class="n">VMs</th><th>Acción recomendada</th><th>Responsable</th><th>Fecha compromiso</th><th>Estado</th></tr></thead><tbody>' +
-    (($byPriority | ForEach-Object { $rank++; "<tr><td class=""n"">$rank</td><td>$($_.id)</td><td><span class=""sev $(Get-SeverityClass $_.severity)"">$(ConvertTo-HtmlText $_.severity.Substring(0,1))</span></td><td>$(ConvertTo-HtmlText $_.object)</td><td class=""n"">$(& $vmsOf $_)</td><td>$(ConvertTo-HtmlText $_.suggestion)</td><td class=""blank""></td><td class=""blank""></td><td>Abierto</td></tr>" }) -join '') +
+    (($byPriority | ForEach-Object { $rank++; "<tr><td class=""n"">$rank</td><td><a class=""aud"" href=""#$($_.id.ToLowerInvariant())"">$($_.id)</a></td><td><span class=""sev $(Get-SeverityClass $_.severity)"">$(ConvertTo-HtmlText $_.severity.Substring(0,1))</span></td><td>$(ConvertTo-HtmlText $_.object)</td><td class=""n"">$(& $vmsOf $_)</td><td>$(ConvertTo-HtmlText $_.suggestion)</td><td class=""blank""></td><td class=""blank""></td><td>Abierto</td></tr>" }) -join '') +
     '</tbody></table><p class="small muted">Las observaciones informativas se incluyen en la sección 3 y pueden atenderse en el ciclo regular de mantenimiento.</p>'
 
 function KpiTable($obj, $title) {
@@ -409,6 +412,8 @@ if ('html' -in $Format) {
         EXEC_SUMMARY = (($execText | ForEach-Object { "<p>$_</p>" }) -join ''); DOMAIN_SCORES = $domainHtml; SEVERITY_COUNTS = $countHtml
         TOP_RISKS = $topHtml; ANALYSIS = $analysisHtml; KEY_METRICS = $keyHtml; EVOLUTION = $evoHtml; METHODOLOGY = $methodHtml; MATRIX = $matrixHtml; FINDINGS = $findHtml; REMEDIATION = $remHtml; ANNEXES = $annexHtml
     }
+    $app = Get-ReportScript
+    $map += @{ APP_SCRIPT = $app.text; APP_HASH = $app.hash }
     $html = Expand-Template (Get-Content (Join-Path $root 'templates/audit.html') -Raw) $map
     $f = Join-Path $outDir 'auditoria.html'; Set-Content $f $html -Encoding utf8; $written += $f
 }
@@ -422,7 +427,7 @@ if ('md' -in $Format) {
         FINDINGS       = $(if ($scored.Count) { ($scored | ForEach-Object { "### $($_.id) · $(ConvertTo-MdText $_.object)`n`n| | |`n|---|---|`n| Severidad | $($_.severity) |`n| Dominio | $($_.domain) · $($_.category) |`n| Evidencia | $(ConvertTo-MdText $_.evidence) |`n| Riesgo | $(ConvertTo-MdText $_.risk) |`n| Recomendación | $(ConvertTo-MdText $_.suggestion) |$(if ($_.command) { "`n| Verificación | $(Format-MdCode ("$($_.command)" -replace '\|', '\|')) |" })$(if ($_.reference) { "`n| Referencia | $(ConvertTo-MdText $_.reference) |" })" }) -join "`n`n" } else { 'No se identificaron hallazgos.' })
         REMEDIATION    = ("| Prioridad | ID | Severidad | Objeto | VMs | Acción | Responsable | Fecha | Estado |`n|---:|---|---|---|---:|---|---|---|---|`n" + (@($byPriority | ForEach-Object -Begin { $rk = 0 } -Process { $rk++; "| $rk | $($_.id) | $($_.severity) | $(ConvertTo-MdText $_.object) | $(& $vmsOf $_) | $(ConvertTo-MdText $_.suggestion) |  |  | Abierto |" }) -join "`n"))
         THRESHOLDS     = (Get-NoteText 'thresholds')
-        ANALYSIS       = $(if ($analysis) { "### $($analysis.title)`n`n_$(ConvertTo-MdText $analysis.note)_`n`n$(ConvertTo-SafeMd $analysis.text)`n" } else { '' })
+        ANALYSIS       = $(if ($analysis) { "$(ConvertTo-AnalysisMd $analysis '###')`n" } else { '' })
         KEY_METRICS    = $(if ($keyCards.Count) { ConvertTo-PanelMd $keyPanel -Bare } else { 'Sin métricas disponibles.' })
         EVOLUTION      = (ConvertTo-PanelMd $evoPanel -Bare) + $(if ($newTop.Count) { "`n`n**Hallazgos nuevos (críticos y advertencias)**`n`n| ID | Severidad | Dominio | Objeto |`n|---|---|---|---|`n" + (($newTop | ForEach-Object { "| $($_.id) | $($_.severity) | $($_.domain) | $(ConvertTo-MdText $_.object) |" }) -join "`n") })
         COVERAGE       = $(if ($coverage.Count) { ($coverage | ForEach-Object { "- $(ConvertTo-MdText $_.object): $(ConvertTo-MdText $_.evidence)" }) -join "`n" } else { 'Cobertura completa.' })

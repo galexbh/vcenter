@@ -279,16 +279,31 @@ function Get-ReportPriority {
 
 function Get-PriorityColumns { @('n:#', 'severity:Severidad', 'action:Acción', 'why:Motivo', 'impact:VMs expuestas', 'command:Comando para revisar') }
 
+function Get-FindingFingerprint {
+    <# Huella de un conjunto de hallazgos: 12 hex del SHA-256 de 'regla|objeto|severidad' ordenados (vigencia del análisis). #>
+    param($Findings)
+    $lines = @($Findings | Where-Object { $_ } | ForEach-Object { "$($_.rule)|$($_.object)|$($_.severity)" } | Sort-Object -CaseSensitive)
+    [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($lines -join "`n"))).Substring(0, 12).ToLowerInvariant()
+}
+
 function Get-ReportAnalysis {
     <#
     .SYNOPSIS  Análisis redactado por Claude (raw/analysis.md) como sección del reporte, o $null si no existe.
+    .PARAMETER Fingerprint  Huella actual de los hallazgos; se compara con la línea '<!-- huella: … -->' del análisis.
     .NOTES     El texto se trata como datos: Render lo escapa y solo admite un subconjunto de Markdown.
     #>
-    param([Parameter(Mandatory)][string]$RawDir)
+    param([Parameter(Mandatory)][string]$RawDir, [string]$Fingerprint)
     $f = Join-Path $RawDir 'analysis.md'
     if (-not (Test-Path -LiteralPath $f)) { return $null }
     $at = (Get-Item -LiteralPath $f).LastWriteTime.ToString('yyyy-MM-dd HH:mm')
-    New-ReportAnalysis -Title 'Análisis de Claude (IA)' -Text (Get-Content -LiteralPath $f -Raw) `
+    $text = Get-Content -LiteralPath $f -Raw
+    $status = 'unverified'
+    $m = [regex]::Match("$text", '^\s*<!--\s*huella:\s*([0-9a-fA-F]+)\s*-->[ \t]*\r?\n?')
+    if ($m.Success) {
+        $text = $text.Substring($m.Length)
+        $status = if ($Fingerprint -and $m.Groups[1].Value.ToLowerInvariant() -eq $Fingerprint) { 'ok' } else { 'stale' }
+    }
+    New-ReportAnalysis -Title 'Análisis de Claude (IA)' -Text $text -Status $status `
         -Note "Redactado por Claude el $at a partir de los datos de esta corrida; revisar antes de usarlo como evidencia."
 }
 
@@ -392,11 +407,6 @@ function Export-GovcCsv {
     )
     $sep = if ($Delimiter) { $Delimiter } else { (Get-Culture).TextInfo.ListSeparator }
     $culture = Get-Culture
-    $slug = {
-        param($t)
-        $n = $t.Normalize([Text.NormalizationForm]::FormD) -replace '\p{Mn}', ''
-        ($n.ToLowerInvariant() -replace '[^a-z0-9]+', '-').Trim('-')
-    }
     $cell = {
         param($v)
         if ($null -eq $v) { return '' }
@@ -413,7 +423,7 @@ function Export-GovcCsv {
     $written = New-Object System.Collections.Generic.List[string]
     foreach ($s in @($all | Where-Object { @($_.columns).Count })) {
         $cols = @($s.columns | ForEach-Object { , ($_ -split ':', 2) })
-        $f = Join-Path $OutDir ("$BaseName-{0}.csv" -f (& $slug $s.title))
+        $f = Join-Path $OutDir ("$BaseName-{0}.csv" -f (Get-Slug $s.title))
         $lines = New-Object System.Collections.Generic.List[string]
         $lines.Add((($cols | ForEach-Object { & $q $_[1] }) -join $sep))
         foreach ($r in @($s.rows)) { $lines.Add((($cols | ForEach-Object { & $q (& $cell (Get-CellValue $r $_[0])) }) -join $sep)) }
@@ -436,6 +446,9 @@ function Complete-Report {
         [string[]]$Format = @('html', 'md'), [int]$MdMaxRows = 200, [string]$Source = 'govc object.collect (solo lectura)', [string]$CsvDelimiter
     )
     Export-ReportFinding $Sorted (Join-Path $RawDir 'findings.json')
+    # Huella de los hallazgos: Claude la registra en analysis.md y el reporte avisa si el análisis quedó viejo.
+    $fingerprint = Get-FindingFingerprint $Sorted
+    Set-Content -LiteralPath (Join-Path $RawDir 'fingerprint.txt') $fingerprint -Encoding utf8 -NoNewline
     $Kpis | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $RawDir 'summary.json') -Encoding utf8
     # Métricas de los paneles con su valor numérico: las lee Claude, la auditoría y la evolución sin abrir el HTML.
     $metrics = @(foreach ($s in $Sections) { if ($s.PSObject.Properties['kind'] -and $s.kind -eq 'panel') {
@@ -443,7 +456,7 @@ function Complete-Report {
     ConvertTo-Json -InputObject $metrics -Depth 4 | Set-Content -LiteralPath (Join-Path $RawDir 'metrics.json') -Encoding utf8
     $Sections = @(
         New-ReportTable 'Prioridades' (Get-PriorityColumns) (Get-ReportPriority $Sorted) 'Críticos y advertencias agrupados por regla, ordenados por severidad y VMs expuestas.'
-        Get-ReportAnalysis -RawDir $RawDir
+        Get-ReportAnalysis -RawDir $RawDir -Fingerprint $fingerprint
     ) + @($Sections) | Where-Object { $_ }
     $written = New-Object System.Collections.Generic.List[string]
     $doc = @($Format | Where-Object { $_ -ne 'csv' })
@@ -458,4 +471,4 @@ function Complete-Report {
 Export-ModuleMember -Function Get-Prop, Get-FirstProp, Read-JsonFile, Save-RawJson, Assert-EnvName, Initialize-RunContext, Get-RunUser, Write-RunMeta,
     ConvertFrom-CertJson, Get-SnapshotList, Format-PsLiteral, New-ReviewCommand,
     Get-Percent, Get-Sum, Format-Percent, Get-DaysToPct, Get-FindingKey, Find-PreviousRun, Set-FindingImpact, Get-FindingScore, Get-ReportPriority,
-    Get-PriorityColumns, Get-ReportAnalysis, Get-FindingCatalog, Get-FindingText, Get-CategoryText, Get-NoteText, Add-GroupedFinding, Add-CoverageByError, Add-SeverityKpis, Export-GovcCsv, Complete-Report
+    Get-PriorityColumns, Get-FindingFingerprint, Get-ReportAnalysis, Get-FindingCatalog, Get-FindingText, Get-CategoryText, Get-NoteText, Add-GroupedFinding, Add-CoverageByError, Add-SeverityKpis, Export-GovcCsv, Complete-Report

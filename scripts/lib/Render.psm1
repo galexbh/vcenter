@@ -1,4 +1,5 @@
-# Render de reportes HTML/Markdown a partir de un modelo común (KPIs + tablas + paneles de métricas + análisis).
+# Render de reportes HTML/Markdown a partir de un modelo común (KPIs + tablas + paneles de métricas + análisis),
+# con índice, secciones plegables y el script compartido templates/report.js (hash calculado para la CSP).
 # Usado por New-Report, Invoke-HostCheck, Invoke-PerfCheck, Invoke-Audit y Compare-Report.
 # Todo texto que pueda venir de vCenter (incluidos indicadores, títulos y notas) se escapa.
 # Capa base: no depende de Common.psm1 (Common sí usa este módulo).
@@ -71,8 +72,8 @@ function New-ReportPanel {
 
 function New-ReportAnalysis {
     <# Sección de texto redactado (análisis de Claude). Sin columnas: el CSV no la exporta. #>
-    param([string]$Title, [string]$Text, [string]$Note = '')
-    [pscustomobject]@{ kind = 'analysis'; title = $Title; text = $Text; note = $Note; columns = @(); rows = @() }
+    param([string]$Title, [string]$Text, [string]$Note = '', [ValidateSet('ok', 'stale', 'unverified')][string]$Status = 'ok')
+    [pscustomobject]@{ kind = 'analysis'; title = $Title; text = $Text; note = $Note; status = $Status; columns = @(); rows = @() }
 }
 
 function Format-TextBar {
@@ -87,11 +88,13 @@ function ConvertTo-PanelHtml {
     <#
     .SYNOPSIS  Tarjetas en HTML. Solo números calculados llegan al atributo style; todo texto se escapa.
     .PARAMETER Bare  Solo las tarjetas, sin <section> ni título (para insertarlas en el informe de auditoría).
+    .PARAMETER Id    Id de la sección (destino del índice).
     #>
-    param($Panel, [switch]$Bare)
+    param($Panel, [switch]$Bare, [string]$Id)
     $sb = [System.Text.StringBuilder]::new()
     $note = if ($Panel.note) { "<p class=""note"">$(ConvertTo-HtmlText $Panel.note)</p>" } else { '' }
-    if (-not $Bare) { [void]$sb.Append("<section class=""panel""><h2>$(ConvertTo-HtmlText $Panel.title)</h2>$note") }
+    $idAttr = if ($Id) { ' id="' + $Id + '"' } else { '' }
+    if (-not $Bare) { [void]$sb.Append("<section class=""panel""$idAttr><h2>$(ConvertTo-HtmlText $Panel.title)</h2>$note") }
     # Grupos en el orden en que aparecen (Group-Object los ordenaría alfabéticamente).
     $groups = [ordered]@{}
     foreach ($c in $Panel.cards) { $k = "$($c.group)"; if (-not $groups.Contains($k)) { $groups[$k] = New-Object System.Collections.Generic.List[object] }; $groups[$k].Add($c) }
@@ -245,6 +248,113 @@ function Get-FindingColumns {
     return @('severity:Severidad', 'category:Categoría', 'object:Objeto', 'impact:VMs expuestas', 'evidence:Evidencia', 'suggestion:Sugerencia', 'command:Comando para revisar')
 }
 
+# --- Documento: piezas del HTML ------------------------------------------------------------------
+
+function Get-Slug {
+    <# Identificador ASCII en minúscula (ids de sección y nombres de los CSV). #>
+    param([string]$Text)
+    $n = "$Text".Normalize([Text.NormalizationForm]::FormD) -replace '\p{Mn}', ''
+    ($n.ToLowerInvariant() -replace '[^a-z0-9]+', '-').Trim('-')
+}
+
+$script:AppScript = $null
+
+function Get-ReportScript {
+    <#
+    .SYNOPSIS  Script compartido de los HTML (templates/report.js) y su hash para la CSP; se lee una vez por proceso.
+    .NOTES     Saltos de línea normalizados a LF: el navegador calcula el hash sobre el texto ya normalizado.
+    #>
+    if ($null -eq $script:AppScript) {
+        $f = Join-Path $PSScriptRoot '../../templates/report.js'
+        $t = if (Test-Path -LiteralPath $f) { (Get-Content -LiteralPath $f -Raw) -replace "`r`n", "`n" } else { '' }
+        $script:AppScript = [pscustomobject]@{ text = $t; hash = [Convert]::ToBase64String([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($t))) }
+    }
+    $script:AppScript
+}
+
+function Test-NumberValue { param($v) $v -is [int] -or $v -is [long] -or $v -is [double] -or $v -is [decimal] -or $v -is [single] }
+
+function ConvertTo-TableSectionHtml {
+    <#
+    .SYNOPSIS  Tabla como sección plegable (abierta salvo más de $FoldRows filas), lista para el filtro y el orden.
+    .NOTES     Columnas numéricas (todas sus celdas con valor son números) alineadas a la derecha; celdas vacías «—».
+    #>
+    param($Section, [string]$Id, [int]$FoldRows = 100)
+    $cols = @($Section.columns | ForEach-Object { , ($_ -split ':', 2) })
+    $rows = @($Section.rows)
+    $numeric = @{}
+    foreach ($c in $cols) {
+        $vals = @($rows | ForEach-Object { Get-CellValue $_ $c[0] } | Where-Object { $null -ne $_ -and "$_" -ne '' })
+        $numeric[$c[0]] = $vals.Count -gt 0 -and -not @($vals | Where-Object { -not (Test-NumberValue $_) }).Count
+    }
+    $sb = [System.Text.StringBuilder]::new()
+    $note = if ($Section.note) { "<p class=""note"">$(ConvertTo-HtmlText $Section.note)</p>" } else { '' }
+    [void]$sb.Append("<details class=""sec"" id=""$Id""$(if ($rows.Count -le $FoldRows) { ' open' })><summary><h2>$(ConvertTo-HtmlText $Section.title) <small>($($rows.Count))</small></h2></summary>$note<div class=""scroll""><table data-filter><thead><tr>")
+    foreach ($c in $cols) {
+        $attr = if ($c[0] -eq 'severity') { ' data-col="severity"' } elseif ($numeric[$c[0]]) { ' class="n"' } else { '' }
+        [void]$sb.Append("<th$attr>").Append((ConvertTo-HtmlText $c[1])).Append('</th>')
+    }
+    [void]$sb.Append('</tr></thead><tbody>')
+    if ($rows.Count) {
+        $hasSev = @($cols | Where-Object { $_[0] -eq 'severity' }).Count -gt 0
+        foreach ($r in $rows) {
+            $sev = if ($hasSev) { Get-SeverityClass "$(Get-CellValue $r 'severity')" } else { '' }
+            [void]$sb.Append($(if ($sev) { "<tr data-sev=""$sev"">" } else { '<tr>' }))
+            foreach ($c in $cols) {
+                $val = Get-CellValue $r $c[0]
+                if ($null -eq $val -or "$val" -eq '') { [void]$sb.Append('<td class="empty-cell">—</td>'); continue }
+                $t = ConvertTo-HtmlText $val
+                if ($c[0] -eq 'severity') { [void]$sb.Append("<td><span class=""sev $sev"">$t</span></td>") }
+                elseif ($c[0] -eq 'command') { [void]$sb.Append("<td><code class=""cmd"">$t</code></td>") }
+                elseif ($numeric[$c[0]]) { [void]$sb.Append("<td class=""n"">$t</td>") }
+                else { [void]$sb.Append("<td>$t</td>") }
+            }
+            [void]$sb.Append("</tr>`n")
+        }
+    } else { [void]$sb.Append("<tr><td colspan=""$($cols.Count)"" class=""empty"">Sin elementos.</td></tr>") }
+    [void]$sb.Append("</tbody></table></div></details>`n")
+    $sb.ToString()
+}
+
+function Get-AnalysisNotice {
+    <# Aviso de vigencia del análisis de Claude según su huella: { class, text } o $null si está vigente. #>
+    param($Analysis)
+    switch ("$(Get-CellValue $Analysis 'status')") {
+        'stale' { [pscustomobject]@{ class = 'ai-stale'; text = 'Análisis desactualizado: los hallazgos cambiaron desde que se redactó. Pídele a Claude que lo actualice.' } }
+        'unverified' { [pscustomobject]@{ class = 'ai-unverified'; text = 'Vigencia no verificable: el análisis no registra la huella de los hallazgos.' } }
+        default { $null }
+    }
+}
+
+function ConvertTo-AnalysisNoticeHtml {
+    param($Analysis)
+    $n = Get-AnalysisNotice $Analysis
+    if ($n) { "<p class=""$($n.class)"">$(ConvertTo-HtmlText $n.text)</p>" } else { '' }
+}
+
+function ConvertTo-AnalysisMd {
+    <# Análisis en Markdown: título (nivel indicado), nota, aviso de vigencia y texto seguro. #>
+    param($Analysis, [string]$Level = '##')
+    $n = Get-AnalysisNotice $Analysis
+    "$Level $(ConvertTo-MdText $Analysis.title)`n`n$(if ($Analysis.note) { "_$(ConvertTo-MdText $Analysis.note)_`n`n" })$(if ($n) { "> **$(ConvertTo-MdText $n.text)**`n`n" })$(ConvertTo-SafeMd $Analysis.text)"
+}
+
+function Get-AnalysisLead {
+    <# Primer párrafo de «## Diagnóstico» (o del texto, si no hay esa sección): resumen para el inicio del reporte. #>
+    param([string]$Text)
+    $lines = @((Limit-AnalysisText $Text) -split "`n")
+    $start = 0
+    for ($i = 0; $i -lt $lines.Count; $i++) { if ($lines[$i] -match '^\s*#{1,6}\s+Diagn') { $start = $i + 1; break } }
+    $para = New-Object System.Collections.Generic.List[string]
+    for ($i = $start; $i -lt $lines.Count; $i++) {
+        $l = $lines[$i]
+        if ($l -match '^\s*$') { if ($para.Count) { break } else { continue } }
+        if ($l -match '^\s*#{1,6}\s+' -or $l -match '^\s*([-*]|\d+[.)])\s+') { if ($para.Count) { break } else { continue } }
+        $para.Add($l.Trim())
+    }
+    $para -join ' '
+}
+
 # --- Documento -----------------------------------------------------------------------------------
 
 function Write-GovcReport {
@@ -269,37 +379,60 @@ function Write-GovcReport {
     $kindOf = { param($s) if ($s.PSObject.Properties['kind']) { $s.kind } else { 'table' } }
 
     if ('html' -in $Format) {
-        $kpiHtml = ($Kpis.GetEnumerator() | ForEach-Object { "<div class=""kpi""><span class=""v"">$(ConvertTo-HtmlText $_.Value)</span><span class=""l"">$(ConvertTo-HtmlText $_.Key)</span></div>" }) -join "`n"
-        $sb = [System.Text.StringBuilder]::new()
+        # Ids estables por sección (#sec-<slug>; sufijo si dos títulos coinciden).
+        $ids = New-Object System.Collections.Generic.List[string]; $used = @{}
         foreach ($s in $Sections) {
-            $kind = & $kindOf $s
-            if ($kind -eq 'panel') { [void]$sb.Append((ConvertTo-PanelHtml $s)); continue }
+            $base = "sec-$(Get-Slug $s.title)"; $id = $base; $k = 2
+            while ($used.ContainsKey($id)) { $id = "$base-$k"; $k++ }
+            $used[$id] = $true; $ids.Add($id)
+        }
+        # Sección de hallazgos: la primera tabla con Severidad que no sea Prioridades (destino de los KPIs).
+        $findIdx = -1
+        for ($i = 0; $i -lt $Sections.Count; $i++) {
+            $s = $Sections[$i]
+            if ((& $kindOf $s) -eq 'table' -and $s.title -ne 'Prioridades' -and @($s.columns | Where-Object { $_ -like 'severity:*' }).Count) { $findIdx = $i; break }
+        }
+        $findId = if ($findIdx -ge 0) { $ids[$findIdx] } else { $null }
+        $sevCount = { param($rows, $sev) @($rows | Where-Object { (Get-CellValue $_ 'severity') -eq $sev }).Count }
+
+        $kpiClass = @{ 'Críticos' = 'crit'; 'Advertencias' = 'warn'; 'Sin cobertura' = 'info' }
+        $kpiHtml = ($Kpis.GetEnumerator() | ForEach-Object {
+                $cls = $kpiClass["$($_.Key)"]; $inner = "<span class=""v"">$(ConvertTo-HtmlText $_.Value)</span><span class=""l"">$(ConvertTo-HtmlText $_.Key)</span>"
+                if ($findId -and $cls -in 'crit', 'warn') { "<a class=""kpi $cls"" href=""#$findId"" data-sev=""$cls"">$inner</a>" }
+                else { "<div class=""kpi$(if ($cls) { " $cls" })"">$inner</div>" }
+            }) -join "`n"
+
+        $toc = [System.Text.StringBuilder]::new('<nav class="toc" aria-label="Contenido">')
+        $sb = [System.Text.StringBuilder]::new()
+        $aiSummary = ''
+        for ($i = 0; $i -lt $Sections.Count; $i++) {
+            $s = $Sections[$i]; $kind = & $kindOf $s; $id = $ids[$i]
+            $cnt = if ($kind -eq 'table') { " <span class=""cnt"">$($s.rows.Count)</span>" } else { '' }
+            $badges = if ($i -eq $findIdx) {
+                (@(@('Crítico', 'crit'), @('Advertencia', 'warn')) | ForEach-Object { $n = & $sevCount $s.rows $_[0]; if ($n) { "<span class=""b $($_[1])"">$n</span>" } }) -join ''
+            } else { '' }
+            [void]$toc.Append("<a href=""#$id"">$(ConvertTo-HtmlText $s.title)$cnt$(if ($badges) { " $badges" })</a>")
+            if ($kind -eq 'panel') { [void]$sb.Append((ConvertTo-PanelHtml $s -Id $id)); continue }
             if ($kind -eq 'analysis') {
                 $note = if ($s.note) { "<p class=""note"">$(ConvertTo-HtmlText $s.note)</p>" } else { '' }
-                [void]$sb.Append("<section class=""analysis""><h2>$(ConvertTo-HtmlText $s.title)</h2>$note$(ConvertTo-SafeHtml $s.text)</section>`n"); continue
-            }
-            $cols = @($s.columns | ForEach-Object { , ($_ -split ':', 2) })
-            $note = if ($s.note) { "<p class=""note"">$(ConvertTo-HtmlText $s.note)</p>" } else { '' }
-            [void]$sb.Append("<section><h2>$(ConvertTo-HtmlText $s.title) <small>($($s.rows.Count))</small></h2>$note<div class=""scroll""><table><thead><tr>")
-            foreach ($c in $cols) { [void]$sb.Append('<th>').Append((ConvertTo-HtmlText $c[1])).Append('</th>') }
-            [void]$sb.Append('</tr></thead><tbody>')
-            if ($s.rows.Count) {
-                foreach ($r in $s.rows) {
-                    [void]$sb.Append('<tr>')
-                    foreach ($c in $cols) {
-                        $val = Get-CellValue $r $c[0]; $t = ConvertTo-HtmlText $val
-                        if ($c[0] -eq 'severity') { [void]$sb.Append("<td><span class=""sev $(Get-SeverityClass "$val")"">$t</span></td>") }
-                        elseif ($c[0] -eq 'command' -and $val) { [void]$sb.Append("<td><code>$t</code></td>") }
-                        else { [void]$sb.Append("<td>$t</td>") }
-                    }
-                    [void]$sb.Append("</tr>`n")
+                $notice = ConvertTo-AnalysisNoticeHtml $s
+                [void]$sb.Append("<section class=""analysis"" id=""$id""><h2>$(ConvertTo-HtmlText $s.title)</h2>$note$notice$(ConvertTo-SafeHtml $s.text)</section>`n")
+                $lead = Get-AnalysisLead $s.text
+                if ($lead) {
+                    $aiSummary = "<aside class=""ai-summary"" aria-label=""Resumen de Claude""><div class=""ai-head""><span class=""ai-tag"">IA</span> Resumen de Claude</div>" +
+                        "$(ConvertTo-SafeHtml $lead)$notice<a href=""#$id"">Ver análisis completo</a></aside>"
                 }
-            } else { [void]$sb.Append("<tr><td colspan=""$($cols.Count)"" class=""empty"">Sin elementos.</td></tr>") }
-            [void]$sb.Append("</tbody></table></div></section>`n")
+                continue
+            }
+            [void]$sb.Append((ConvertTo-TableSectionHtml $s $id))
         }
+        [void]$toc.Append('</nav>')
+        $app = Get-ReportScript
         $html = Expand-Template (Get-Content (Join-Path $Root 'templates/report.html') -Raw) @{
             TITLE = (ConvertTo-HtmlText $Title); ENV = (ConvertTo-HtmlText $Env.ToUpper()); GENERATED = $stamp; SOURCE = (ConvertTo-HtmlText $Source)
-            KPIS = $kpiHtml; SECTIONS = $sb.ToString()
+            ENV_CLASS = $(if ($Env -match '^(prod|dr)') { 'env-prod' } else { '' })
+            KPIS = $kpiHtml; TOC = $toc.ToString(); AI_SUMMARY = $aiSummary; SECTIONS = $sb.ToString()
+            APP_SCRIPT = $app.text; APP_HASH = $app.hash
         }
         $f = Join-Path $OutDir "$BaseName.html"; Set-Content -LiteralPath $f $html -Encoding utf8; $written.Add($f)
     }
@@ -308,7 +441,7 @@ function Write-GovcReport {
         $secMd = foreach ($s in $Sections) {
             $kind = & $kindOf $s
             if ($kind -eq 'panel') { ConvertTo-PanelMd $s; continue }
-            if ($kind -eq 'analysis') { "## $(ConvertTo-MdText $s.title)`n`n$(if ($s.note) { "_$(ConvertTo-MdText $s.note)_`n`n" })$(ConvertTo-SafeMd $s.text)"; continue }
+            if ($kind -eq 'analysis') { ConvertTo-AnalysisMd $s; continue }
             $cols = @($s.columns | ForEach-Object { , ($_ -split ':', 2) })
             $lines = New-Object System.Collections.Generic.List[string]
             $lines.Add("## $(ConvertTo-MdText $s.title) ($($s.rows.Count))"); $lines.Add('')
@@ -332,7 +465,8 @@ function Write-GovcReport {
     return , $written.ToArray()
 }
 
-Export-ModuleMember -Function Get-SeverityRank, Get-SeverityClass, ConvertTo-MdText, ConvertTo-HtmlText, Get-CellValue,
+Export-ModuleMember -Function Get-SeverityRank, Get-SeverityClass, ConvertTo-MdText, ConvertTo-HtmlText, Get-CellValue, Get-Slug, Get-ReportScript,
+    ConvertTo-TableSectionHtml, Get-AnalysisNotice, ConvertTo-AnalysisNoticeHtml, ConvertTo-AnalysisMd, Get-AnalysisLead,
     New-ReportTable, New-PanelCard, Get-MetricLevel, New-ReportPanel, New-ReportAnalysis, Format-TextBar, ConvertTo-PanelHtml, ConvertTo-PanelMd,
     ConvertTo-SafeHtml, ConvertTo-SafeMd, New-FindingList, Add-ReportFinding, Export-ReportFinding, Sort-ReportFinding, Get-FindingColumns,
     Write-GovcReport, Expand-Template, Format-MdCode
