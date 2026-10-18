@@ -26,7 +26,11 @@ sidebar:
 | Ejecutar comandos codificados (`-EncodedCommand`, Base64 + `Invoke-Expression`) | Hook de comandos |
 | Ejecutar `Set-GovcCredential.ps1` | Hook, permisos y el propio script |
 | Ejecutar `task credential`, `credential:list` o `credential:remove` | Precondición de cada tarea y el propio script |
-| `govc env`, `-debug`, `vm.console` | Hook y wrapper (clase `secret`) |
+| `govc env`, `vm.console`, `session.login`; flags de volcado (`-debug`, `-trace`, `-verbose`, `-dump-cookie`, `-persist-session`) | Hook y wrapper (clase `secret`) |
+| Redirigir la conexión para que la credencial del wrapper llegue a otro endpoint o con otra validación TLS (`-u`, `-k`, `-insecure`, `-tls-ca-certs`, `-tls-known-hosts`, `-cert`, `-key`, `-vim-version`, `-vim-namespace`), también dentro de `host.esxcli` | Hook y wrapper (clase `secret`) |
+| Operar en el SO invitado con credenciales del guest (`guest.*`, `-l usuario:clave`) | Hook y wrapper (clase `secret`); `-l` se enmascara en la bitácora |
+| Alterar la conexión con variables `GOVC_*` o `GOVMOMI_*` definidas en la sesión | El wrapper las elimina del entorno del proceso de govc antes de ejecutarlo |
+| Ejecutar `cmdkey` | Permisos (`deny` en PowerShell y Bash) y hook |
 | Leer `~/.govmomi/**` | Permisos y hook |
 | Leer o manipular la sesión efímera del modo lote | Hook (comandos, archivos y lecturas) |
 | Modificar el módulo de credenciales o el wrapper | Permisos (bloqueo y aprobación, respectivamente) |

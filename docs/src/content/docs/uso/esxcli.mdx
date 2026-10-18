@@ -58,6 +58,9 @@ Los flags de govc (`-json`, `-host`) preceden al comando esxcli; las opciones de
 | Cualquier otro (`set`, `add`, `remove`, `install`, `enable`…) | destructive | Bloqueada: la ejecuta una persona con cambio aprobado | Requiere aprobación |
 | `system settings encryption …`, `system account` (excepto `list`) | secret | Bloqueada | Bloqueada |
 | Sin verbo identificable | destructive | Bloqueada | Requiere aprobación |
+| Con flags de volcado o de conexión de govc (`-debug`, `-trace`, `-u`, `-k`, `-tls-ca-certs`…), antes o después del comando esxcli | secret | Bloqueada | Bloqueada |
+
+En la bitácora, `-p` se enmascara solo dentro de `host.esxcli` (por ejemplo, en `system account`), donde es una contraseña; en otros subcomandos de govc, como `find -p`, no lo es.
 
 ## Consultas de lectura por área
 
@@ -92,15 +95,24 @@ Los valores de `-Hosts` deben coincidir con el nombre exacto del host en el inve
 | `nics` | `network nic list` | NIC habilitada sin enlace · velocidad o MTU distintas entre hosts | Advertencia |
 | `paths` | `storage core path list` | Path inactivo (*dead*) | Crítico |
 | `paths` | | Dispositivo compartido (FC, iSCSI, FCoE, NVMe-oF) con un único path | Advertencia |
-| `ntp` | `system ntp get` | NTP deshabilitado · servidores distintos en el clúster | Advertencia |
+| `ntp` | vCenter: servicio `ntpd` (`config.service`) y servidores (`config.dateTimeInfo.ntpConfig`) | NTP deshabilitado (servicio `ntpd` detenido) · servidores distintos en el clúster | Advertencia |
 | `syslog` | `system syslog config get` | Sin syslog remoto | Advertencia |
 | `coredump` | `system coredump network get` | Sin coredump por red | Info |
-| `platform` | `hardware platform get` | Modelos distintos en el clúster | Info |
-| `services` | `host.service.ls` | SSH o ESXi Shell en ejecución | Advertencia |
-| `certs` | `host.cert.info` | Certificado vencido o próximo a vencer | Crítico / Advertencia |
+| `platform` | vCenter: `summary.hardware.vendor` y `summary.hardware.model` | Modelos distintos en el clúster | Info |
+| `services` | vCenter: `config.service` | SSH o ESXi Shell en ejecución | Advertencia |
+| `certs` | vCenter: `config.certificate` | Certificado vencido o próximo a vencer | Crítico / Advertencia |
 | — | — | Host desconectado o sin permisos para un chequeo | Info (Cobertura) |
 
-La revisión se ejecuta en secuencia, con una consulta por host y chequeo; en clústeres grandes se recomienda filtrar por clúster. El resultado se guarda en `reports/<env>/<marca>/hosts-check.{html,md}` y en `raw/esxcli-*.json`.
+Siguiendo el criterio anterior, plataforma, servicios, NTP y certificados se obtienen de **una sola** consulta `object.collect` de hosts, la misma que trae la lista de hosts. esxcli se usa solo para lo que vCenter no conoce (VIBs, NIC, paths, syslog y coredump), en un único lote y ordenado alternando hosts, para no concentrar la carga en uno. Con 21 hosts, la revisión completa pasó de 189 a 105 consultas esxcli.
+
+:::note[Matices frente a esxcli]
+- **NTP:** se considera habilitado cuando el servicio `ntpd` está en ejecución. Un host con NTP configurado pero el servicio detenido se informa como `NTP deshabilitado (servicio ntpd detenido)`.
+- **Certificado:** el dato de vCenter no incluye el campo `status` que entrega `host.cert.info`; la evaluación se basa en la fecha de vencimiento.
+
+El formato de `raw/` no cambió: `-FromRaw` sobre corridas anteriores sigue funcionando.
+:::
+
+En clústeres grandes se recomienda filtrar por clúster. El resultado se guarda en `reports/<env>/<marca>/hosts-check.{html,md}` (con `-Format csv`, un archivo `hosts-check-<tabla>.csv` por tabla) y en `raw/esxcli-*.json`.
 
 :::caution[Permisos]
 La lectura de la configuración de hosts mediante esxcli puede requerir privilegios adicionales para la cuenta de reportes. Si un chequeo devuelve `NoPermission`, se registra como hallazgo de **Cobertura**; los privilegios deben validarse con el área que administra los roles de vCenter.

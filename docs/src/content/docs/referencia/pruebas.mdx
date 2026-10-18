@@ -9,8 +9,8 @@ El proyecto incluye dos baterías de pruebas que se ejecutan sin contactar vCent
 
 | Batería | Comando | Atajo | Verifica |
 |---|---|---|---|
-| Guardas | `./scripts/Test-Guards.ps1` | `task test:guards` | Clasificación de subcomandos y decisiones del hook para comandos, archivos y lecturas |
-| Reportes | `./scripts/Test-Reports.ps1` | `task test:reports` | Reportes, CSV, revisión de hosts, revisión de rendimiento, auditoría y tendencias sobre datos de demostración |
+| Guardas | `./scripts/Test-Guards.ps1 [-Strict]` | `task test:guards` (`task test:guards -- -Strict`) | Clasificación de subcomandos, enmascaramiento en la bitácora, decisiones del hook para comandos, archivos y lecturas, y equivalencia del filtro `pre-guard.sh`. 211 verificaciones, unos 18 s |
+| Reportes | `./scripts/Test-Reports.ps1` | `task test:reports` | Reportes, CSV, revisión de hosts, revisión de rendimiento, auditoría, tendencias y bitácora sobre datos de demostración, más pruebas unitarias de funciones compartidas. 145 verificaciones |
 
 `task test` ejecuta ambas baterías y `task test:log` verifica la integridad de la bitácora (`Test-AuditLog.ps1`). Ver [Atajos con Task](/vcenter/uso/taskfile/).
 
@@ -24,13 +24,21 @@ Evalúa las guardas con los perfiles de `config/environments.example.json` (`lab
 
 | Grupo | Verificaciones |
 |---|---|
-| Clasificador | Clase (`read`, `write`, `destructive`, `secret`) de subcomandos representativos, incluidos `host.esxcli` por verbo, `find -p`, `-debug`, `env` y opciones de contraseña. Las consultas de métricas (`metric.sample`, `metric.interval.info`, `metric.info`, `metric.ls`) son lectura; los cambios de intervalos o niveles (`metric.interval.change`, `metric.change`, `metric.reset`) son escritura, y `metric.sample -debug` es `secret` |
-| Hook: comandos | Decisión (`allow`, `ask`, `deny` o sin decisión) para lecturas, escrituras y destructivos según el modo; comandos encadenados o con redirección; entorno desconocido; govc directo; variables de contraseña; acceso a la bóveda; incorporación a git de `reports/`, `logs/` y `config/environments.json` |
-| Hook: archivos y bitácora | Contenido de Write, Edit y MultiEdit que accede a la bóveda o define variables de contraseña; modificación de `logs/`; comandos codificados |
+| Clasificador | Clase (`read`, `write`, `destructive`, `secret`) de subcomandos representativos, incluidos `host.esxcli` por verbo, `find -p`, `-debug`, `env` y opciones de contraseña; flags de volcado y de conexión (`-persist-session`, `-tls-ca-certs`, `-trace` dentro de `host.esxcli`…); `guest.*` como `secret`; `vm.question` como lectura y con `-answer` como escritura. Las consultas de métricas (`metric.sample`, `metric.interval.info`, `metric.info`, `metric.ls`) son lectura; los cambios de intervalos o niveles (`metric.interval.change`, `metric.change`, `metric.reset`) son escritura, y `metric.sample -debug` es `secret` |
+| Enmascaramiento | `Protect-GovcArgs`: `-p` solo dentro de `host.esxcli`, `-l` solo en `guest.*`, `find -p` sin enmascarar |
+| Hook: comandos | Decisión (`allow`, `ask`, `deny` o sin decisión) para lecturas, escrituras y destructivos según el modo; comandos encadenados o con redirección; entorno desconocido; govc directo (también desde Monitor); variables de contraseña; acceso a la bóveda; `Import-Module ./scripts/lib/GovcJson.psm1` con `ConvertFrom-GovcCollect` (`allow`) frente a otros módulos (sin decisión); incorporación a git de `reports/`, `logs/` y `config/environments.json` |
+| Hook: archivos y bitácora | Contenido de Write, Edit y NotebookEdit que accede a la bóveda o define variables de contraseña; modificación de `logs/`; comandos codificados |
 | Hook: sesión | Modo `-Batch` (requiere aprobación), acceso a la sesión efímera del lote y lecturas (Read, Glob) de sus carpetas |
+| Filtro rápido | Cada caso de Bash, PowerShell, Monitor, Write, Edit y NotebookEdit se evalúa también a través de `pre-guard.sh`, que debe dar la misma decisión que `govc-guard.ps1` directo |
 | Guarda de lecturas | Casos de `read-guard.sh` para Read, Glob y Grep; se omiten con un aviso si `read-guard.sh` o `sh` no están disponibles |
 
-Los grupos de archivos y de sesión se detectan por capacidad: con un hook anterior que no los incluye, se omiten con un aviso en lugar de fallar.
+Los casos se ejecutan en paralelo (unos 18 s, frente a unos 50 s en la versión 1.7). El script restablece al terminar la variable `GOVC_GUARD_CONFIG` que utiliza durante las pruebas.
+
+Los grupos de archivos y de sesión se detectan por capacidad: con un hook anterior que no los incluye, se omiten con un aviso en lugar de fallar. Lo mismo ocurre con el filtro rápido y la guarda de lecturas si falta `sh`. Con `-Strict`, cada grupo omitido cuenta como falla; se recomienda en integración continua y antes de instalar guardas nuevas:
+
+```powershell
+./scripts/Test-Guards.ps1 -Strict
+```
 
 Con `-HookPath` se prueba una copia alternativa del hook, por ejemplo una versión preparada para revisión antes de instalarla en `.claude/hooks/`:
 
@@ -44,15 +52,17 @@ Genera un entorno ficticio con `New-DemoData.ps1 -EdgeCases` en una carpeta temp
 
 | Área | Verificaciones |
 |---|---|
-| `New-Report.ps1` | Presencia y severidad de cada regla, incluidas holgura N+1, control de admisión de HA, balloon, swap, memoria comprimida y límites de resource pools; N+1 solo en el clúster sin holgura; `rp-limit` no evalúa el pool raíz `Resources`; código de regla en todos los hallazgos; indicadores; marcadores de plantilla reemplazados; marcadores presentes en los datos que se muestran literales y no se expanden; codificación de HTML; selector de tema; política CSP con `default-src 'none'` y hashes válidos de los scripts (reporte y plantilla de auditoría); escape de Markdown; comando con comilla invertida bien delimitado; ausencia de filas vacías; VM sin host; con `-SkipDeviceScan`, hallazgo de cobertura `coverage-devices` y sin evaluación de ISO |
+| `New-Report.ps1` | Presencia y severidad de cada regla, incluidas holgura N+1, control de admisión de HA, balloon, swap, memoria comprimida y límites de resource pools; reglas estables `snap-age`, `alarm` y `license` con el nombre en el objeto (`VM / snapshot`, `entidad / alarma`); cadena de 8 snapshots completa; comandos sugeridos por referencia `Tipo:id`, sin nombres con comillas; N+1 solo en el clúster sin holgura; `rp-limit` no evalúa el pool raíz `Resources`; código de regla en todos los hallazgos; indicadores; marcadores de plantilla reemplazados; marcadores presentes en los datos que se muestran literales y no se expanden; codificación de HTML; selector de tema; política CSP con `default-src 'none'` y hashes válidos de los scripts (reporte y plantilla de auditoría); escape de Markdown; comando con comilla invertida bien delimitado; ausencia de filas vacías; VM sin host; con `-SkipDeviceScan`, hallazgo de cobertura `coverage-devices` y sin evaluación de ISO |
+| Funciones compartidas | `Format-MdCode` (delimitador más largo que la racha de comillas invertidas); `Format-PsLiteral` (comilla simple y comillas tipográficas); `New-ReviewCommand` (tokens simples sin comillas, texto riesgoso entre comillas); `ConvertFrom-CertJson` (comillas escapadas y `\uXXXX`); flujo de documentos de `object.collect` (`ConvertFrom-GovcCollect`); mensajes de error del lote (`Get-GovcBatchError`); `Save-RawJson` con 12 niveles sin truncar |
 | CSV | BOM UTF-8; separador regional; neutralización de fórmulas; comillas escapadas; lectura con `Import-Csv`; un archivo por tabla |
 | `Invoke-HostCheck.ps1` | Presencia y severidad de las reglas de hosts; exclusión de discos locales; cobertura agrupada por chequeo |
-| `Invoke-PerfCheck.ps1` | Presencia y severidad de las reglas de rendimiento y de cobertura; hallazgos solo en las categorías Rendimiento y Cobertura; un hallazgo de latencia por datastore; host sin métricas no evaluado; `-FromRaw` aplica umbrales nuevos; estadísticas que descartan las muestras `-1` y serie sin muestras válidas tratada como sin datos; interpretación de la salida de `metric.sample` como objeto raíz o como arreglo, con nombres en mayúscula o minúscula |
-| `Invoke-Audit.ps1` | Identificadores consecutivos; indicadores según la fórmula; dominio y riesgo en cada hallazgo; cobertura fuera del puntaje; secciones del informe; marcadores de plantilla reemplazados; marcadores presentes en los datos que no se expanden (HTML y Markdown); codificación de contenido de vCenter; filtro por alcance; dominio Rendimiento puntuado y fuente de rendimiento en la metodología; `-Scope performance` limitado a Capacidad y Rendimiento; auditoría sin `perf/` con el dominio Rendimiento sin puntuar y declarado como cobertura (`coverage-perf`) |
-| `Compare-Report.ps1` | VM nueva, eliminada y renombrada; hallazgo resuelto; crecimiento de datastore; secciones vacías sin filas |
+| `Invoke-PerfCheck.ps1` | Presencia y severidad de las reglas de rendimiento y de cobertura; hallazgos solo en las categorías Rendimiento y Cobertura; un hallazgo de latencia por datastore; host sin métricas no evaluado; `-FromRaw` aplica umbrales nuevos; niveles de estadísticas leídos del texto de `metric.interval.info`; estadísticas que descartan las muestras `-1` y serie sin muestras válidas tratada como sin datos; interpretación de la salida de `metric.sample` como objeto raíz o como arreglo, con nombres en mayúscula o minúscula |
+| `Invoke-Audit.ps1` | Identificadores consecutivos; clave estable `key` de 12 caracteres hexadecimales en cada hallazgo; indicadores según la fórmula; dominio y riesgo en cada hallazgo; cobertura fuera del puntaje; secciones del informe; marcadores de plantilla reemplazados; marcadores presentes en los datos que no se expanden (HTML y Markdown); codificación de contenido de vCenter; filtro por alcance; dominio Rendimiento puntuado y fuente de rendimiento en la metodología; `-Scope performance` limitado a Capacidad y Rendimiento; auditoría sin `perf/` con el dominio Rendimiento sin puntuar y declarado como cobertura (`coverage-perf`) |
+| `Compare-Report.ps1` | VM nueva, eliminada y renombrada; hallazgo resuelto; claves anteriores a 1.8 (`snap-age-<snapshot>`) traducidas, sin falsos hallazgos nuevos o resueltos; crecimiento de datastore; secciones vacías sin filas |
+| `Test-AuditLog.ps1` | Una cadena de tres líneas íntegra termina con código 0 y una línea editada se detecta con código 1 |
 | Wrapper | Un lote con un comando no lectura se rechaza (código de salida 3) y un lote con formato anidado se rechaza (código de salida 2); requiere `config/environments.json` |
 
-Los casos límite incluidos (`-EdgeCases`) son: una VM sin host asignado, un nombre que empieza con `=`, textos con `|`, `[]`, `<script>` y saltos de línea, marcadores de plantilla (`{{ANNEXES}}`, `{{SECTIONS}}`, `{{REMEDIATION}}`) en nombres y textos, un nombre de VM con comilla invertida, un chequeo de host sin permisos en dos hosts y, en rendimiento, un host sin métricas y una consulta de métricas rechazada por falta de permisos.
+Los casos límite incluidos (`-EdgeCases`) son: una VM sin host asignado, un nombre que empieza con `=`, textos con `|`, `[]`, `<script>` y saltos de línea, marcadores de plantilla (`{{ANNEXES}}`, `{{SECTIONS}}`, `{{REMEDIATION}}`) en nombres y textos, un nombre de VM con comilla invertida, un nombre de VM con comilla simple y comilla tipográfica, una VM con una cadena de 8 snapshots, un chequeo de host sin permisos en dos hosts y, en rendimiento, un host sin métricas y una consulta de métricas rechazada por falta de permisos.
 
 ## Datos de demostración
 

@@ -14,10 +14,13 @@ sidebar:
 | `read` | Lista explícita o sufijos `.info`, `.ls`, `.tree` | `about`, `ls`, `find`, `object.collect`, `events`, `tasks`, `metric.sample`, `vm.info`, `snapshot.tree` |
 | `write` | Cualquier otra | `vm.clone`, `vm.create`, `vm.change`, `vm.power -on`, `snapshot.create`, `tags.attach`, `folder.create` |
 | `destructive` | Lista explícita o verbo final `destroy`, `rm`, `remove`, `delete`, `unregister`, `shutdown`, `reboot`, `revert`, `disconnect`, `detach`, `erase`, `purge` | `vm.destroy`, `snapshot.remove`, `datastore.rm`, `host.maintenance.enter`, `vm.power -off/-s/-r/-reset/-suspend` |
-| `secret` | Expone credenciales o sesión | `env`, `vm.console`, `session.login`, flags `-debug`, `-password` |
+| `secret` | Expone credenciales o sesión, o redirige la conexión | `env`, `vm.console`, `session.login`, `sso.service.ls`, todo `guest.*`, flags de volcado o de conexión (ver abajo) |
 
 Reglas particulares:
 
+- **Flags secretos, en cualquier subcomando (incluido `host.esxcli`):** `-password`, `-debug`, `-dump-cookie`, `-trace`, `-verbose`, `-persist-session` y los que cambian la conexión: `-u`, `-k`, `-insecure`, `-tls-ca-certs`, `-tls-known-hosts`, `-cert`, `-key`, `-vim-version` y `-vim-namespace`. Con ellos, la credencial del wrapper podría enviarse a otro endpoint o con otra validación de certificados, o quedar en un volcado de tráfico; la conexión la define siempre el perfil.
+- `guest.*` es `secret`: opera dentro del sistema operativo invitado con credenciales del guest (`-l usuario:clave`).
+- `vm.question` es `read`; con `-answer` es `write`, porque responde la pregunta pendiente de la VM y cambia su estado.
 - `vm.power` es `write` únicamente con `-on`; cualquier otra combinación es `destructive`.
 - `host.esxcli` se clasifica por el verbo del comando esxcli: `list` y `get` son `read`; cualquier otro, `destructive`; `system settings encryption` es `secret`. Ver [esxcli vía govc](/vcenter/uso/esxcli/).
 
@@ -27,12 +30,18 @@ Prevalece siempre la decisión más restrictiva.
 
 `.claude/settings.json` registra dos entradas `PreToolUse`:
 
-| Matcher | Hook | Intérprete | Tiempo máximo |
-|---|---|---|---|
-| `Bash\|PowerShell\|Write\|Edit\|MultiEdit\|NotebookEdit` | `.claude/hooks/govc-guard.ps1` | `pwsh` | 20 s |
-| `Read\|Glob\|Grep` | `.claude/hooks/read-guard.sh` | `sh` | 10 s |
+| Matcher | Hook | Intérprete | Tiempo máximo | Ante falla |
+|---|---|---|---|---|
+| `Bash\|PowerShell\|Monitor\|Write\|Edit\|NotebookEdit` | `.claude/hooks/pre-guard.sh` → `.claude/hooks/govc-guard.ps1` | `sh` y `pwsh` | 30 s | Bloquea |
+| `Read\|Glob\|Grep` | `.claude/hooks/read-guard.sh` | `sh` | 10 s | Bloquea |
 
-### Comandos (Bash y PowerShell)
+Ambas entradas declaran `"onFailure": "block"` (requiere Claude Code 2.1.295 o posterior): si el hook falla, no encuentra su intérprete o supera el tiempo máximo, la llamada se bloquea en lugar de continuar sin control.
+
+### Filtro rápido (`pre-guard.sh`)
+
+Iniciar PowerShell cuesta unos 0,6 s por llamada. `pre-guard.sh` revisa primero el texto de la llamada y solo inicia `govc-guard.ps1` si contiene alguna palabra relevante: `govc`, `govmomi`, `password`, `cred`, `vault`, `cmdkey`, `pwsh`, `powershell`, `base64`, `logs`, `git`, `environments`, el nombre de la API de la bóveda de Windows o una comilla invertida (PowerShell elimina escapes como ``g`ovc`` antes de que la guarda lea el texto). Toda decisión de `govc-guard.ps1` (`deny`, `ask` o `allow`) exige alguna de esas palabras; sin ellas, la guarda saldría sin decidir, y el filtro sale igual sin iniciar PowerShell. `Test-Guards.ps1` comprueba que ambos caminos den la misma decisión en todos los casos.
+
+### Comandos (Bash, PowerShell y Monitor)
 
 | Situación | Decisión |
 |---|---|
@@ -46,9 +55,21 @@ Prevalece siempre la decisión más restrictiva.
 | Solo lecturas con el wrapper y cmdlets de transformación, en PowerShell | `allow` |
 | Lectura combinada con otros comandos, redirecciones o llamadas a métodos | Flujo normal de permisos |
 
-Cmdlets de transformación admitidos para la aprobación automática: `ConvertFrom-Json`, `ConvertTo-Json`, `Select-Object`, `Where-Object`, `Sort-Object`, `Group-Object`, `Measure-Object`, `Format-Table`, `Format-List`, `Out-String`, `Select-String` y `ForEach-Object`. Los comandos contenidos en sus bloques también se validan.
+Cmdlets de transformación admitidos para la aprobación automática: `ConvertFrom-Json`, `ConvertTo-Json`, `Select-Object`, `Where-Object`, `Sort-Object`, `Group-Object`, `Measure-Object`, `Format-Table`, `Format-List`, `Out-String`, `Select-String`, `ForEach-Object` y `ConvertFrom-GovcCollect`. También se admite `Import-Module ./scripts/lib/GovcJson.psm1`, solo con esa ruta literal y, opcionalmente, `-Force`. Los comandos contenidos en sus bloques también se validan.
 
-### Archivos (Write, Edit, MultiEdit y NotebookEdit)
+### Permisos de `.claude/settings.json`
+
+Además de los hooks, las reglas de permisos establecen:
+
+| Tipo | Reglas |
+|---|---|
+| `allow` | Scripts de reportes, auditoría, tendencias, demo y pruebas, y `npm --prefix docs run build` |
+| `ask` | Editar `scripts/govc.ps1`, `config/environments.json`, `.claude/skills/**`, `.claude/commands/**` y `.githooks/**`; ejecutar `New-Report.ps1`, `Invoke-HostCheck.ps1`, `Invoke-PerfCheck.ps1`, `Compare-Report.ps1` o `New-DemoData.ps1` con `-OutDir`, que puede escribir fuera de `reports/` |
+| `deny` | Editar `logs/**`, `scripts/lib/**`, `.claude/hooks/**` y `.claude/settings.json`; leer las sesiones guardadas de govmomi; `cmdkey` (en PowerShell y Bash) y el script de registro de credenciales; `git add -f` |
+
+Las reglas `Edit(ruta)` también cubren la herramienta Write (Claude Code solo consulta reglas `Edit` para escrituras de archivos), por lo que no se declaran reglas `Write(ruta)`. `disableSkillShellExecution` impide que las skills ejecuten comandos de shell al cargarse.
+
+### Archivos (Write, Edit y NotebookEdit)
 
 El hook revisa el contenido que Claude escribe y bloquea cualquier archivo que acceda a la bóveda de credenciales o defina la contraseña de govc. Así se evita que el control de comandos se eluda mediante un script nuevo.
 
@@ -71,10 +92,11 @@ Claude no puede modificar `scripts/lib/`, `.claude/hooks/` ni `.claude/settings.
 ## Pruebas
 
 ```powershell
-./scripts/Test-Guards.ps1   # o bien: task test:guards
+./scripts/Test-Guards.ps1           # o bien: task test:guards
+./scripts/Test-Guards.ps1 -Strict   # o bien: task test:guards -- -Strict
 ```
 
-El script ejecuta los casos de clasificación y del hook contra `config/environments.example.json`, sin contactar vCenter. Debe agregarse un caso por cada regla nueva o modificada.
+El script ejecuta los casos de clasificación y del hook contra `config/environments.example.json`, sin contactar vCenter, y comprueba que `pre-guard.sh` y `govc-guard.ps1` tomen la misma decisión. Con `-Strict`, un grupo de casos omitido (por ejemplo, porque falta `sh` o se prueba un hook anterior) cuenta como falla; se recomienda antes de instalar guardas nuevas. Debe agregarse un caso por cada regla nueva o modificada.
 
 :::tip
 Cuando una guarda bloquea una acción legítima, Claude explica el motivo y entrega el comando para que lo ejecute una persona. No intenta eludir el control.

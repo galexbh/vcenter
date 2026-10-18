@@ -27,7 +27,7 @@ La auditoría técnica consolida en un único informe formal el estado de **disp
 | `capacity` | Capacidad, Disponibilidad |
 | `performance` | Capacidad, Rendimiento |
 
-`-Scope` selecciona los dominios que se puntúan e incluyen en el informe; la recolección ejecuta todas las fuentes. `-Cluster` limita la revisión de hosts y la de rendimiento.
+`-Scope` selecciona los dominios que se puntúan e incluyen en el informe; la recolección ejecuta todas las fuentes. `-Cluster` limita la revisión de hosts y la de rendimiento; el inventario y la capacidad corresponden siempre a todo vCenter, y así lo indica el alcance en la portada del informe («hosts y rendimiento del clúster(es): … (inventario completo)»).
 
 **Fuera de alcance:** sistemas operativos invitados, aplicaciones, respaldos, red física fuera del host y seguridad perimetral.
 
@@ -49,7 +49,14 @@ La auditoría técnica consolida en un único informe formal el estado de **disp
    ./scripts/Invoke-Audit.ps1 -Env prod -Scope performance -PerfWindow 7d
    ```
 
-   La recolección consta de cuatro pasos: inventario y configuración, configuración de hosts, rendimiento y controles de acceso. El paso de rendimiento reutiliza el inventario recién recolectado y consulta la ventana indicada en `-PerfWindow` (`1h`, `24h` o `7d`; 24 h por defecto). `-SkipPerf` lo omite.
+   La recolección consta de cuatro pasos, en este orden:
+
+   1. **Controles de acceso**, primero y solos: verifican la credencial antes de lanzar lo demás.
+   2. En paralelo:
+      - **inventario y configuración**, seguido de **rendimiento**, que reutiliza el inventario recién recolectado y consulta la ventana indicada en `-PerfWindow` (`1h`, `24h` o `7d`; 24 h por defecto). `-SkipPerf` lo omite;
+      - **configuración de hosts**, que no depende del inventario.
+
+   Medido con vcsim (21 hosts, 50 VMs), una auditoría completa pasó de 32,7 s en la versión 1.7 a 12,7 s en la 1.8 con [`batchParallel`](/vcenter/uso/wrapper/#concurrencia-del-lote-batchparallel) en `1` (ejecución en paralelo de las fuentes y menos consultas por host), y a 6,0 s con `batchParallel` en `4`, con hallazgos idénticos. Los tiempos reales dependen del tamaño del entorno y de la carga de vCenter.
 
 3. Revisar `auditoria.html` en el navegador (el botón superior derecho alterna entre tema claro y oscuro) y, si corresponde, guardarlo como PDF (**Imprimir → Guardar como PDF**, tamaño A4). La impresión utiliza siempre el tema claro.
 
@@ -106,6 +113,8 @@ Tras un período de remediación, ejecutar una nueva auditoría y compararla con
 
 `audit.json` es el modelo consolidado del informe (identificadores, dominios, indicadores y hallazgos). Se conserva como referencia y se vuelve a escribir cada vez que se regenera el informe.
 
+Cada hallazgo de `audit.json` incluye, además del identificador `AUD-NNN`, una clave estable `key`: los primeros 12 caracteres hexadecimales del SHA-256 de `regla|objeto`. El `AUD-NNN` depende del orden de los hallazgos y puede cambiar entre auditorías; `key` se mantiene mientras la regla y el objeto sean los mismos, por lo que sirve para seguir un hallazgo de una auditoría a otra.
+
 ## Recálculo
 
 ```powershell
@@ -113,7 +122,7 @@ Tras un período de remediación, ejecutar una nueva auditoría y compararla con
 ./scripts/Invoke-Audit.ps1 -FromRaw reports/prod/20261017-090000-auditoria -Scope security
 ```
 
-Regenera el informe a partir de los datos recolectados, sin consultar vCenter. Si no se indica `-Scope`, se conserva el alcance de la recolección original, guardado en `raw/meta-audit.json`; lo mismo ocurre con `task audit FROM=<carpeta>` sin `SCOPE` (ver [Atajos con Task](/vcenter/uso/taskfile/)). Si existe la carpeta `perf/`, la revisión de rendimiento también se regenera desde sus datos crudos y conserva su ventana original; `-PerfWindow` no aplica al regenerar. Una auditoría sin `perf/` se regenera con el dominio Rendimiento sin puntuar y declarado como cobertura.
+Regenera el informe a partir de los datos recolectados, sin consultar vCenter; las fuentes (inventario, hosts y rendimiento) se regeneran en paralelo. `-Env` y `-FromRaw` son excluyentes. Si no se indica `-Scope`, se conserva el alcance de la recolección original, guardado en `raw/meta-audit.json`; lo mismo ocurre con `task audit FROM=<carpeta>` sin `SCOPE` (ver [Atajos con Task](/vcenter/uso/taskfile/)). Si existe la carpeta `perf/`, la revisión de rendimiento también se regenera desde sus datos crudos y conserva su ventana original; `-PerfWindow` no aplica al regenerar. Una auditoría sin `perf/` se regenera con el dominio Rendimiento sin puntuar y declarado como cobertura.
 
 `Invoke-Audit.ps1` no admite umbrales propios, `-OutDir` ni `-MdMaxRows`: ejecuta `New-Report.ps1`, `Invoke-HostCheck.ps1` e `Invoke-PerfCheck.ps1` con sus valores por defecto (ver [Hallazgos y umbrales](/vcenter/reportes/hallazgos/) y [Revisión de rendimiento](/vcenter/reportes/rendimiento/)) y en formato HTML, también al regenerar con `-FromRaw`.
 

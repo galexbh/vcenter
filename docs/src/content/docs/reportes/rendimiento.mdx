@@ -33,9 +33,9 @@ Todas las consultas se ejecutan en una sola sesión (modo lote del wrapper):
 
 | Lote | Consulta | Datos |
 |---|---|---|
-| 1 | `metric.interval.info` | Intervalos históricos de vCenter y su nivel de estadísticas |
+| 1 | `metric.interval.info` | Intervalos históricos de vCenter y su nivel de estadísticas. govc entrega esta salida como texto aunque reciba `-json`; el script extrae el identificador y el nivel de cada intervalo |
 | 1 | `object.collect -type h`, `m`, `r`, `s` | Hosts (clúster, conexión, mantenimiento), VMs (estado, host, vCPU, plantilla), recursos de cómputo y datastores (`summary.url`). Se omite con `-InventoryDir`, que reutiliza la carpeta `raw/` de una corrida de `New-Report.ps1`; así lo hace la auditoría |
-| 2 | `metric.sample -json -i <intervalo> -n <muestras>` | Muestras en trozos de 50 entidades, identificadas como `HostSystem:<id>` y `VirtualMachine:<id>` |
+| 2 | `metric.sample -json -i <intervalo> -n <muestras>` | Muestras en trozos de 50 entidades, con una consulta por trozo; las entidades se identifican como `HostSystem:<id>` y `VirtualMachine:<id>` |
 
 Se evalúan los hosts conectados de los clústeres seleccionados (`-Cluster`, todos por defecto) y las VMs encendidas, excluidas las plantillas, que se ejecutan en esos hosts. Los hosts sin conexión no se consultan y se declaran como cobertura.
 
@@ -149,6 +149,7 @@ Los umbrales son referencias habituales de la industria, no requisitos normativo
 - reports/prod/20261018-090000/
   - perf-check.html Hallazgos, hosts, latencia por datastore, VMs con más CPU ready, VMs con ballooning o swap
   - perf-check.md
+  - perf-check-\<tabla\>.csv un archivo por tabla, con -Format csv
   - raw/
     - meta-perf.json entorno, fecha, usuario, ventana, intervalo, muestras, nivel de estadísticas, clústeres y contadores sin datos
     - perf-host.json agregados por host

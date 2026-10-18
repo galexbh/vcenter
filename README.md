@@ -45,9 +45,9 @@ Las credenciales se guardan solo en Windows Credential Manager. Cada operación 
 | Dependencia | Para qué | Instalación |
 |---|---|---|
 | Windows 10 u 11 | Windows Credential Manager guarda las credenciales | — |
-| [Claude Code](https://claude.com/claude-code) | CLI, aplicación de escritorio o extensión de IDE | — |
+| [Claude Code](https://claude.com/claude-code) 2.1.295 o superior | CLI, aplicación de escritorio o extensión de IDE. Desde esa versión, un hook que falla bloquea la llamada (`onFailure`) | — |
 | PowerShell 7.5 o superior | Scripts, wrapper y guardas | `winget install --id Microsoft.PowerShell -e` |
-| Git for Windows | Clonar el repositorio y ejecutar el control `pre-commit` | `winget install --id Git.Git -e` |
+| Git for Windows | Clonar el repositorio, ejecutar el control `pre-commit` y aportar el `sh` de los hooks | `winget install --id Git.Git -e` |
 | [Task](https://taskfile.dev) | Atajos de `Taskfile.yml` | `winget install --id Task.Task -e` |
 | Node.js LTS (opcional) | Compilar la documentación en local | `winget install --id OpenJS.NodeJS.LTS -e` |
 
@@ -70,6 +70,7 @@ cd vcenter
 task setup
 
 # 2. Ajustar config/environments.json: url, datacenter, mode (readonly | confirm | lab), caCerts…
+#    batchParallel (opcional, 1 por defecto): comandos simultáneos por lote; pruébalo en lab antes de subirlo en prod
 
 # 3. Instalar la versión estable más reciente de govc en tools/
 task install
@@ -130,10 +131,11 @@ Después, abre Claude Code en la carpeta del proyecto y usa los comandos de la s
 
 | Capa | Función |
 |---|---|
-| `scripts/govc.ps1` | Único punto de entrada. Lee la credencial de Credential Manager en cada llamada, la expone solo durante la ejecución, no guarda sesiones en disco, aplica el modo del entorno y registra cada acción en `logs/` |
+| `scripts/govc.ps1` | Único punto de entrada. Usa solo `tools/govc.exe`, lee la credencial de Credential Manager en cada llamada, la expone solo durante la ejecución, quita las variables `GOVC_*`/`GOVMOMI_*` heredadas, no guarda sesiones en disco, aplica el modo del entorno y registra cada acción en `logs/` (las escrituras, antes de ejecutarse: sin registro no se ejecutan) |
+| `.claude/hooks/pre-guard.sh` | Filtro rápido: solo arranca PowerShell para la guarda cuando el texto puede ser relevante (`govc`, `password`, `git`…). `Test-Guards.ps1` comprueba que decide igual que la guarda completa |
 | `.claude/hooks/govc-guard.ps1` | Revisa cada comando de Claude antes de ejecutarlo. Bloquea el uso directo de govc, el manejo de secretos, las operaciones destructivas fuera de `lab` y las escrituras en `readonly`. Pide aprobación para escrituras y aprueba de forma automática solo las lecturas |
 | `.claude/hooks/read-guard.sh` | Revisa las lecturas de Claude (Read, Glob, Grep) y bloquea el acceso a la carpeta de sesión temporal del modo por lotes y a las sesiones de `~/.govmomi` |
-| `.claude/settings.json` | Impide a Claude editar guardas, bitácoras y configuración, y leer `~/.govmomi`. Pide aprobación antes de editar `config/environments.json` |
+| `.claude/settings.json` | Impide a Claude editar guardas, bitácoras y configuración, leer `~/.govmomi` y usar `cmdkey`. Pide aprobación antes de editar `config/environments.json`, skills, comandos o `.githooks/`. Si un hook falla o se agota su tiempo, la llamada se bloquea |
 | `.gitignore` y `.githooks/pre-commit` | `reports/`, `logs/`, `config/environments.json`, `tools/` y `specs/` no se versionan nunca. Además, se escanea el diff en busca de credenciales |
 
 **Modos de entorno**
@@ -149,8 +151,9 @@ En `prod` y `dr`, las operaciones destructivas solo las ejecuta una persona en u
 ## Pruebas
 
 ```powershell
-task test          # guardas (clasificación y hook) y regresión de reportes, CSV, hosts, rendimiento, auditoría y tendencias
-task test:log      # integridad de la bitácora
+task test                     # guardas (clasificación, hooks y filtro rápido) y regresión de reportes, CSV, hosts, rendimiento, auditoría y tendencias
+task test:guards -- -Strict   # igual, pero un grupo de pruebas omitido (p. ej., sin sh) cuenta como falla
+task test:log                 # integridad de la bitácora
 ```
 
 ### Sin vCenter real

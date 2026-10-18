@@ -77,7 +77,7 @@ Con `-SkipDeviceScan` no se recolectan las unidades de CD/DVD de las VMs y, por 
 
 ## Exportación a CSV
 
-Con `-Format csv` se genera un archivo por tabla del reporte: `reporte-<tipo>-resumen.csv`, `reporte-<tipo>-hallazgos-y-sugerencias.csv`, `reporte-<tipo>-maquinas-virtuales.csv`, `reporte-<tipo>-datastores.csv`, y así sucesivamente.
+Con `-Format csv` se genera un archivo por tabla del reporte: `reporte-<tipo>-resumen.csv`, `reporte-<tipo>-hallazgos-y-sugerencias.csv`, `reporte-<tipo>-maquinas-virtuales.csv`, `reporte-<tipo>-datastores.csv`, y así sucesivamente. `Invoke-HostCheck.ps1` (`hosts-check-<tabla>.csv`), `Invoke-PerfCheck.ps1` (`perf-check-<tabla>.csv`) y `Compare-Report.ps1` también admiten `-Format csv`, con las mismas características.
 
 | Característica | Detalle |
 |---|---|
@@ -85,7 +85,7 @@ Con `-Format csv` se genera un archivo por tabla del reporte: `reporte-<tipo>-re
 | Codificación | UTF-8 con BOM, para que Excel muestre correctamente los acentos |
 | Separador y decimales | Los de la configuración regional de Windows (por ejemplo, `;` y `,` en español). `-CsvDelimiter` permite forzar otro separador |
 | Filas | Todas las filas, sin el límite del Markdown |
-| Protección | Los textos que comienzan con `=`, `+`, `-`, `@` o un tabulador se prefijan con `'` para impedir la ejecución de fórmulas al abrir el archivo |
+| Protección | Los textos que comienzan con `=`, `+`, `-`, `@`, un tabulador o un retorno de carro se prefijan con `'` para impedir la ejecución de fórmulas al abrir el archivo. Los saltos de línea dentro de un valor se reemplazan por espacios |
 
 ```powershell
 ./scripts/New-Report.ps1 -Env prod -Type inventory -Format csv
@@ -94,6 +94,20 @@ Con `-Format csv` se genera un archivo por tabla del reporte: `reporte-<tipo>-re
 
 Para abrirlo, hacer doble clic sobre el archivo o, en Excel, **Datos → Desde texto/CSV**.
 
+## Comandos de revisión
+
+Cada hallazgo propone un comando de verificación de solo lectura, que no se ejecuta. Para que un nombre de vCenter (dato no confiable) no pueda alterar el comando al copiarlo, los objetos se identifican por su referencia `Tipo:id` en lugar de por su nombre:
+
+```powershell
+./scripts/govc.ps1 -Env prod datastore.info Datastore:datastore-11
+./scripts/govc.ps1 -Env prod snapshot.tree -vm VirtualMachine:vm-1002 -D -i
+./scripts/govc.ps1 -Env prod object.collect -s ClusterComputeResource:domain-c20 configurationEx.dasConfig.enabled
+```
+
+Se utilizan `Datastore:`, `VirtualMachine:`, `ClusterComputeResource:`, `ResourcePool:` y `HostSystem:`. Cuando el comando requiere un nombre (por ejemplo, `-host` en los comandos esxcli o `-Cluster` en la sugerencia de `Invoke-PerfCheck.ps1`), el texto se escapa como literal de PowerShell entre comillas simples, incluidas las comillas tipográficas: un nombre como `O'Brien` o con `;`, `$` o comilla invertida no rompe ni inyecta nada. Los comandos se arman con `New-ReviewCommand` y `Format-PsLiteral` (`scripts/lib/Common.psm1`).
+
+En HTML y Markdown se escapan también los indicadores, títulos y notas; en Markdown, el delimitador de código de cada comando es más largo que la secuencia de comillas invertidas más larga que contenga.
+
 ## Recálculo sin consultar vCenter
 
 Es posible modificar umbrales, tipo o formato sobre una corrida existente:
@@ -101,6 +115,8 @@ Es posible modificar umbrales, tipo o formato sobre una corrida existente:
 ```powershell
 ./scripts/New-Report.ps1 -FromRaw reports/prod/20261017-080000 -Type health -SnapshotWarnDays 3
 ```
+
+`-Env` y `-FromRaw` son excluyentes: indicar ambos produce un error. Los datos crudos se guardan sin truncar (`-Depth 100`), por lo que una cadena de snapshots profunda se recalcula correctamente; en versiones anteriores a 1.8, las cadenas de más de unos cinco niveles se truncaban y `-FromRaw` fallaba.
 
 Las corridas recolectadas antes de la versión 1.7 no contienen `raw/pools.json` ni la memoria en balloon, swap o comprimida de las VMs: al recalcularlas, la tabla de resource pools no aparece y las reglas `rp-limit`, `vm-balloon`, `vm-swap` y `vm-compressed` no producen hallazgos.
 

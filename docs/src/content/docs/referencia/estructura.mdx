@@ -22,6 +22,7 @@ import { FileTree } from '@astrojs/starlight/components';
 - .claude/
   - settings.json permisos y registro de los hooks
   - hooks/
+    - pre-guard.sh filtro rápido delante de govc-guard.ps1
     - govc-guard.ps1 control de comandos y archivos
     - read-guard.sh control de lecturas (Read, Glob, Grep)
   - skills/
@@ -60,6 +61,7 @@ import { FileTree } from '@astrojs/starlight/components';
   - Set-GovcCredential.ps1
   - lib/
     - Classify.psm1
+    - Common.psm1 utilidades compartidas de los scripts de reportes
     - CredMan.psm1
     - GovcBatch.psm1 modo lote (una sesión por corrida)
     - GovcJson.psm1
@@ -96,9 +98,10 @@ import { FileTree } from '@astrojs/starlight/components';
 
 | Ruta o comando | Control |
 |---|---|
-| `scripts/lib/**`, `.claude/hooks/**`, `.claude/settings.json` | Modificación bloqueada |
-| `scripts/govc.ps1`, `config/environments.json` | Modificación con aprobación |
+| `scripts/lib/**` (incluido `Common.psm1`), `.claude/hooks/**`, `.claude/settings.json` | Modificación bloqueada |
+| `scripts/govc.ps1`, `config/environments.json`, `.claude/skills/**`, `.claude/commands/**`, `.githooks/**` | Modificación con aprobación |
+| Scripts de reportes con `-OutDir` | Ejecución con aprobación |
 | `logs/**` | Escritura, movimiento y eliminación bloqueados |
 | `~/.govmomi/**` | Lectura bloqueada |
-| `cmdkey /generic…`, `Set-GovcCredential.ps1` | Ejecución bloqueada: la credencial la registra una persona |
+| `cmdkey` (cualquier uso, en PowerShell y Bash), `Set-GovcCredential.ps1` | Ejecución bloqueada: la credencial la registra una persona |
 | `git add -f`, `git add --force` | Ejecución bloqueada |

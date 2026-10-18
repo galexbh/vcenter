@@ -30,13 +30,27 @@ Después de instalarlo, abrir una terminal nueva para que `task` quede disponibl
 | `task perf` | `ENV` o `FROM`, `WINDOW` (opcional: `1h`, `24h` o `7d`; `24h` por defecto; solo con `ENV`), `CLUSTER` (opcional, solo con `ENV`) | `Invoke-PerfCheck.ps1` |
 | `task audit` | `ENV` o `FROM`, `SCOPE` (opcional: `full`, `security`, `capacity` o `performance`; sin él, `full` con `ENV` y el alcance guardado con `FROM`), `WINDOW` (opcional, ventana de rendimiento, solo con `ENV`), `CLUSTER` (opcional, solo con `ENV`) | `Invoke-Audit.ps1` |
 | `task trend` | `ENV` | `Compare-Report.ps1` |
-| `task demo` | — | `New-DemoData.ps1` y los reportes de inventario, hosts y auditoría sobre esos datos |
+| `task demo` | — | `New-DemoData.ps1` y los reportes de inventario, hosts, rendimiento y auditoría sobre esos datos |
 | `task test` | — | `Test-Guards.ps1` y `Test-Reports.ps1` |
-| `task test:guards` · `test:reports` · `test:log` | — | Prueba individual |
+| `task test:guards` · `test:reports` · `test:log` | — | Prueba individual; `task test:guards -- -Strict` cuenta como falla cualquier grupo omitido |
 | `task docs` | — | Servidor local de esta documentación en `http://localhost:4321/vcenter/` |
 | `task docs:build` | — | Compilación de esta documentación en `docs/dist/` |
 
-Las variables se indican como `NOMBRE=valor`. Los reportes requieren `ENV` (consulta el entorno) o `FROM` (vuelve a analizar una carpeta ya recolectada en `reports/`, sin consultar vCenter); sin ninguna de las dos, la tarea se cancela. `TYPE`, `SCOPE` y `WINDOW` solo admiten los valores del script; un valor distinto cancela la tarea antes de ejecutar nada.
+Las variables se indican como `NOMBRE=valor`. Los reportes requieren `ENV` (consulta el entorno) o `FROM` (vuelve a analizar una carpeta ya recolectada en `reports/`, sin consultar vCenter).
+
+### Validación de variables
+
+Antes de ejecutar nada, cada tarea valida sus variables y se cancela con un mensaje si no cumplen:
+
+| Condición | Mensaje |
+|---|---|
+| Ni `ENV` ni `FROM` | `Indica ENV=<entorno> o FROM=<carpeta en reports/>` |
+| `ENV` y `FROM` a la vez | `Indica ENV o FROM, no ambos` |
+| `ENV` con caracteres distintos de letras, números, guion o guion bajo | `ENV solo admite letras, números, guion y guion bajo` |
+| `CLUSTER` o `WINDOW` junto con `FROM` (`host-check`, `perf`, `audit`) | `CLUSTER y WINDOW solo aplican con ENV (con FROM se usa lo ya recolectado)` |
+| `TYPE`, `SCOPE` o `WINDOW` con un valor que el script no admite | `TYPE admite all, inventory, snapshots, capacity o health`, y equivalentes para `SCOPE` y `WINDOW` |
+
+Los valores de las variables llegan a PowerShell como variables de entorno (`T_ENV`, `T_FROM`, `T_TYPE`, `T_CLUSTER`, `T_WINDOW`, `T_SCOPE`, `T_ACCOUNT`) y nunca se insertan en el texto del comando: un nombre de clúster o una carpeta con comillas o `$` no rompe el comando ni inyecta código. Los parámetros adicionales después de `--` sí se agregan al comando tal como se escriben.
 
 `task credential` registra o reemplaza la credencial de un entorno. La contraseña la solicita `cmdkey` por consola y nunca pasa por argumentos. `task credential:list` muestra las credenciales registradas sin revelar contraseñas, y `task credential:remove` elimina la de un entorno tras pedir confirmación (ver [Configuración](/vcenter/inicio/configuracion/)). Ninguna de las tres admite parámetros libres y todas se cancelan dentro de Claude Code antes de ejecutar el script.
 
@@ -57,7 +71,7 @@ task demo
 task install -- -WithVcsim
 ```
 
-Los parámetros adicionales del script se escriben después de `--` y se pasan sin cambios. Para revisar el comando que se ejecutaría sin ejecutarlo: `task --dry <tarea> …`.
+Los parámetros adicionales del script se escriben después de `--` y se pasan sin cambios. Para revisar el comando que se ejecutaría sin ejecutarlo: `task --dry <tarea> …` (los valores de las variables aparecen como `$env:T_…`, no en el texto). `task docs` y `task docs:build` instalan las dependencias de la documentación solo cuando faltan o cuando cambia `docs/package-lock.json`.
 
 ## Alcance
 

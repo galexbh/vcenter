@@ -7,6 +7,13 @@ sidebar:
 
 Para ejecutar los scripts más habituales con comandos cortos desde una terminal, ver [Atajos con Task](/vcenter/uso/taskfile/).
 
+## Convenciones comunes
+
+- Los scripts requieren PowerShell 7.5 o posterior (`#Requires -Version 7.5`). Salvo `govc.ps1` (que no tiene bloque `param()`) y `Set-GovcCredential.ps1`, no admiten argumentos posicionales: un parámetro desconocido produce un error en lugar de ignorarse. PowerShell sigue aceptando abreviaturas únicas de un parámetro (por ejemplo, `-Form` por `-Format`).
+- `-Env` solo admite letras, números, guion y guion bajo, y debe comenzar con letra o número.
+- En los scripts de reportes, `-Env` y `-FromRaw` son excluyentes: indicar ambos produce el error `Indica -Env <entorno> o -FromRaw <carpeta>, no ambos.`
+- Los datos crudos se guardan sin truncar (`-Depth 100`) y las fechas se interpretan con la cultura invariante, por lo que una corrida se recalcula igual en equipos con distinta configuración regional.
+
 ## govc.ps1
 
 ```powershell
@@ -47,8 +54,8 @@ Ver [Wrapper govc.ps1](/vcenter/uso/wrapper/).
 | `-Env` | string | — | Entorno (obligatorio si no se usa `-FromRaw`) |
 | `-Cluster` | string[] | todos | Filtro por clúster |
 | `-Hosts` | string[] | todos | Filtro por host |
-| `-Checks` | `vibs` `nics` `paths` `ntp` `syslog` `coredump` `platform` `services` `certs` | todos | Chequeos a ejecutar |
-| `-Format` | `html`, `md` | ambos | |
+| `-Checks` | `vibs` `nics` `paths` `ntp` `syslog` `coredump` `platform` `services` `certs` | todos | Chequeos a ejecutar (`platform`, `services`, `ntp` y `certs` se obtienen de vCenter; el resto, de esxcli) |
+| `-Format` | `html`, `md`, `csv` | `html`, `md` | Formatos de salida (`csv`: un archivo por tabla) |
 | `-FromRaw` | ruta | — | Recalcula desde una corrida existente |
 | `-OutDir` | ruta | `reports/<env>/<marca>` | Carpeta de salida |
 | `-CertWarnDays` | int | 60 | |
@@ -61,7 +68,7 @@ Ver [Wrapper govc.ps1](/vcenter/uso/wrapper/).
 | `-Env` | string | — | Entorno (obligatorio si no se usa `-FromRaw`) |
 | `-Cluster` | string[] | todos | Filtro por clúster |
 | `-Window` | `1h` `24h` `7d` | `24h` | Ventana: 20 s × 180 muestras (tiempo real), 300 s × 288 o 1800 s × 336 (histórico de vCenter) |
-| `-Format` | `html`, `md` | ambos | |
+| `-Format` | `html`, `md`, `csv` | `html`, `md` | Formatos de salida (`csv`: un archivo por tabla) |
 | `-FromRaw` | ruta | — | Recalcula desde una corrida existente (conserva entorno y ventana) |
 | `-OutDir` | ruta | `reports/<env>/<marca>` | Carpeta de salida (la usa `Invoke-Audit.ps1`) |
 | `-InventoryDir` | ruta | — | Carpeta de una corrida de `New-Report.ps1` cuyo `raw/` se reutiliza en lugar de volver a consultar hosts, VMs y datastores (la usa `Invoke-Audit.ps1`) |
@@ -93,7 +100,7 @@ Ver [Revisión de rendimiento](/vcenter/reportes/rendimiento/).
 |---|---|---|---|
 | `-Env` | string | — | Compara las dos corridas más recientes del entorno |
 | `-Base`, `-Current` | ruta | — | Corridas específicas (también carpetas de auditoría, a través de su subcarpeta `inventario/`) |
-| `-Format` | `html`, `md` | ambos | Formatos de salida |
+| `-Format` | `html`, `md`, `csv` | `html`, `md` | Formatos de salida (`csv`: un archivo por tabla) |
 | `-OutDir` | ruta | `reports/<env>/<marca>-tendencia` | Carpeta de salida |
 | `-MdMaxRows` | int | 200 | |
 
@@ -102,7 +109,7 @@ Ver [Revisión de rendimiento](/vcenter/reportes/rendimiento/).
 | Script | Función | Salida |
 |---|---|---|
 | `Test-Reports.ps1 [-Keep]` | Pruebas de regresión de reportes, CSV, hosts, rendimiento, auditoría y tendencias (ver [Pruebas](/vcenter/referencia/pruebas/)) | Código de salida igual al número de fallas |
-| `Test-Guards.ps1 [-HookPath]` | Pruebas del clasificador y del hook; `-HookPath` prueba una copia alternativa del hook (por ejemplo, una versión preparada para revisión) | Código de salida igual al número de fallas |
+| `Test-Guards.ps1 [-HookPath] [-Strict]` | Pruebas del clasificador, del hook y de la equivalencia del filtro `pre-guard.sh`, en paralelo; `-HookPath` prueba una copia alternativa del hook (por ejemplo, una versión preparada para revisión); con `-Strict`, un grupo de casos omitido cuenta como falla | Código de salida igual al número de fallas |
 | `Test-AuditLog.ps1 [-Path]` | Verificación de la cadena de hashes de la bitácora | `0` si está íntegra; `1` e indicación de la línea si no |
 
 ## New-DemoData.ps1
@@ -140,3 +147,15 @@ Rechaza su ejecución cuando lo invoca Claude.
 | `GovcJson.psm1` | `ConvertFrom-GovcCollect`, `Split-JsonStream` |
 | `GovcBatch.psm1` | `Invoke-GovcBatch`, `Get-GovcBatchError` (lotes de lectura con una sesión) |
 | `Render.psm1` | `New-ReportTable`, `New-FindingList`, `Add-ReportFinding`, `Export-ReportFinding`, `Sort-ReportFinding`, `Get-FindingColumns`, `Write-GovcReport`, `ConvertTo-HtmlText`, `Expand-Template`, `Format-MdCode` |
+| `Common.psm1` | Utilidades compartidas por los scripts de reportes (protegido, porque incluye el escape de textos de vCenter en los comandos sugeridos). Ver la tabla siguiente |
+
+Funciones de `Common.psm1`:
+
+| Grupo | Funciones |
+|---|---|
+| Lectura tolerante | `Get-Prop`, `Get-FirstProp`, `Read-JsonFile` |
+| Contexto de corrida | `Initialize-RunContext` (origen `-Env` o `-FromRaw`, carpeta de salida y metadatos), `Assert-EnvName`, `Get-RunUser`, `Write-RunMeta`, `Save-RawJson` (`-Depth 100`) |
+| Datos de vCenter | `ConvertFrom-CertJson`, `Get-SnapshotList` |
+| Comandos sugeridos y texto | `New-ReviewCommand`, `Format-PsLiteral`, `ConvertTo-MdText` |
+| Hallazgos | `Get-SeverityRank`, `Add-GroupedFinding`, `Add-CoverageByError`, `Add-SeverityKpis` |
+| Cierre del reporte | `Export-GovcCsv`, `Complete-Report` (`findings.json`, `summary.json`, HTML/MD y CSV) |

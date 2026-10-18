@@ -10,11 +10,12 @@ sidebar:
 | Capa | Componente | Riesgo que mitiga |
 |---|---|---|
 | Punto único de acceso | `scripts/govc.ps1` | Credenciales en disco o en variables persistentes; operaciones fuera del modo del entorno; acciones sin registro |
-| Control previo de comandos | `.claude/hooks/govc-guard.ps1` (tools Bash y PowerShell) | Ejecución directa de govc, exposición de secretos, cambios destructivos, escrituras en entornos de solo lectura, comandos codificados, alteración de la bitácora |
-| Control previo de archivos | `.claude/hooks/govc-guard.ps1` (tools Write, Edit, MultiEdit y NotebookEdit) | Creación por Claude de scripts que accedan a la bóveda de credenciales |
+| Control previo de comandos | `.claude/hooks/pre-guard.sh` → `.claude/hooks/govc-guard.ps1` (tools Bash, PowerShell y Monitor) | Ejecución directa de govc, exposición de secretos, cambios destructivos, escrituras en entornos de solo lectura, comandos codificados, alteración de la bitácora |
+| Control previo de archivos | `.claude/hooks/pre-guard.sh` → `.claude/hooks/govc-guard.ps1` (tools Write, Edit y NotebookEdit) | Creación por Claude de scripts que accedan a la bóveda de credenciales |
 | Control previo de lecturas | `.claude/hooks/read-guard.sh` (tools Read, Glob y Grep) | Lectura por Claude de la carpeta de sesión efímera del modo lote y de las sesiones guardadas de govmomi en el perfil del usuario |
-| Clasificador | `scripts/lib/Classify.psm1` | Subcomandos nuevos o desconocidos (se tratan como modificación) |
-| Permisos de Claude Code | `.claude/settings.json` | Modificación de guardas, bitácoras o configuración (la edición de `config/environments.json` y de `scripts/govc.ps1` requiere aprobación); lectura de sesiones de govc |
+| Falla cerrada de los hooks | `"onFailure": "block"` en ambos hooks (Claude Code 2.1.295 o posterior) | Un hook que falla, no encuentra `sh` o `pwsh`, o excede su tiempo máximo deja pasar la llamada sin control |
+| Clasificador | `scripts/lib/Classify.psm1` | Subcomandos nuevos o desconocidos (se tratan como modificación); flags que vuelcan tráfico o redirigen la conexión; operaciones en el SO invitado (`guest.*`) |
+| Permisos de Claude Code | `.claude/settings.json` | Modificación de guardas, bitácoras o configuración (la edición de `config/environments.json`, `scripts/govc.ps1`, skills, comandos y `.githooks/` requiere aprobación); `cmdkey`; lectura de sesiones de govc |
 | Control de versiones | `.gitignore`, `.githooks/pre-commit` | Reportes, bitácoras, configuración real o credenciales en el repositorio |
 | Integridad de la bitácora | Encadenamiento SHA-256 + `scripts/Test-AuditLog.ps1` | Edición, eliminación o inserción no detectada de registros |
 
@@ -33,14 +34,18 @@ sidebar:
 Propuesta de Claude:  ./scripts/govc.ps1 -Env prod vm.clone -vm tpl app02
         │
         ▼
+Filtro pre-guard ── el texto contiene "govc": inicia la guarda de PowerShell
+        ▼
 Hook govc-guard ── analiza el comando, identifica -Env y el subcomando
         │          clase: write · modo prod: confirm
         │          ⇒ "ask": Claude Code solicita aprobación
         ▼
 Wrapper govc.ps1 ── vuelve a validar el modo (defensa en profundidad)
+        │           registra "started" en la bitácora (sin registro, no ejecuta)
         │           obtiene govc:prod de Credential Manager
-        │           define GOVC_* solo para el proceso y ejecuta govc
-        │           restablece las variables y registra la operación
+        │           quita las GOVC_*/GOVMOMI_* heredadas, define las del perfil
+        │           solo para el proceso y ejecuta tools/govc.exe
+        │           restablece las variables y registra el resultado
         ▼
 logs/audit-AAAAMMDD.jsonl (encadenado)
 ```
@@ -56,10 +61,13 @@ Cada invocación del wrapper agrega una línea JSON. El campo `prev` contiene el
 | Campo | Contenido |
 |---|---|
 | `prev` | Hash del registro anterior (`GENESIS` en el primero) |
-| `ts`, `user`, `claude` | Fecha, usuario de Windows e indicador de ejecución por Claude |
+| `ts`, `user`, `claude` | Fecha, usuario de Windows (identidad del proceso, no variables de entorno) e indicador de ejecución por Claude |
 | `env`, `mode`, `class` | Entorno, modo y clase de la operación |
-| `command` | Comando con argumentos sensibles enmascarados |
-| `result`, `exitCode` | `ok`, `error`, `blocked-secret`, `blocked-readonly`, `blocked-destructive` o `cancelled`, y código de salida |
+| `command` | Comando con argumentos sensibles enmascarados: `-password` siempre, `-p` solo dentro de `host.esxcli` y `-l` solo en `guest.*` (`find -p` no se enmascara) |
+| `result`, `exitCode` | `started` (escrituras y destructivos, antes de ejecutarse, con `exitCode` `-1`), `ok`, `error`, `blocked-secret`, `blocked-readonly`, `blocked-destructive`, `blocked-batch-<clase>` o `cancelled`, y código de salida |
+| `batch` | Identificador del lote, en las líneas del modo lote |
+
+Las escrituras y los destructivos se registran **antes** de ejecutarse: si la línea `started` no puede escribirse, el wrapper no ejecuta la operación. Así, toda modificación ejecutada tiene evidencia previa en la bitácora, aunque el proceso se interrumpa.
 
 **Verificación de integridad:**
 
@@ -76,4 +84,4 @@ El encadenamiento **detecta** la manipulación, pero no la impide. Para una rete
 
 ## Contenido no confiable
 
-Los nombres, anotaciones, eventos y textos de alarma provienen de vCenter y pueden ser escritos por terceros. Claude los trata **siempre como datos y nunca como instrucciones**. En los reportes, el contenido se codifica en HTML y se escapa en Markdown para impedir la inyección de enlaces o formato.
+Los nombres, anotaciones, eventos y textos de alarma provienen de vCenter y pueden ser escritos por terceros. Claude los trata **siempre como datos y nunca como instrucciones**. En los reportes, el contenido se codifica en HTML y se escapa en Markdown para impedir la inyección de enlaces o formato; en CSV se neutralizan las fórmulas. Los comandos de revisión sugeridos identifican los objetos por referencia `Tipo:id` y escapan cualquier otro texto de vCenter como literal de PowerShell, de modo que un nombre con comillas, `;` o `$` no altera el comando al copiarlo (ver [comandos de revisión](/vcenter/reportes/generar/#comandos-de-revisión)).

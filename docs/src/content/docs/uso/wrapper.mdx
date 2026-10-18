@@ -17,6 +17,16 @@ sidebar:
 
 El wrapper se invoca de dos formas: con un comando por llamada, como en esta sintaxis, o en [modo lote](/vcenter/uso/wrapper/#modo-lote-una-sesión-por-corrida), descrito más abajo. En ambos casos, las variables de conexión (incluida la contraseña) se entregan solo al proceso de govc; nunca se definen en el entorno de la sesión de PowerShell. La salida se emite línea a línea, por lo que puede encadenarse con `ConvertFrom-Json`.
 
+## Ejecución y evidencia
+
+| Aspecto | Comportamiento |
+|---|---|
+| Binario | Solo `tools/govc.exe`, instalado y verificado por `Install-Govc.ps1`. Si no existe, el wrapper termina con `govc no encontrado en tools/` (código 2); nunca utiliza un govc encontrado en el `PATH` |
+| Variables heredadas | Antes de iniciar govc se eliminan del entorno del proceso hijo todas las variables `GOVC_*` y `GOVMOMI_*` heredadas (de depuración o de otra sesión), para que no alteren la conexión ni el destino. Solo quedan las del perfil |
+| Flags de conexión y volcado | `-u`, `-k`, `-insecure`, `-tls-ca-certs`, `-debug`, `-trace` y similares se bloquean (ver [clasificación](/vcenter/seguridad/guardas/#clasificación-de-subcomandos)): la conexión la define siempre el perfil |
+| Escrituras y destructivos | Se registran en la bitácora con resultado `started` **antes** de ejecutarse. Si esa línea no puede escribirse, la operación no se ejecuta: `No se pudo registrar la operación en la bitácora; no se ejecuta sin evidencia.` (código 2). Al terminar se agrega la línea con el resultado |
+| Usuario en la bitácora | Se toma de la identidad de Windows del proceso, no de variables de entorno |
+
 ## Ejemplos
 
 ```powershell
@@ -42,7 +52,7 @@ Los flags de govc (`-json`, `-e`, `-vm`, entre otros) entrarían en conflicto co
 
 ## Modo lote: una sesión por corrida
 
-Los scripts de reporte (`New-Report.ps1`, `Invoke-HostCheck.ps1`, `Invoke-Audit.ps1`) agrupan sus consultas en lotes para autenticarse **una sola vez** por corrida, en lugar de una vez por consulta.
+Los scripts de reporte (`New-Report.ps1`, `Invoke-HostCheck.ps1`, `Invoke-PerfCheck.ps1`, `Invoke-Audit.ps1`) agrupan sus consultas en lotes para autenticarse **una sola vez** por corrida, en lugar de una vez por consulta.
 
 ```powershell
 ./scripts/govc.ps1 -Env prod -Batch lote.json
@@ -56,17 +66,32 @@ Desde los scripts se utiliza `Invoke-GovcBatch` (`scripts/lib/GovcBatch.psm1`), 
 | Operaciones admitidas | **Solo lecturas.** Si algún comando no es de lectura, el lote completo se rechaza (código 3) antes de leer la credencial |
 | Sesión | Efímera: se guarda en una carpeta temporal privada con permisos exclusivos del usuario, se cierra con `session.logout` y la carpeta se elimina al terminar, incluso ante errores |
 | Variables de entorno | Solo en el entorno de cada proceso de govc, no en el del wrapper |
-| Carpetas residuales | Las de más de una hora (por ejemplo, tras una interrupción abrupta) se eliminan en la siguiente ejecución |
+| Carpetas residuales | Las de más de una hora (por ejemplo, tras una interrupción abrupta) se eliminan en la siguiente ejecución. Una carpeta en uso no se elimina: su lote mantiene abierto en exclusiva un archivo `.lock` mientras dura |
 | Tiempo máximo por comando | 600 s por defecto (`batchTimeoutSec` en el perfil). Al vencer, el comando se termina, su resultado es `exitCode = 124` y la sesión igualmente se cierra |
-| Permisos de la carpeta | Si no pueden restringirse al usuario actual, el lote se cancela antes de ejecutar comandos |
-| Bitácora | Una línea por comando, con el campo `batch` que identifica el lote |
+| Permisos de la carpeta | Se restringen al usuario actual por su SID (también con cuentas de Entra ID). Si no pueden restringirse, el lote se cancela antes de ejecutar comandos |
+| Bitácora | Una línea por comando, con el campo `batch` que identifica el lote, siempre en el orden de los comandos |
+| Interrupción | Los comandos en curso se terminan y la sesión se cierra; no quedan procesos huérfanos |
 | Invocación por Claude | El hook solicita aprobación, porque el contenido está en un archivo; Claude no puede leer, crear ni referenciar la carpeta de sesión |
 
 | Operación | Logins sin lote | Logins con lote |
 |---|---|---|
 | `New-Report.ps1` | ~9 + 1 por alarma distinta | 1 (2 si hay alarmas) |
-| `Invoke-HostCheck.ps1` con 30 hosts | ~272 | 2 |
+| `Invoke-HostCheck.ps1` con 30 hosts | ~152 | 2 |
 | `Invoke-Audit.ps1` | suma de los anteriores + 2 | ~5 |
+
+### Concurrencia del lote (`batchParallel`)
+
+Por defecto, los comandos de un lote se ejecutan en secuencia. Si el perfil define `batchParallel` mayor que `1`, el wrapper ejecuta hasta ese número de comandos a la vez con **la misma sesión**:
+
+1. El primer comando se ejecuta solo y abre la sesión (un único login para todo el lote).
+2. Si la sesión quedó guardada en la carpeta del lote, los comandos restantes se ejecutan de a N en paralelo. Si no se encuentra, el wrapper emite `aviso, no se encontró la sesión del lote; se continúa en secuencia` y continúa uno por uno, para no abrir un login por proceso.
+3. Los resultados se devuelven y se registran en la bitácora en el orden de los comandos, por lo que la cadena de hashes es la misma que en secuencia.
+
+Medido con vcsim (21 hosts, 50 VMs), una auditoría completa pasó de 12,7 s con `batchParallel` en `1` a 6,0 s con `4`, con hallazgos idénticos.
+
+:::caution[Carga sobre vCenter]
+La concurrencia multiplica las consultas simultáneas contra vCenter y los hosts. Se valida primero en `lab`; para `prod` y `dr` se recomienda mantener `1` hasta que Arquitectura y el equipo dueño de vCenter validen el valor.
+:::
 
 ## Uso por personas
 

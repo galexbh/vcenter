@@ -19,7 +19,7 @@ Un reporte describe el estado del entorno en un momento dado. La comparación en
 ./scripts/Compare-Report.ps1 -Base reports/prod/20261001-080000 -Current reports/prod/20261017-080000
 ```
 
-Desde Claude: `/trend prod`.
+Desde Claude: `/trend prod`. Con `-Format csv` se genera, además, un archivo CSV por tabla (ver [exportación a CSV](/vcenter/reportes/generar/#exportación-a-csv)). Las variaciones con signo de vCPU y RAM se formatean de forma invariante (con punto decimal), independientemente de la configuración regional.
 
 ## Contenido del reporte
 
@@ -33,6 +33,8 @@ Desde Claude: `/trend prod`.
 | Evolución de hallazgos | Hallazgos nuevos, resueltos y con cambio de severidad |
 
 Las VMs se identifican por su identificador interno de vCenter (`moref`), por lo que un cambio de nombre se reporta como *Renombrada* y no como alta y baja. Los hallazgos se identifican por su **regla y objeto**: una variación en la evidencia (por ejemplo, de 91 % a 93 %) no genera un hallazgo nuevo.
+
+Desde la versión 1.8, los códigos de regla de snapshots, alarmas y licencias ya no incluyen el nombre del objeto (`snap-age`, `alarm`, `license`; ver [códigos de regla estables](/vcenter/reportes/hallazgos/#códigos-de-regla-estables)). Al comparar con una corrida anterior, `Compare-Report.ps1` traduce los códigos antiguos (`snap-age-<snapshot>`, `alarm-<alarma>`, `license-<edición>`) a la forma actual, de modo que esos hallazgos no aparecen como resueltos y nuevos a la vez.
 
 ## Interpretación de las proyecciones
 

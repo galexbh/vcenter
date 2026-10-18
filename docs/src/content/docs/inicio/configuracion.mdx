@@ -29,7 +29,8 @@ Copy-Item config/environments.example.json config/environments.json
     "resourcePool": "/DC-PROD/host/CL-PROD-01/Resources",
     "insecure": false,
     "caCerts": "C:/certs/vcenter-ca.pem",
-    "persistSession": false
+    "persistSession": false,
+    "batchParallel": 1
   }
 }
 ```
@@ -45,8 +46,9 @@ Copy-Item config/environments.example.json config/environments.json
 | `insecure` | No | `true` omite la validación TLS. **No utilizar en producción ni en contingencia** |
 | `persistSession` | No | `true` conserva la sesión en `~/.govmomi`. Por defecto, `false` |
 | `batchTimeoutSec` | No | Tiempo máximo, en segundos, de cada comando en [modo lote](/vcenter/uso/wrapper/#modo-lote-una-sesión-por-corrida). Por defecto, `600` |
+| `batchParallel` | No | Número máximo de comandos que el [modo lote](/vcenter/uso/wrapper/#concurrencia-del-lote-batchparallel) ejecuta a la vez con la misma sesión. Por defecto, `1` (en secuencia). Aumenta la carga sobre vCenter: se valida primero en `lab` antes de habilitarlo en `prod` o `dr` |
 
-**Configuración recomendada:** `dr` en `readonly`, `prod` en `confirm` y `lab` en `lab`.
+**Configuración recomendada:** `dr` en `readonly`, `prod` en `confirm` y `lab` en `lab`. La plantilla define `batchParallel` en `4` para `lab` y en `1` para `dr` y `prod`.
 
 ## Certificados de la CA (`caCerts`)
 

@@ -52,6 +52,18 @@ Cada hallazgo incluye **severidad**, **categoría**, **objeto**, **evidencia**, 
 
 Los hallazgos de VMware Tools, VMs apagadas, consolidación pendiente, límites de CPU o memoria, versión de hardware, ISO conectada, balloon, swap y memoria comprimida se **agrupan** en una sola fila por condición.
 
+### Códigos de regla estables
+
+El código de regla no incluye nombres tomados de vCenter; el objeto afectado va en la columna *Objeto*. Así, una misma condición conserva su código entre corridas:
+
+| Regla | Objeto | Antes de 1.8 |
+|---|---|---|
+| `snap-age` | `VM / snapshot` | `snap-age-<snapshot>` |
+| `alarm` | `entidad / alarma` | `alarm-<alarma>` |
+| `license` | Nombre de la licencia | `license-<edición>` |
+
+[Compare-Report.ps1](/vcenter/reportes/tendencias/) traduce los códigos anteriores, por lo que las comparaciones con corridas previas a 1.8 siguen funcionando.
+
 ### Holgura N+1
 
 Para cada clúster, la holgura N+1 compara el uso actual de memoria y de CPU (`quickStats` de los hosts) con la capacidad que queda al descontar el host de mayor capacidad. Solo se consideran los hosts **activos**: conectados y fuera de modo mantenimiento. El resultado se muestra en las columnas *CPU N+1 %* y *RAM N+1 %* de la tabla de capacidad; un valor superior a 100 % indica que la carga no cabe si falla ese host. Las reglas son `cl-n1-mem` y `cl-n1-cpu` (umbral de advertencia `-N1WarnPct`) y `cl-n1-single` cuando el clúster tiene un solo host activo. El control de admisión de HA desactivado se informa con `cl-ha-admission`, en la categoría Clúster.
@@ -60,20 +72,20 @@ El balloon, el swap y la compresión de memoria (`vm-balloon`, `vm-swap`, `vm-co
 
 ## Reglas de la revisión de hosts
 
-| Categoría | Condición | Severidad |
-|---|---|---|
-| Storage | Path inactivo | Crítico |
-| Storage | Dispositivo compartido con un único path | Advertencia |
-| Drift VIBs/drivers | Versiones distintas o VIB ausente en el clúster | Advertencia |
-| Red física | NIC sin enlace; velocidad o MTU distintas entre hosts | Advertencia |
-| Tiempo | NTP deshabilitado o fuentes distintas | Advertencia |
-| Logs | Sin syslog remoto | Advertencia |
-| Seguridad | SSH o ESXi Shell en ejecución | Advertencia |
-| Certificados | Certificado de host vencido / próximo a vencer | Crítico / Advertencia |
-| Diagnóstico | Sin coredump por red | Info |
-| Plataforma | Modelos distintos en el clúster | Info |
+| Categoría | Regla | Condición | Severidad |
+|---|---|---|---|
+| Storage | `path-dead` | Path inactivo | Crítico |
+| Storage | `path-single` | Dispositivo compartido con un único path | Advertencia |
+| Drift VIBs/drivers | `vib-drift` | Versiones distintas o VIB ausente en el clúster | Advertencia |
+| Red física | `nic-nolink`, `nic-speed`, `nic-mtu` | NIC sin enlace; velocidad o MTU distintas entre hosts | Advertencia |
+| Tiempo | `ntp-disabled`, `ntp-servers` | NTP deshabilitado (servicio `ntpd` detenido) o fuentes distintas | Advertencia |
+| Logs | `syslog-remote` | Sin syslog remoto | Advertencia |
+| Seguridad | `svc-<servicio>` | SSH o ESXi Shell en ejecución | Advertencia |
+| Certificados | `cert-host-expired`, `cert-host-expiring` | Certificado de host vencido / próximo a vencer (por fecha de vencimiento) | Crítico / Advertencia |
+| Diagnóstico | `coredump` | Sin coredump por red | Info |
+| Plataforma | `platform-mixed` | Modelos distintos en el clúster | Info |
 
-Detalle en [Diagnóstico de hosts con esxcli](/vcenter/uso/esxcli/#revisión-por-clúster-host-check).
+Plataforma, servicios, NTP y certificados provienen de vCenter (`object.collect` de hosts); el resto, de esxcli. Detalle en [Diagnóstico de hosts con esxcli](/vcenter/uso/esxcli/#revisión-por-clúster-host-check).
 
 ## Reglas de la revisión de rendimiento
 

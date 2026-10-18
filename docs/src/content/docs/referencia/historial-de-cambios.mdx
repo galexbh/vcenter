@@ -5,6 +5,43 @@ sidebar:
   order: 6
 ---
 
+## 1.8 — Octubre 2026
+
+**Seguridad**
+- Clasificador: flags secretos unificados para todos los subcomandos, incluido `host.esxcli`: `-password`, `-debug`, `-dump-cookie`, `-trace`, `-verbose`, `-persist-session` y los que redirigen la conexión (`-u`, `-k`, `-insecure`, `-tls-ca-certs`, `-tls-known-hosts`, `-cert`, `-key`, `-vim-version`, `-vim-namespace`). `guest.*` es `secret` (credenciales del SO invitado con `-l`); `vm.question -answer` es `write`. Ver [Guardas y clasificación](/vcenter/seguridad/guardas/).
+- Enmascaramiento en la bitácora: `-p` solo dentro de `host.esxcli` (`find -p` ya no se enmascara) y `-l` solo en `guest.*`.
+- Wrapper: solo `tools/govc.exe` (falla cerrada, nunca un govc del `PATH`); elimina del proceso de govc las variables `GOVC_*` y `GOVMOMI_*` heredadas; registra `started` **antes** de ejecutar escrituras y destructivos y no los ejecuta si no puede registrarlos; usuario de la bitácora tomado de la identidad de Windows; permisos de la carpeta del lote por SID; las carpetas de lotes activos quedan protegidas de la limpieza por un `.lock` abierto en exclusiva; caché del último hash de la bitácora, validada por el tamaño del archivo bajo el mutex. Ver [Wrapper govc.ps1](/vcenter/uso/wrapper/#ejecución-y-evidencia).
+- Hooks: nuevo filtro `.claude/hooks/pre-guard.sh` delante de `govc-guard.ps1`, que solo inicia PowerShell cuando el texto contiene una palabra relevante; `Test-Guards.ps1` comprueba que las decisiones son equivalentes. Matcher `Bash|PowerShell|Monitor|Write|Edit|NotebookEdit`; `"onFailure": "block"` en ambos hooks (requiere Claude Code 2.1.295 o posterior: un hook que falla o excede su tiempo bloquea la llamada); tiempo máximo de 30 s. El hook aprueba `Import-Module ./scripts/lib/GovcJson.psm1` (ruta literal, `-Force` opcional) y `ConvertFrom-GovcCollect`.
+- Permisos: aprobación para `-OutDir` en los scripts de reportes y para editar `.claude/skills/**`, `.claude/commands/**` y `.githooks/**`; `cmdkey` denegado en PowerShell y Bash; `npm --prefix docs run build` permitido; se retiran las reglas `Write(ruta)`, que Claude Code no consulta (las reglas `Edit(ruta)` cubren también Write); `disableSkillShellExecution` activado.
+- Comandos de revisión con referencias `Tipo:id` (`Datastore:datastore-11`, `VirtualMachine:vm-1002`, `ClusterComputeResource:domain-c20`, `ResourcePool:…`, `HostSystem:…`), generados con `New-ReviewCommand`; cualquier otro texto de vCenter se escapa como literal de PowerShell (`Format-PsLiteral`, incluidas las comillas tipográficas). En los comandos esxcli, `-host` conserva el nombre del host, escapado. Ver [comandos de revisión](/vcenter/reportes/generar/#comandos-de-revisión).
+- CSV: también se neutraliza un retorno de carro inicial y se eliminan los saltos de línea. HTML y Markdown escapan indicadores, títulos y notas; el delimitador de código en Markdown supera la racha más larga de comillas invertidas.
+- Taskfile: los valores llegan a PowerShell como variables de entorno `T_*`, nunca interpolados en el comando; las precondiciones validan el formato de `ENV`, rechazan `ENV` con `FROM` y `CLUSTER`/`WINDOW` con `FROM`, y validan `TYPE`, `SCOPE` y `WINDOW`. `task demo` usa la función de fecha de Task y `docs:install` se ejecuta según `sources`/`generates`. Ver [Atajos con Task](/vcenter/uso/taskfile/#validación-de-variables).
+- Scripts: `#Requires -Version 7.5` y `[CmdletBinding(PositionalBinding = $false)]` (un parámetro desconocido ahora produce un error; PowerShell sigue aceptando abreviaturas únicas); `ValidatePattern` en `-Env`; `-Env` junto con `-FromRaw` es un error; datos crudos guardados con `-Depth 100` (las cadenas de snapshots profundas se truncaban con `-Depth 12`); fechas interpretadas con la cultura invariante; `Compare-Report.ps1` formatea las variaciones de forma invariante.
+
+**Rendimiento y tiempos**
+- Concurrencia del lote: clave opcional `batchParallel` en el perfil (`1` por defecto, en secuencia). El primer comando se ejecuta solo y abre la sesión; si la sesión quedó guardada, hasta N comandos se ejecutan a la vez con esa misma sesión; resultados y bitácora en el orden de los comandos. La plantilla define `4` para `lab` y `1` para `dr` y `prod`. Ver [Concurrencia del lote](/vcenter/uso/wrapper/#concurrencia-del-lote-batchparallel).
+- `Invoke-Audit.ps1`: los controles de acceso se ejecutan primero (verifican la credencial) y después, en paralelo, [inventario → rendimiento] y la revisión de hosts (`Start-ThreadJob`); `-FromRaw` regenera las fuentes en paralelo. Medido con vcsim (21 hosts, 50 VMs): **32,7 s → 12,7 s** con `batchParallel` en `1` y **6,0 s** con `4`, con hallazgos idénticos.
+- `Invoke-HostCheck.ps1`: plataforma, servicios, NTP y certificados salen de un único `object.collect` de hosts (`summary.hardware.vendor`/`model`, `config.service`, `config.dateTimeInfo.ntpConfig`, `config.certificate`); esxcli solo para VIBs, NIC, paths, syslog y coredump, ordenado alternando hosts. **189 → 105** consultas esxcli con 21 hosts. NTP se evalúa por el servicio `ntpd` en ejecución (mensaje `NTP deshabilitado (servicio ntpd detenido)`) y el certificado no trae el campo `status`. El formato de `raw/` no cambia: `-FromRaw` de corridas anteriores sigue funcionando.
+- `-Format csv` disponible en `Invoke-HostCheck.ps1`, `Invoke-PerfCheck.ps1` y `Compare-Report.ps1`.
+- `Invoke-PerfCheck.ps1`: corregido un defecto por el que, con un solo trozo, se emitía una consulta `metric.sample` por entidad (92 consultas) en lugar de una por trozo de 50 (3 consultas); estadísticas sin pipelines. **13,5 s → 4,6 s** con vcsim. El nivel de `metric.interval.info` se lee del texto (`ConvertFrom-IntervalInfo`), porque govc no lo entrega en JSON.
+- `New-Report.ps1`: índices por clúster en una sola pasada (antes, proporcional a clústeres × (hosts + VMs)). `Render.psm1` construye el documento con `StringBuilder`.
+
+**Refactor**
+- Nuevo módulo compartido `scripts/lib/Common.psm1` (protegido): `Get-Prop`, `Get-FirstProp`, `Read-JsonFile`, `Save-RawJson`, `Assert-EnvName`, `Initialize-RunContext`, `Get-RunUser`, `Write-RunMeta`, `ConvertFrom-CertJson`, `Get-SnapshotList`, `Format-PsLiteral`, `New-ReviewCommand`, `ConvertTo-MdText`, `Get-SeverityRank`, `Add-GroupedFinding`, `Add-CoverageByError`, `Add-SeverityKpis`, `Export-GovcCsv` y `Complete-Report`. Ver [Scripts](/vcenter/referencia/scripts/#módulos-scriptslib).
+- Códigos de regla estables: `snap-age-<nombre>` → `snap-age` (objeto `VM / snapshot`); `alarm-<nombre>` → `alarm` (objeto `entidad / alarma`); `license-<edición>` → `license`. `Compare-Report.ps1` traduce las claves anteriores a 1.8. Ver [Códigos de regla estables](/vcenter/reportes/hallazgos/#códigos-de-regla-estables).
+- Los hallazgos de `audit.json` incluyen una clave estable `key` (12 caracteres hexadecimales del SHA-256 de `regla|objeto`); `AUD-NNN` no cambia.
+- Con `-Cluster`, el alcance de la auditoría indica que el inventario y la capacidad corresponden a todo vCenter.
+
+**Pruebas**
+- `Test-Guards.ps1`: casos en paralelo, equivalencia entre `pre-guard.sh` y `govc-guard.ps1`, opción `-Strict` (un grupo omitido cuenta como falla) y restauración de `GOVC_GUARD_CONFIG`. 211 verificaciones en unos 18 s (antes, unos 50 s).
+- `Test-Reports.ps1`: 145 verificaciones, con pruebas unitarias nuevas (`Format-PsLiteral`, `Format-MdCode`, escapes del certificado, flujo de `object.collect`, errores del lote, guardado profundo, texto de intervalos) y una prueba de la cadena de `Test-AuditLog.ps1`. Datos de demostración con un nombre con comillas y una cadena de 8 snapshots.
+
+**Compatibilidad**
+- Requiere Claude Code 2.1.295 o posterior para `onFailure`; con `sh` o `pwsh` ausentes, las llamadas se bloquean (ver [Solución de problemas](/vcenter/referencia/solucion-problemas/)).
+- Los scripts rechazan parámetros desconocidos y la combinación de `-Env` con `-FromRaw`; conviene revisar tareas programadas y scripts propios que los invoquen.
+- `-FromRaw` y `Compare-Report.ps1` siguen funcionando con corridas anteriores.
+- Los cambios en guardas, permisos y concurrencia deben validarlos Seguridad de la Información y Arquitectura antes de instalarlos; en particular, antes de habilitar `batchParallel` mayor que `1` en `prod` o `dr`, tras probarlo en `lab`.
+
 ## 1.7 — Octubre 2026
 
 **Rendimiento**
