@@ -20,10 +20,10 @@ Las credenciales se guardan solo en Windows Credential Manager. Cada operación 
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset=".github/assets/vista-reporte-oscuro.png">
-    <img src=".github/assets/vista-reporte-claro.png" alt="Reporte general (all) generado con datos de demostración: indicadores de inventario y hallazgos priorizados con el comando para revisarlos" width="860">
+    <img src=".github/assets/vista-reporte-claro.png" alt="Reporte general (all) con datos de demostración: índice, indicadores, resumen de Claude y prioridades con filtro, chips de severidad y comandos copiables" width="860">
   </picture>
   <br>
-  <sub>Reporte generado con <code>task demo</code>; los datos son ficticios.</sub>
+  <sub>Reporte generado con <code>task demo</code> y análisis de Claude; los datos son ficticios.</sub>
 </p>
 
 ---
@@ -33,11 +33,13 @@ Las credenciales se guardan solo en Windows Credential Manager. Cada operación 
 | Área | Descripción |
 |---|---|
 | Consulta | Inventario completo con un número fijo de consultas en bloque (`object.collect`), sin depender del tamaño del entorno |
-| Reportes | Inventario, snapshots, capacidad (con holgura N+1 por clúster) y salud en HTML, Markdown y CSV, con hallazgos clasificados por severidad |
-| Rendimiento | CPU ready, latencia por datastore, CPU de hosts, ballooning, swap y paquetes descartados en una ventana de 1 h, 24 h o 7 días (`metric.sample`, p95 y máximo) |
+| Reportes | Inventario, snapshots, capacidad y salud en HTML, Markdown y CSV. Cada hallazgo indica cuántas VMs expone, y la sección *Prioridades* ordena por severidad × VMs expuestas. Incluyen paneles de métricas: holgura N+1, VMs que aún caben, días hasta el 90 % por datastore y salud en % |
+| HTML navegable | Índice fijo, secciones plegables, filtro y orden por columna, chips de severidad y botón Copiar en cada comando de revisión. Sin red y con CSP por hash; sin JavaScript se lee igual |
+| Rendimiento | CPU ready, latencia por datastore, CPU de hosts, ballooning, swap y paquetes descartados en una ventana de 1 h, 24 h o 7 días (`metric.sample`, p95 y máximo). Con 24 h o 7 días, capacidad recuperable por right-sizing (vCPU y RAM) |
 | Diagnóstico de hosts | Revisión por `esxcli` de cada host de un clúster (VIBs, NIC, paths, NTP, syslog, coredump) y detección de diferencias |
-| Auditoría | Informe formal imprimible con resumen ejecutivo, metodología, hallazgos `AUD-NNN`, plan de remediación y aprobación |
-| Tendencias | Comparación entre corridas o auditorías sin volver a consultar vCenter |
+| Auditoría | Informe formal imprimible: resumen ejecutivo con métricas clave y evolución frente a la auditoría anterior, metodología, hallazgos `AUD-NNN` enlazados, plan de remediación por prioridad y aprobación |
+| Análisis de Claude | Diagnóstico, qué hacer primero, hallazgos relacionados y qué vigilar, dentro del propio reporte y con su resumen arriba. Una huella de los hallazgos avisa si el análisis quedó desactualizado. Umbrales, métricas y prioridades siguen siendo deterministas |
+| Tendencias | Comparación entre corridas o auditorías sin volver a consultar vCenter, con análisis de lo que crece y lo que se agota primero |
 | Provisión | Creación de VM desde plantilla con el flujo validar → planear → aprobar → ejecutar → verificar |
 
 ## Requisitos
@@ -96,12 +98,15 @@ Después, abre Claude Code en la carpeta del proyecto y usa los comandos de la s
 | `/inventory prod` | Resumen de inventario en pantalla |
 | `/report prod health` | Reporte HTML, Markdown o CSV en `reports/` (`all`, `inventory`, `snapshots`, `capacity`, `health`) |
 | `/health prod` | Hallazgos priorizados con acciones sugeridas |
-| `/capacity prod` | Capacidad por clúster, holgura N+1 ante la falla de un host y, si hace falta, CPU ready en una ventana de tiempo |
+| `/capacity prod` | Capacidad por clúster, holgura N+1 ante la falla de un host, capacidad recuperable y, si hace falta, CPU ready en una ventana de tiempo |
+| `/perf prod CL-PROD-01 7d` | Rendimiento en una ventana (`1h`, `24h` o `7d`): CPU ready, latencia, CPU de hosts, memoria, descartes de red y right-sizing |
 | `/snapshot-audit prod 7` | Snapshots por antigüedad y plan de limpieza propuesto (no ejecuta) |
 | `/host-check prod CL-PROD-01` | Revisión `esxcli` por host y detección de diferencias |
 | `/trend prod` | Tendencias entre las dos últimas corridas |
 | `/audit prod` | Auditoría técnica completa con informe formal |
 | `/vm-create specs/app01.yaml` | Provisión de una VM con validación y aprobación |
+
+Con `/report`, `/health`, `/capacity`, `/perf`, `/host-check`, `/trend` y `/audit`, Claude agrega al reporte su análisis: diagnóstico, qué hacer primero, hallazgos relacionados y qué vigilar en la próxima corrida.
 
 ## Atajos con Task
 
@@ -122,7 +127,7 @@ Después, abre Claude Code en la carpeta del proyecto y usa los comandos de la s
 | Documentación | `task docs` · `task docs:build` |
 
 - `ENV` indica el entorno y `FROM`, una carpeta ya recolectada en `reports/`. Los reportes necesitan una de las dos.
-- Con `FROM`, el reporte se regenera dentro de la carpeta original y reescribe su `raw/findings.json` y `raw/summary.json`; si cambias umbrales al reanalizar, eso también cambia las comparaciones posteriores de `/trend`.
+- Con `FROM`, el reporte se regenera dentro de la carpeta original, con el mismo tipo, y reescribe `raw/findings.json`, `raw/summary.json`, `raw/metrics.json` y `raw/fingerprint.txt`. Si cambias umbrales al reanalizar, cambian también las comparaciones posteriores de `/trend` y el análisis de Claude se marca como desactualizado.
 - Los parámetros adicionales de cada script van después de `--`.
 - `task --dry <tarea> …` muestra el comando sin ejecutarlo.
 - Las tareas solo cubren operaciones que no modifican vCenter. Los cambios y la provisión siguen el flujo con validación y aprobación (`/vm-create`).
@@ -178,7 +183,7 @@ config/         Perfiles de entorno (solo se versiona el ejemplo)
 docs/           Documentación (Astro Starlight), publicada en GitHub Pages
 scripts/        Wrapper, reportes, auditoría, pruebas y módulos (scripts/lib/)
 specs/          Especificaciones de VM propias (no versionadas)
-templates/      Plantillas de reporte, de auditoría y de especificación de VM
+templates/      Plantillas de reporte y auditoría, catálogo de textos (findings.psd1), script compartido de los HTML (report.js) y especificación de VM
 tools/          govc y vcsim instalados por task install (no versionados)
 CLAUDE.md       Reglas del proyecto para Claude Code
 Taskfile.yml    Atajos de Task para reportes, pruebas, instalación y documentación

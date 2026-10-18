@@ -19,7 +19,7 @@ Esta solución permite operar, analizar y auditar plataformas VMware vSphere med
 |---|---|
 | Consulta de inventario, capacidad, configuración y alarmas de vCenter | Sistemas operativos invitados y aplicaciones |
 | Diagnóstico de configuración de hosts ESXi a través de vCenter | Acceso directo a hosts por SSH |
-| Reportes de salud, capacidad, snapshots y tendencias | Monitoreo en tiempo real (función de la herramienta de monitoreo) |
+| Reportes de salud, capacidad, snapshots, rendimiento en una ventana, capacidad recuperable y tendencias | Monitoreo en tiempo real (función de la herramienta de monitoreo) |
 | Auditoría técnica con informe formal | Certificación de cumplimiento normativo |
 | Provisión controlada de VMs y recursos de inventario | Cambios destructivos en producción ejecutados por el asistente |
 
@@ -50,6 +50,9 @@ Esta solución permite operar, analizar y auditar plataformas VMware vSphere med
 | `.claude/hooks/govc-guard.ps1` | Control previo de cada comando y archivo que propone Claude |
 | `scripts/New-Report.ps1` | Reportes de inventario, capacidad, snapshots y salud |
 | `scripts/Invoke-HostCheck.ps1` | Revisión de configuración de hosts ESXi |
+| `scripts/Invoke-PerfCheck.ps1` | Rendimiento en una ventana de tiempo y right-sizing |
+| `templates/findings.psd1` | Catálogo de sugerencias, riesgos y notas de los hallazgos |
+| `templates/report.js` | Script compartido de los HTML: filtro, orden y copiar comandos (autorizado por hash en la CSP) |
 | `scripts/Invoke-Audit.ps1` | Auditoría técnica completa |
 | `scripts/Compare-Report.ps1` | Tendencias entre corridas |
 | Skills y comandos de Claude | Procedimientos y criterios que el asistente aplica |

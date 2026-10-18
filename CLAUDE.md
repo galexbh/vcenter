@@ -35,7 +35,7 @@ Tras cambiar un script de reportes, una plantilla o un módulo: `./scripts/Test-
 | `scripts/govc.ps1` | Wrapper: perfil, credencial, política por `mode`, modo lote y bitácora encadenada (`logs/`) |
 | `scripts/New-Report.ps1` | Reportes `all`/`inventory`/`snapshots`/`capacity`/`health` (HTML/MD/CSV); escribe `raw/findings.json` (con VMs expuestas), `raw/summary.json` y `raw/metrics.json`; incluye `raw/analysis.md` si existe |
 | `scripts/Invoke-HostCheck.ps1` | Revisión esxcli por host y drift entre hosts |
-| `scripts/Invoke-PerfCheck.ps1` | Rendimiento en ventana `1h`/`24h`/`7d` (CPU ready, latencia, CPU de hosts, memoria, drops) |
+| `scripts/Invoke-PerfCheck.ps1` | Rendimiento en ventana `1h`/`24h`/`7d` (CPU ready, latencia, CPU de hosts, memoria, drops) y right-sizing (`perf-oversized`, solo 24h/7d) |
 | `scripts/Invoke-Audit.ps1` | Auditoría con informe formal (`templates/audit.*`) |
 | `scripts/Compare-Report.ps1` | Tendencias entre dos corridas o dos auditorías |
 | `scripts/Test-Guards.ps1` | Pruebas de clasificación y hook (`-HookPath` para una versión preparada) |

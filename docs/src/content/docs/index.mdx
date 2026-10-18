@@ -30,6 +30,12 @@ import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
 	<Card title="Consulta eficiente" icon="rocket">
 		El inventario completo se obtiene con un número fijo de consultas en bloque, independiente del tamaño del entorno.
 	</Card>
+	<Card title="Reportes que priorizan" icon="list-format">
+		Cada hallazgo indica cuántas VMs expone. Los reportes ordenan las acciones por impacto, muestran métricas de capacidad y salud y se navegan con índice, filtro y comandos copiables.
+	</Card>
+	<Card title="Análisis de Claude" icon="star">
+		Diagnóstico, qué hacer primero y qué vigilar, dentro del propio reporte, con un aviso cuando los hallazgos cambian. Umbrales y métricas siguen siendo deterministas.
+	</Card>
 	<Card title="Auditoría formal" icon="document">
 		Informe imprimible con resumen ejecutivo, metodología, hallazgos identificados, plan de remediación y sección de aprobación.
 	</Card>
@@ -54,7 +60,8 @@ import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
 | `/env prod` | Verificar perfiles y conectividad |
 | `/inventory prod` | Resumen de inventario en pantalla |
 | `/health prod` | Hallazgos priorizados con acciones sugeridas |
-| `/capacity prod` | Capacidad por clúster y holgura ante falla de un host |
+| `/capacity prod` | Capacidad por clúster, holgura ante falla de un host y capacidad recuperable |
+| `/perf prod` | Rendimiento en una ventana: CPU ready, latencia, memoria y right-sizing |
 | `/host-check prod CL-PROD-01` | Revisión de configuración de hosts y detección de diferencias |
 | `/audit prod` | Auditoría técnica completa con informe formal |
 | `/trend prod` | Tendencias entre las dos últimas corridas |

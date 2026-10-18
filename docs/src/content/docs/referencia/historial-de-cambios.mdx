@@ -34,6 +34,9 @@ sidebar:
 - `content-visibility: auto` en las secciones de tabla, para no pintar las que están fuera de pantalla; las secciones de más de 100 filas empiezan plegadas.
 - Claude redacta el análisis desde los JSON y `fingerprint.txt`, sin abrir el HTML.
 
+**Documentación**
+- README y portada al día con 2.0 y 2.1: capacidades, comando `/perf` (faltaba en las listas de comandos desde 1.7), componentes, parámetros de right-sizing y capturas nuevas del reporte.
+
 **Pruebas**
 - `Test-Reports.ps1`: 222 verificaciones (CSP de los HTML generados con el hash del script compartido, construcciones prohibidas en `report.js`, anclas del índice, KPIs y AUD-NNN con su `id`, `data-filter`, `data-sev`, `code.cmd` y columnas numéricas, secciones plegadas por tamaño, insignia de entorno, resumen de Claude y avisos de vigencia, estabilidad de la huella y análisis en `Compare-Report.ps1`).
 

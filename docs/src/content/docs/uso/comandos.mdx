@@ -15,7 +15,8 @@ Los comandos se definen en `.claude/commands/`. Todos requieren un entorno expl�
 | `/inventory` | `<entorno> [clúster\|carpeta]` | <Badge text="Lectura" variant="success" /> | Resumen de VMs, hosts, clústeres y datastores en pantalla |
 | `/report` | `<entorno> [tipo] [html\|md\|csv]` | <Badge text="Lectura" variant="success" /> | Reporte en `reports/` (HTML, Markdown o CSV para Excel) y resumen de hallazgos |
 | `/health` | `<entorno>` | <Badge text="Lectura" variant="success" /> | Hallazgos agrupados en *Atender ya*, *Planificar* y *Mejoras* |
-| `/capacity` | `<entorno> [clúster]` | <Badge text="Lectura" variant="success" /> | vCPU:pCore, RAM, holgura N+1 y principales datastores |
+| `/capacity` | `<entorno> [clúster]` | <Badge text="Lectura" variant="success" /> | vCPU:pCore, RAM, holgura N+1, principales datastores y capacidad recuperable |
+| `/perf` | `<entorno> [clúster] [1h\|24h\|7d]` | <Badge text="Lectura" variant="success" /> | CPU ready, latencia por datastore, CPU de hosts, memoria, descartes de red y right-sizing en la ventana (24h por defecto) |
 | `/snapshot-audit` | `<entorno> [días]` | <Badge text="Lectura" variant="success" /> | Snapshots antiguos, patrones y plan de limpieza **propuesto** |
 | `/host-check` | `<entorno> [clúster\|host] [chequeos]` | <Badge text="Lectura" variant="success" /> | Revisión de hosts por esxcli y diferencias entre hosts |
 | `/trend` | `<entorno>` | <Badge text="Sin consulta" variant="note" /> | Tendencias entre las dos últimas corridas, con análisis de Claude |
@@ -27,6 +28,7 @@ Los comandos se definen en `.claude/commands/`. Todos requieren un entorno expl�
 ```text
 /report prod snapshots md
 /capacity prod CL-PROD-01
+/perf prod CL-PROD-01 7d
 /snapshot-audit prod 3
 /host-check prod CL-PROD-01
 /trend prod
@@ -36,5 +38,5 @@ Los comandos se definen en `.claude/commands/`. Todos requieren un entorno expl�
 ```
 
 :::note
-Los comandos de análisis no ejecutan correcciones. Al finalizar, ofrecen elaborar el plan de cambio para los hallazgos seleccionados.
+Los comandos de análisis no ejecutan correcciones. Al finalizar, Claude agrega su análisis al reporte (ver [Prioridades y análisis](/vcenter/reportes/generar/#prioridades-y-análisis)) y ofrece elaborar el plan de cambio para los hallazgos seleccionados.
 :::
