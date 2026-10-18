@@ -12,8 +12,11 @@
 .EXAMPLE
   ./scripts/Test-Guards.ps1
   ./scripts/Test-Guards.ps1 -HookPath <ruta>\.claude\hooks\govc-guard.ps1
+  ./scripts/Test-Guards.ps1 -Strict      # un grupo de casos omitido (hook antiguo, sin sh) cuenta como falla
 #>
-param([string]$HookPath)
+#Requires -Version 7.5
+[CmdletBinding(PositionalBinding = $false)]
+param([string]$HookPath, [switch]$Strict)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -30,6 +33,10 @@ $fail = 0; $pass = 0
 function Check($name, $expected, $actual) {
     if ($expected -eq $actual) { $script:pass++ }
     else { $script:fail++; Write-Host "FALLA  $name → esperado '$expected', obtenido '$actual'" -ForegroundColor Red }
+}
+function Skip([string]$msg) {
+    # Con -Strict, un grupo omitido es una falla (p. ej. en CI o antes de instalar guardas nuevas).
+    if ($Strict) { $script:fail++; Write-Host "FALLA  omitido: $msg" -ForegroundColor Red } else { Write-Host "Aviso: $msg" -ForegroundColor Yellow }
 }
 
 # --- Clasificación ---------------------------------------------------------------
@@ -57,23 +64,51 @@ $classCases = @(
     @('metric.sample -json -i 300 -n 288 -instance= HostSystem:host-10 cpu.usage.average', 'read'), @('metric.interval.info -json', 'read'),
     @('metric.info - cpu.ready.summation', 'read'), @('metric.ls HostSystem:host-10', 'read'),
     @('metric.interval.change -i 300 -level 2', 'write'), @('metric.reset cpu.ready.summation', 'write'), @('metric.change -level 2 cpu.ready.summation', 'write'),
-    @('metric.sample -debug HostSystem:host-10 cpu.usage.average', 'secret')
+    @('metric.sample -debug HostSystem:host-10 cpu.usage.average', 'secret'),
+    # Flags que vuelcan tráfico o redirigen la conexión (la credencial iría a otro endpoint).
+    @('about -trace', 'secret'), @('about -verbose', 'secret'), @('about -u https://otro/sdk', 'secret'), @('ls -k /', 'secret'),
+    @('about -persist-session=true', 'secret'), @('object.collect -tls-ca-certs x.pem / name', 'secret'), @('host.esxcli -host h -trace network nic list', 'secret'),
+    # guest.*: credenciales del SO invitado (-l usuario:clave); vm.question -answer cambia la VM.
+    @('guest.ls -l root:x -vm a /', 'secret'), @('vm.question -vm a', 'read'), @('vm.question -vm a -answer 1', 'write'), @('ls -l /DC0/vm', 'read')
 )
 foreach ($c in $classCases) { Check "class: $($c[0])" $c[1] (Get-GovcOpClass ($c[0] -split ' ')) }
 
+# --- Enmascarado en la bitácora --------------------------------------------------------
+$maskCases = @(
+    @('find / -p -type m', 'find / -p -type m'), @('ls -l /DC0', 'ls -l /DC0'),
+    @('guest.ls -l root:secreto -vm a /', 'guest.ls -l *** -vm a /'),
+    @('host.esxcli -host h system account add -i u -p secreto', 'host.esxcli -host h system account add -i u -p ***'),
+    @('vm.info -password=x app', 'vm.info -password=*** app')
+)
+foreach ($c in $maskCases) { Check "mask: $($c[0])" $c[1] ((Protect-GovcArgs ($c[0] -split ' ')) -join ' ') }
+
 # --- Hook ------------------------------------------------------------------------
-function Invoke-Hook([string]$tool, $command) {
-    # $command: texto del comando, o hashtable con el tool_input completo (Write/Edit).
-    $ti = if ($command -is [hashtable]) { $command } else { @{ command = $command } }
-    $payload = @{ tool_name = $tool; tool_input = $ti } | ConvertTo-Json -Compress -Depth 5
-    $env:GOVC_GUARD_CONFIG = Join-Path $root 'config/environments.example.json'
-    try { $out = $payload | pwsh -NoProfile -NonInteractive -File $hook } finally { Remove-Item Env:GOVC_GUARD_CONFIG }
-    if (-not $out) { return 'none' }
-    return (($out | Out-String) | ConvertFrom-Json).hookSpecificOutput.permissionDecision
+$sh = Get-Command sh -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1 | ForEach-Object { $_.Source }
+if (-not $sh -and (Test-Path 'C:\Program Files\Git\bin\sh.exe')) { $sh = 'C:\Program Files\Git\bin\sh.exe' }
+$preGuard = Join-Path (Split-Path -Parent $hook) 'pre-guard.sh'
+$projDir = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $hook))
+
+function Invoke-HookCases($cases, [string]$via) {
+    # Ejecuta los casos en paralelo. via = 'hook' (govc-guard.ps1) | 'pre' (pre-guard.sh → govc-guard.ps1).
+    $hookPath = $hook; $pre = $preGuard; $shPath = $sh
+    $res = $cases | ForEach-Object -ThrottleLimit 8 -Parallel {
+        $c = $_
+        $ti = if ($c.input -is [hashtable]) { $c.input } else { @{ command = $c.input } }
+        $payload = @{ tool_name = $c.tool; tool_input = $ti } | ConvertTo-Json -Compress -Depth 5
+        $out = if ($using:via -eq 'pre') { $payload | & $using:shPath $using:pre } else { $payload | pwsh -NoProfile -NonInteractive -File $using:hookPath }
+        $d = if (-not $out) { 'none' } else { (($out | Out-String) | ConvertFrom-Json).hookSpecificOutput.permissionDecision }
+        [pscustomobject]@{ i = $c.i; decision = $d }
+    }
+    $map = @{}; foreach ($r in $res) { $map[$r.i] = $r.decision }
+    return $map
 }
 
 $W = './scripts/govc.ps1'
-$hookCases = @(
+# Rutas sensibles armadas por partes (la guarda de archivos bloquea sus literales).
+$gmd = '.govmomi'; $gse = 'sessions'
+$cases = New-Object System.Collections.Generic.List[object]
+function Add-Case($tool, $inputValue, $expected) { $cases.Add([pscustomobject]@{ i = $cases.Count; tool = $tool; input = $inputValue; expected = $expected }) }
+foreach ($c in @(
     # lecturas
     @('PowerShell', "$W -Env prod about", 'allow'),
     @('PowerShell', "$W -Env prod object.collect -json -type m / name | ConvertFrom-Json | Select-Object -First 5", 'allow'),
@@ -105,31 +140,42 @@ $hookCases = @(
     @('PowerShell', "govc ls /", 'deny'),
     @('PowerShell', "& ./tools/govc.exe about", 'deny'),
     @('Bash', "./tools/govc.exe about", 'deny'),
+    @('Monitor', "./tools/govc.exe events -f", 'deny'),
     @('PowerShell', "`$env:$pw = 'x'", 'deny'),
     @('Bash', "GOVC_URL=https://u:p@vc/sdk govc about", 'deny'),
     @('PowerShell', "$W -Env lab env", 'deny'),
     @('PowerShell', "$W -Env lab about -debug", 'deny'),
+    @('PowerShell', "$W -Env prod about -trace", 'deny'),
+    @('PowerShell', "$W -Env prod about -u https://otro/sdk", 'deny'),
     @('PowerShell', "cmdkey /generic:govc:prod /user:a /pass:secreto", 'deny'),
     @('PowerShell', "Import-Module ./scripts/lib/$vaultMod; $vaultCall govc:prod", 'deny'),
-    @('PowerShell', "Get-Content ~/.govmomi/sessions/abc", 'deny'),
+    @('PowerShell', "Get-Content ~/$gmd/$gse/abc", 'deny'),
     # git
     @('Bash', "git add -f reports/prod/x.html", 'deny'),
     @('PowerShell', "git add reports/prod/x.md", 'deny'),
     @('Bash', "git add logs/audit.jsonl", 'deny'),
     @('Bash', "git add config/environments.json", 'deny'),
-    @('Bash', "git add scripts/New-Report.ps1", 'none')
-)
-foreach ($c in $hookCases) { Check "hook[$($c[0])]: $($c[1])" $c[2] (Invoke-Hook $c[0] $c[1]) }
+    @('Bash', "git add scripts/New-Report.ps1", 'none'),
+    # sin nada relevante: el filtro rápido ni siquiera arranca PowerShell
+    @('Bash', "ls -la docs", 'none'),
+    @('PowerShell', "Get-Date", 'none'),
+    @('Write', @{ file_path = 'notes.md'; content = 'Reporte de capacidad de prod' }, 'none')
+)) { Add-Case $c[0] $c[1] $c[2] }
+
+$hookText = Get-Content $hook -Raw
+if ($hookText -match 'ConvertFrom-GovcCollect') {
+    Add-Case 'PowerShell' "Import-Module ./scripts/lib/GovcJson.psm1; $W -Env prod object.collect -json -type h / name | ConvertFrom-GovcCollect" 'allow'
+    Add-Case 'PowerShell' "Import-Module ./scripts/lib/GovcJson.psm1 -Force; $W -Env prod object.collect -json -type h / name | ConvertFrom-GovcCollect | Select-Object name" 'allow'
+    Add-Case 'PowerShell' "Import-Module ./otro.psm1; $W -Env prod about" 'none'
+} else { Skip 'el hook instalado no reconoce ConvertFrom-GovcCollect / Import-Module de GovcJson (1.8); casos omitidos.' }
 
 # --- Hook v1.2: archivos, bitácora y comandos codificados ----------------------------
-# Se detectan por capacidad: con un hook anterior estos casos se omiten (no fallan).
-$hookText = Get-Content $hook -Raw
+# Se detectan por capacidad: con un hook anterior estos casos se omiten (no fallan, salvo -Strict).
 if ($hookText -match "'Write', 'Edit'") {
-    $fileCases = @(
+    foreach ($c in @(
         @('Write', @{ file_path = 'x.ps1'; content = "[X]::$vaultApi('govc:prod')" }, 'deny'),
         @('Edit', @{ file_path = 'scripts/a.ps1'; old_string = 'a'; new_string = "$vaultCall -Target govc:prod" }, 'deny'),
         @('MultiEdit', @{ file_path = 'scripts/a.ps1'; edits = @(@{ old_string = 'a'; new_string = "`$env:$pw = 'x'" }) }, 'deny'),
-        @('Write', @{ file_path = 'notes.md'; content = 'Reporte de capacidad de prod' }, 'none'),
         @('Edit', @{ file_path = 'scripts/New-Report.ps1'; old_string = 'a'; new_string = 'b' }, 'none'),
         @('PowerShell', 'Remove-Item logs/audit-20261017.jsonl', 'deny'),
         @('PowerShell', "'x' | Out-File logs\a.jsonl", 'deny'),
@@ -140,34 +186,50 @@ if ($hookText -match "'Write', 'Edit'") {
         @('PowerShell', "$W -Env prod logs", 'allow'),
         @('PowerShell', 'pwsh -EncodedCommand SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQA', 'deny'),
         @('PowerShell', "iex ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('ZWNobyBo')))", 'deny')
-    )
+    )) { Add-Case $c[0] $c[1] $c[2] }
     if ($hookText -match 'sessionPattern') {
         $gh = 'GOVMOMI' + '_HOME'; $gr = 'govc-run' + '-abc123'; $gp = 'GOVC_PERSIST' + '_SESSION'
-        $fileCases += @(
+        foreach ($c in @(
             @('PowerShell', "$W -Env prod -Batch lote.json", 'ask'),
             @('PowerShell', "$W -Env dr -Batch lote.json", 'ask'),
             @('PowerShell', "`$env:$gh = 'C:\x'", 'deny'),
-            @('PowerShell', "Get-ChildItem `$env:TEMP\$gr\sessions", 'deny'),
-            @('Bash', "cat /tmp/$gr/sessions/x", 'deny'),
+            @('PowerShell', "Get-ChildItem `$env:TEMP\$gr\$gse", 'deny'),
+            @('Bash', "cat /tmp/$gr/$gse/x", 'deny'),
             @('Write', @{ file_path = 'x.ps1'; content = "`$env:$gp = 'true'" }, 'deny'),
             @('Edit', @{ file_path = 'x.ps1'; old_string = 'a'; new_string = "`$env:$gh = 'C:\s'" }, 'deny'),
-            @('Read', @{ file_path = "C:\Users\u\AppData\Local\Temp\$gr\sessions\abc" }, 'deny'),
+            @('Read', @{ file_path = "C:\Users\u\AppData\Local\Temp\$gr\$gse\abc" }, 'deny'),
             @('Glob', @{ pattern = "**/$gr/**" }, 'deny'),
             @('Read', @{ file_path = 'C:\Users\u\Documents\Github\vcenter\README.md' }, 'none')
-        )
+        )) { Add-Case $c[0] $c[1] $c[2] }
     }
-    foreach ($c in $fileCases) {
-        $label = if ($c[1] -is [hashtable]) { "$($c[0]) $($c[1]['file_path'] ?? $c[1]['pattern'])" } else { $c[1] }
-        Check "hook[$($c[0])]: $label" $c[2] (Invoke-Hook $c[0] $c[1])
+} else { Skip 'el hook instalado no incluye los controles v1.2 (archivos, bitácora); casos omitidos.' }
+
+# Un solo valor para todo el proceso (los hilos lo comparten); se restaura el valor anterior al final.
+$prevCfg = $env:GOVC_GUARD_CONFIG; $prevProj = $env:CLAUDE_PROJECT_DIR
+$env:GOVC_GUARD_CONFIG = Join-Path $root 'config/environments.example.json'
+$env:CLAUDE_PROJECT_DIR = $projDir
+try {
+    $direct = Invoke-HookCases $cases.ToArray() 'hook'
+    foreach ($c in $cases) {
+        $label = if ($c.input -is [hashtable]) { "$($c.tool) $($c.input['file_path'] ?? $c.input['pattern'])" } else { $c.input }
+        Check "hook[$($c.tool)]: $label" $c.expected $direct[$c.i]
     }
-} else {
-    Write-Host 'Aviso: el hook instalado no incluye los controles v1.2 (archivos, bitácora); casos omitidos.' -ForegroundColor Yellow
+    # Filtro rápido: misma decisión que la guarda completa en todos los casos de los tools que cubre.
+    if ((Test-Path $preGuard) -and $sh) {
+        $preCases = @($cases | Where-Object { $_.tool -in 'Bash', 'PowerShell', 'Monitor', 'Write', 'Edit', 'NotebookEdit' })
+        $viaPre = Invoke-HookCases $preCases 'pre'
+        foreach ($c in $preCases) {
+            $label = if ($c.input -is [hashtable]) { "$($c.tool) $($c.input['file_path'])" } else { $c.input }
+            Check "pre-guard = hook[$($c.tool)]: $label" $direct[$c.i] $viaPre[$c.i]
+        }
+    } else { Skip 'pre-guard.sh o sh no disponibles; equivalencia del filtro rápido omitida.' }
+} finally {
+    if ($null -eq $prevCfg) { Remove-Item Env:GOVC_GUARD_CONFIG -ErrorAction SilentlyContinue } else { $env:GOVC_GUARD_CONFIG = $prevCfg }
+    if ($null -eq $prevProj) { Remove-Item Env:CLAUDE_PROJECT_DIR -ErrorAction SilentlyContinue } else { $env:CLAUDE_PROJECT_DIR = $prevProj }
 }
 
 # --- Guarda rápida de lecturas (read-guard.sh) -----------------------------------------
 $readGuard = Join-Path (Split-Path -Parent $hook) 'read-guard.sh'
-$sh = Get-Command sh -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1 | ForEach-Object { $_.Source }
-if (-not $sh -and (Test-Path 'C:\Program Files\Git\bin\sh.exe')) { $sh = 'C:\Program Files\Git\bin\sh.exe' }
 if ((Test-Path $readGuard) -and $sh) {
     $rr = 'govc' + '-run-abc'; $gm = '.govmomi'; $se = 'sessions'
     $readCases = @(
@@ -183,7 +245,7 @@ if ((Test-Path $readGuard) -and $sh) {
         Check "read-guard[$($c[0].tool_name)]: $($c[0].tool_input.Values | Select-Object -First 1)" $c[1] $d
     }
 } else {
-    Write-Host 'Aviso: read-guard.sh o sh no disponibles; casos de lectura rápida omitidos.' -ForegroundColor Yellow
+    Skip 'read-guard.sh o sh no disponibles; casos de lectura rápida omitidos.'
 }
 
 $color = if ($fail) { 'Red' } else { 'Green' }

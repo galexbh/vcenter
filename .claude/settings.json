@@ -1,36 +1,39 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "disableSkillShellExecution": true,
   "permissions": {
     "allow": [
       "PowerShell(./scripts/New-Report.ps1 *)",
-      "PowerShell(.\\scripts\\New-Report.ps1 *)",
       "PowerShell(./scripts/Invoke-HostCheck.ps1 *)",
-      "PowerShell(./scripts/Compare-Report.ps1 *)",
-      "PowerShell(./scripts/Invoke-Audit.ps1 *)",
       "PowerShell(./scripts/Invoke-PerfCheck.ps1 *)",
+      "PowerShell(./scripts/Invoke-Audit.ps1 *)",
+      "PowerShell(./scripts/Compare-Report.ps1 *)",
       "PowerShell(./scripts/Test-Guards.ps1)",
-      "PowerShell(.\\scripts\\Test-Guards.ps1)",
-      "PowerShell(./scripts/Test-AuditLog.ps1*)",
-      "PowerShell(./scripts/Test-Reports.ps1*)",
-      "PowerShell(./scripts/New-DemoData.ps1*)"
+      "PowerShell(./scripts/Test-AuditLog.ps1 *)",
+      "PowerShell(./scripts/Test-Reports.ps1 *)",
+      "PowerShell(./scripts/New-DemoData.ps1 *)",
+      "PowerShell(npm --prefix docs run build)"
     ],
     "ask": [
       "Edit(./scripts/govc.ps1)",
-      "Write(./scripts/govc.ps1)",
       "Edit(./config/environments.json)",
-      "Write(./config/environments.json)"
+      "Edit(./.claude/skills/**)",
+      "Edit(./.claude/commands/**)",
+      "Edit(./.githooks/**)",
+      "PowerShell(./scripts/New-Report.ps1 *-OutDir*)",
+      "PowerShell(./scripts/Invoke-HostCheck.ps1 *-OutDir*)",
+      "PowerShell(./scripts/Invoke-PerfCheck.ps1 *-OutDir*)",
+      "PowerShell(./scripts/Compare-Report.ps1 *-OutDir*)",
+      "PowerShell(./scripts/New-DemoData.ps1 *-OutDir*)"
     ],
     "deny": [
       "Read(~/.govmomi/**)",
       "Edit(./logs/**)",
-      "Write(./logs/**)",
       "Edit(./scripts/lib/**)",
-      "Write(./scripts/lib/**)",
       "Edit(./.claude/hooks/**)",
-      "Write(./.claude/hooks/**)",
       "Edit(./.claude/settings.json)",
-      "Write(./.claude/settings.json)",
-      "PowerShell(cmdkey /generic*)",
+      "PowerShell(cmdkey *)",
+      "Bash(cmdkey *)",
       "PowerShell(Set-GovcCredential*)",
       "PowerShell(./scripts/Set-GovcCredential.ps1*)",
       "Bash(git add -f*)",
@@ -42,12 +45,13 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash|PowerShell|Write|Edit|MultiEdit|NotebookEdit",
+        "matcher": "Bash|PowerShell|Monitor|Write|Edit|NotebookEdit",
         "hooks": [
           {
             "type": "command",
-            "command": "pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"$CLAUDE_PROJECT_DIR/.claude/hooks/govc-guard.ps1\"",
-            "timeout": 20
+            "command": "sh \"$CLAUDE_PROJECT_DIR/.claude/hooks/pre-guard.sh\"",
+            "timeout": 30,
+            "onFailure": "block"
           }
         ]
       },
@@ -57,7 +61,8 @@
           {
             "type": "command",
             "command": "sh \"$CLAUDE_PROJECT_DIR/.claude/hooks/read-guard.sh\"",
-            "timeout": 10
+            "timeout": 10,
+            "onFailure": "block"
           }
         ]
       }

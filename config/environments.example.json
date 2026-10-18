@@ -11,7 +11,8 @@
     "resourcePool": "/DC-LAB/host/CL-LAB-01/Resources",
     "insecure": false,
     "caCerts": "",
-    "persistSession": false
+    "persistSession": false,
+    "batchParallel": 4
   },
   "dr": {
     "url": "https://vcenter-dr.example.local/sdk",
@@ -21,7 +22,8 @@
     "cluster": "CL-DR-01",
     "insecure": false,
     "caCerts": "C:/certs/vcenter-ca.pem",
-    "persistSession": false
+    "persistSession": false,
+    "batchParallel": 1
   },
   "prod": {
     "url": "https://vcenter-prod.example.local/sdk",
@@ -35,6 +37,7 @@
     "resourcePool": "/DC-PROD/host/CL-PROD-01/Resources",
     "insecure": false,
     "caCerts": "C:/certs/vcenter-ca.pem",
-    "persistSession": false
+    "persistSession": false,
+    "batchParallel": 1
   }
 }

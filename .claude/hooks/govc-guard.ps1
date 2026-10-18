@@ -1,6 +1,7 @@
 <#
-  PreToolUse hook (Bash | PowerShell | Write | Edit | MultiEdit | NotebookEdit | Read | Glob | Grep)
-  — guarda de seguridad para govc.
+  PreToolUse hook (Bash | PowerShell | Monitor | Write | Edit | NotebookEdit) — guarda de seguridad
+  para govc. Lo invoca .claude/hooks/pre-guard.sh solo cuando el texto puede ser relevante; las
+  lecturas (Read | Glob | Grep) las revisa read-guard.sh (el bloque 0a se conserva para las pruebas).
 
   Decisiones (la más restrictiva gana):
     deny  → secretos en la línea de comandos, govc directo, destructivo fuera de lab,
@@ -216,13 +217,23 @@ try {
     $safeCmds = @(
         'ConvertFrom-Json', 'ConvertTo-Json', 'Select-Object', 'select', 'Where-Object', 'where', '?',
         'Sort-Object', 'sort', 'Group-Object', 'group', 'Measure-Object', 'measure', 'Format-Table', 'ft',
-        'Format-List', 'fl', 'Out-String', 'Select-String', 'ForEach-Object', '%', 'foreach'
+        'Format-List', 'fl', 'Out-String', 'Select-String', 'ForEach-Object', '%', 'foreach', 'ConvertFrom-GovcCollect'
     )
+    # Import-Module solo del parser de object.collect, con ruta literal (y -Force opcional).
+    $isGovcJsonImport = {
+        param($n)
+        if ($n.GetCommandName() -ne 'Import-Module') { return $false }
+        $els = @($n.CommandElements | Select-Object -Skip 1)
+        $prm = @($els | Where-Object { $_ -is [System.Management.Automation.Language.CommandParameterAst] })
+        $arg = @($els | Where-Object { $_ -isnot [System.Management.Automation.Language.CommandParameterAst] })
+        return ($arg.Count -eq 1 -and $arg[0] -is [System.Management.Automation.Language.StringConstantExpressionAst] -and
+            $arg[0].Value -match '^\.[\\/]scripts[\\/]lib[\\/]GovcJson\.psm1$' -and -not @($prm | Where-Object { $_.ParameterName -ne 'Force' }).Count)
+    }
     $unsafe = $ast.FindAll({ param($n)
             ($n -is [System.Management.Automation.Language.FileRedirectionAst]) -or
             ($n -is [System.Management.Automation.Language.InvokeMemberExpressionAst]) -or
             ($n -is [System.Management.Automation.Language.CommandAst] -and
-                -not (($n.GetCommandName() -match 'govc\.ps1$') -or ($safeCmds -contains $n.GetCommandName())))
+                -not (($n.GetCommandName() -match 'govc\.ps1$') -or ($safeCmds -contains $n.GetCommandName()) -or (& $isGovcJsonImport $n)))
         }, $true)
     if (@($unsafe).Count -eq 0) { Emit 'allow' (($reasons | Select-Object -Unique) -join '; ') }
     exit 0

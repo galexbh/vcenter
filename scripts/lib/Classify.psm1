@@ -6,6 +6,11 @@ Set-StrictMode -Version Latest
 
 # Subcomandos que exponen o manipulan credenciales: nunca permitidos vía Claude.
 $script:SecretCommands = @('env', 'session.login', 'sso.service.ls', 'vm.console')
+# guest.*: operan dentro del SO invitado con credenciales del guest (-l usuario:clave).
+$script:SecretPrefix = '^guest\.'
+# Flags de govc que vuelcan tráfico/sesión o redirigen la conexión (la credencial del wrapper
+# iría a otro endpoint o certificado): secretos en cualquier subcomando, también en host.esxcli.
+$script:SecretFlag = '^-+(password|debug|dump-cookie|trace|verbose|persist-session|u|k|insecure|tls-ca-certs|tls-known-hosts|cert|key|vim-version|vim-namespace)(=|$)'
 
 # Lectura explícita (además de los sufijos .info / .ls / .tree).
 $script:ReadCommands = @(
@@ -59,7 +64,7 @@ function Get-EsxcliClass {
 
     # Flags de govc previos al subcomando o propios de host.esxcli.
     $pre = @($Arguments | Select-Object -First ([math]::Max($i, 0)) | ForEach-Object { "$_".ToLowerInvariant() }) + $govcFlags
-    if ($pre | Where-Object { $_ -match '^-+(password|debug|dump-cookie|trace|verbose)(=|$)' }) { return 'secret' }
+    if ($pre | Where-Object { $_ -match $script:SecretFlag }) { return 'secret' }
 
     if ($words.Count -lt 2) { return 'destructive' }
     $path = $words -join ' '
@@ -93,10 +98,12 @@ function Get-GovcOpClass {
 
     $flags = @($Arguments | Where-Object { $_ -and $_.StartsWith('-') } | ForEach-Object { $_.ToLowerInvariant() })
 
-    # Cualquier credencial en línea de comandos o modo debug (vuelca SOAP con sesión) se trata como secreto.
+    # Credenciales en la línea de comandos, volcado de tráfico o conexión redirigida: secreto.
     # Nota: '-p' no es contraseña en govc (p. ej. `find -p` = objetos padre); no se incluye.
-    if ($flags | Where-Object { $_ -match '^-+(password|debug|dump-cookie)(=|$)' }) { return 'secret' }
-    if ($script:SecretCommands -contains $sub) { return 'secret' }
+    if ($flags | Where-Object { $_ -match $script:SecretFlag }) { return 'secret' }
+    if ($script:SecretCommands -contains $sub -or $sub -match $script:SecretPrefix) { return 'secret' }
+    # vm.question solo consulta; con -answer responde la pregunta de la VM (cambia su estado).
+    if ($sub -eq 'vm.question' -and ($flags | Where-Object { $_ -match '^-+answer(=|$)' })) { return 'write' }
 
     if ($sub -eq 'vm.power') {
         # Solo encender es write; apagar/reiniciar/suspender interrumpe servicio.
@@ -120,10 +127,16 @@ function Protect-GovcArgs {
     param([string[]]$Arguments)
     $out = New-Object System.Collections.Generic.List[string]
     $maskNext = $false
+    # -p es contraseña solo en host.esxcli (system account …); en govc `find -p` = objetos padre.
+    # -l lleva usuario:clave del SO invitado en guest.*.
+    $sub = Get-GovcSubcommand $Arguments
+    $flagRe = 'password'
+    if ($sub -eq 'host.esxcli') { $flagRe += '|p' }
+    if ($sub -match $script:SecretPrefix) { $flagRe += '|l' }
     foreach ($a in $Arguments) {
         if ($maskNext) { $out.Add('***'); $maskNext = $false; continue }
-        if ($a -match '^-+(password|p)$') { $out.Add($a); $maskNext = $true; continue }
-        $a = $a -replace '^(-+(password|p)=).*', '$1***'
+        if ($a -match "^-+($flagRe)$") { $out.Add($a); $maskNext = $true; continue }
+        $a = $a -replace "^(-+($flagRe)=).*", '$1***'
         $a = $a -replace '(://[^:/@\s]+:)[^@\s]+@', '$1***@'
         $out.Add($a)
     }
