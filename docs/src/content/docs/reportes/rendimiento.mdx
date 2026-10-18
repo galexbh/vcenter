@@ -1,0 +1,170 @@
+---
+title: Revisión de rendimiento
+description: CPU ready, latencia de almacenamiento, CPU de hosts, memoria y red en una ventana de tiempo; niveles de estadísticas, cobertura y umbrales.
+sidebar:
+  order: 4
+---
+
+import { FileTree } from '@astrojs/starlight/components';
+
+`Invoke-PerfCheck.ps1` complementa los reportes de capacidad con el consumo observado en una ventana de tiempo. `New-Report.ps1` evalúa los recursos asignados y el uso instantáneo (`quickStats`) en el momento de la recolección; esta revisión, en cambio, consulta las estadísticas de rendimiento de vCenter (`metric.sample`) y resume cada contador en promedio, percentil 95 (p95) y máximo. Todas las consultas son de solo lectura.
+
+## Uso
+
+```powershell
+./scripts/Invoke-PerfCheck.ps1 -Env prod                                  # ventana de 24 h
+./scripts/Invoke-PerfCheck.ps1 -Env prod -Cluster CL-PROD-01 -Window 1h
+./scripts/Invoke-PerfCheck.ps1 -FromRaw reports/prod/20261018-090000 -DsLatencyWarnMs 15
+```
+
+Desde una terminal también puede utilizarse el [atajo de Task](/vcenter/uso/taskfile/):
+
+```powershell
+task perf ENV=prod WINDOW=24h
+task perf ENV=prod CLUSTER=CL-PROD-01 WINDOW=1h
+task perf FROM=reports/prod/20261018-090000
+```
+
+`WINDOW` y `CLUSTER` se aplican solo con `ENV`; con `FROM` se conservan la ventana y el filtro de la recolección original. La [auditoría técnica](/vcenter/auditoria/ejecutar/) incorpora esta revisión como fuente del dominio Rendimiento.
+
+## Recolección
+
+Todas las consultas se ejecutan en una sola sesión (modo lote del wrapper):
+
+| Lote | Consulta | Datos |
+|---|---|---|
+| 1 | `metric.interval.info` | Intervalos históricos de vCenter y su nivel de estadísticas |
+| 1 | `object.collect -type h`, `m`, `r`, `s` | Hosts (clúster, conexión, mantenimiento), VMs (estado, host, vCPU, plantilla), recursos de cómputo y datastores (`summary.url`). Se omite con `-InventoryDir`, que reutiliza la carpeta `raw/` de una corrida de `New-Report.ps1`; así lo hace la auditoría |
+| 2 | `metric.sample -json -i <intervalo> -n <muestras>` | Muestras en trozos de 50 entidades, identificadas como `HostSystem:<id>` y `VirtualMachine:<id>` |
+
+Se evalúan los hosts conectados de los clústeres seleccionados (`-Cluster`, todos por defecto) y las VMs encendidas, excluidas las plantillas, que se ejecutan en esos hosts. Los hosts sin conexión no se consultan y se declaran como cobertura.
+
+| Entidad | Contador | Instancia | Uso |
+|---|---|---|---|
+| Host | `cpu.usage.average` | Agregada | CPU del host |
+| Host | `mem.vmmemctl.average` | Agregada | Memoria recuperada por balloon (tabla de hosts) |
+| Host | `mem.swapinRate.average` | Agregada | Se conserva en los datos crudos |
+| Host | `net.droppedRx.summation`, `net.droppedTx.summation` | Agregada | Paquetes descartados en recepción y transmisión |
+| Host | `datastore.totalReadLatency.average`, `datastore.totalWriteLatency.average` | Por datastore (`-instance=*`) | Latencia de cada datastore vista desde cada host |
+| VM | `cpu.ready.summation` | Agregada | CPU ready |
+| VM | `mem.vmmemctl.average` | Agregada | Ballooning |
+| VM | `mem.swapinRate.average` | Agregada | Swap-in del hipervisor |
+
+La instancia agregada (`-instance=` vacío) corresponde al total de la entidad. La instancia de las métricas de latencia es el identificador del datastore, que se traduce a su nombre con `summary.url`; si no puede traducirse (por ejemplo, con un inventario recolectado antes de la versión 1.7, que no incluía esa propiedad), se muestra el identificador.
+
+## Ventanas y nivel de estadísticas
+
+| Ventana (`-Window`) | Intervalo | Muestras | Origen |
+|---|---|---|---|
+| `1h` | 20 s | 180 | Tiempo real, desde los hosts |
+| `24h` (por defecto) | 300 s | 288 | Histórico de vCenter |
+| `7d` | 1800 s | 336 | Histórico de vCenter |
+
+La ventana `1h` utiliza las estadísticas en tiempo real que mantiene cada host, disponibles siempre y sin depender del nivel de estadísticas. Las ventanas `24h` y `7d` utilizan los intervalos históricos de vCenter, que **solo conservan los contadores cuyo nivel no supera el nivel configurado en el intervalo**. Con el nivel 1, valor por defecto de vCenter, es habitual que no haya datos de paquetes descartados en esas ventanas.
+
+Para consultar el nivel configurado en cada intervalo:
+
+```powershell
+./scripts/govc.ps1 -Env <entorno> metric.interval.info
+```
+
+El nivel del intervalo utilizado se registra en `raw/meta-perf.json` y se indica en el hallazgo de cobertura y en la metodología de la auditoría.
+
+:::caution[Cambio del nivel de estadísticas]
+Modificar el nivel (`metric.interval.change`) es una escritura en vCenter: requiere aprobación y, en `prod` o `dr`, un cambio aprobado. Un nivel mayor incrementa el tamaño de la base de datos de vCenter y su carga; la decisión corresponde a Infraestructura. La herramienta no modifica el nivel.
+:::
+
+## Métricas y fórmulas
+
+| Métrica | Cálculo | Unidad | Valor evaluado |
+|---|---|---|---|
+| CPU ready por vCPU | `ready_ms / (intervalo_s × 1000) × 100 / vCPU` | % | p95 |
+| Latencia de datastore | Mayor valor entre el p95 de lectura y el de escritura, en el host con la peor latencia | ms | p95 del peor host |
+| CPU de host | `cpu.usage.average / 100` (vCenter lo informa en centésimas de porcentaje) | % | p95 |
+| Ballooning de VM | `mem.vmmemctl.average / 1024` | MB | Máximo |
+| Swap-in de VM | `mem.swapinRate.average` | KB/s | p95 (sostenido) y máximo (puntual) |
+| Paquetes descartados | Suma de recepción y transmisión en la ventana | Paquetes | Total |
+
+`cpu.ready.summation` informa, por intervalo, los milisegundos en que la VM estuvo lista para ejecutarse sin disponer de CPU física, sumados entre sus vCPU. Al dividir por la duración del intervalo y por el número de vCPU se obtiene el porcentaje promedio por vCPU. Por ejemplo, una VM de 4 vCPU con 60 000 ms de ready en un intervalo de 300 s: `60 000 / 300 000 × 100 / 4 = 5 %`.
+
+El p95 se calcula por rango sobre las muestras válidas de la ventana. Las muestras sin valor (`-1`) se descartan; una serie sin ninguna muestra válida se considera sin datos. Solo se conservan los agregados por entidad y contador (promedio, p95, máximo y número de muestras), no las series completas.
+
+## Reglas
+
+| Regla | Condición | Severidad | Agrupación |
+|---|---|---|---|
+| `perf-cpu-ready` | CPU ready p95 ≥ 10 % por vCPU | Crítico | Una fila por severidad |
+| `perf-cpu-ready` | CPU ready p95 ≥ 5 % por vCPU | Advertencia | Una fila por severidad |
+| `perf-ds-latency` | Latencia p95 del peor host ≥ 30 ms | Crítico | Una por datastore |
+| `perf-ds-latency` | Latencia p95 del peor host ≥ 20 ms | Advertencia | Una por datastore |
+| `perf-host-cpu` | CPU p95 ≥ 95 % | Crítico | Una por host |
+| `perf-host-cpu` | CPU p95 ≥ 85 % | Advertencia | Una por host |
+| `perf-balloon` | Ballooning máximo > 0 en la ventana | Advertencia | Una fila |
+| `perf-swap` | Swap-in p95 > 0 (sostenido) | Advertencia | Una fila |
+| `perf-swap` | Solo el máximo de swap-in > 0 (puntual) | Info | Una fila |
+| `perf-net-drops` | Paquetes descartados > 0 | Advertencia | Una por host |
+| `coverage-perf-counters` | Contadores sin datos en la ventana | Info (Cobertura) | Una fila |
+| `coverage-perf-hosts` | Hosts sin métricas por no estar conectados | Info (Cobertura) | Una fila |
+| `coverage-perf-error` | Consultas de métricas fallidas | Info (Cobertura) | Una por mensaje de error |
+
+Los hallazgos de rendimiento pertenecen a la categoría **Rendimiento**; los de cobertura, a **Cobertura**. Las filas agrupadas enumeran hasta 15 VMs. El comando de verificación de cada hallazgo es `./scripts/Invoke-PerfCheck.ps1 -Env <entorno> -Window 1h`.
+
+Las reglas `vm-balloon` y `vm-swap` de `New-Report.ps1` evalúan el valor instantáneo de `quickStats` en el momento de la recolección; `perf-balloon` y `perf-swap` evalúan la ventana completa. Ver [Hallazgos y umbrales](/vcenter/reportes/hallazgos/).
+
+## Cobertura: sin datos no equivale a sin problemas
+
+Un contador sin datos, un host desconectado o una consulta rechazada **no** se interpretan como ausencia de problemas: se declaran como hallazgos Info de la categoría Cobertura, que la auditoría presenta como limitaciones y no puntúa.
+
+| Situación | Hallazgo | Acción sugerida |
+|---|---|---|
+| El nivel de estadísticas del intervalo no conserva un contador | `coverage-perf-counters`, con la ventana, el intervalo, el nivel y los contadores afectados | Repetir con `-Window 1h` o solicitar a Infraestructura la evaluación del nivel de estadísticas |
+| Host no conectado a vCenter | `coverage-perf-hosts` | Revisar la conexión del host |
+| Consulta fallida (por ejemplo, falta de privilegios) | `coverage-perf-error`, con el tipo de entidad y el número de entidades afectadas | Verificar los privilegios de la cuenta de servicio sobre las estadísticas de rendimiento |
+
+## Parámetros y umbrales
+
+| Parámetro | Valor por defecto | Descripción |
+|---|---|---|
+| `-CpuReadyWarnPct` / `-CpuReadyCritPct` | 5 / 10 | CPU ready p95 por vCPU, en % |
+| `-DsLatencyWarnMs` / `-DsLatencyCritMs` | 20 / 30 | Latencia p95 del peor host por datastore, en ms |
+| `-HostCpuWarnPct` / `-HostCpuCritPct` | 85 / 95 | CPU p95 del host, en % |
+
+La lista completa de parámetros está en [Scripts](/vcenter/referencia/scripts/#invoke-perfcheckps1).
+
+:::note[Práctica habitual, no norma]
+Los umbrales son referencias habituales de la industria, no requisitos normativos. Deben validarse con Infraestructura y Arquitectura y ajustarse a la política interna de capacidad, al tipo de almacenamiento y al perfil de carga de cada entorno.
+:::
+
+## Recálculo sin consultar vCenter
+
+```powershell
+./scripts/Invoke-PerfCheck.ps1 -FromRaw reports/prod/20261018-090000 -CpuReadyWarnPct 3 -HostCpuWarnPct 80
+```
+
+`-FromRaw` lee los agregados de `raw/` y vuelve a evaluar las reglas con los umbrales indicados. El entorno, la ventana y el intervalo se toman de `raw/meta-perf.json`. Se reescriben `raw/findings.json`, `raw/summary.json` y el reporte en la misma carpeta.
+
+## Estructura de salida
+
+<FileTree>
+- reports/prod/20261018-090000/
+  - perf-check.html Hallazgos, hosts, latencia por datastore, VMs con más CPU ready, VMs con ballooning o swap
+  - perf-check.md
+  - raw/
+    - meta-perf.json entorno, fecha, usuario, ventana, intervalo, muestras, nivel de estadísticas, clústeres y contadores sin datos
+    - perf-host.json agregados por host
+    - perf-vm.json agregados por VM
+    - perf-datastore.json latencia por datastore y host
+    - perf-errors.json consultas fallidas
+    - findings.json hallazgos
+    - summary.json indicadores
+</FileTree>
+
+| Sección del reporte | Contenido |
+|---|---|
+| Hallazgos y sugerencias | Hallazgos de rendimiento y de cobertura |
+| Hosts | CPU promedio, p95 y máxima; balloon máximo; paquetes descartados |
+| Latencia por datastore | Peor host, p95 de lectura y escritura, máximo y número de hosts |
+| VMs con más CPU ready | Las 25 VMs con mayor p95, con promedio, p95 y máximo por vCPU |
+| VMs con ballooning o swap | Balloon máximo y swap-in p95 y máximo |
+
+Los indicadores del reporte son: ventana, intervalo, hosts, VMs evaluadas, críticos, advertencias y hallazgos sin cobertura. `Compare-Report.ps1` no compara corridas de rendimiento; las [tendencias](/vcenter/reportes/tendencias/) se calculan sobre los datos de inventario.

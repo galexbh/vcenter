@@ -9,21 +9,25 @@ import { Steps, FileTree } from '@astrojs/starlight/components';
 
 ## Objetivo
 
-La auditoría técnica consolida en un único informe formal el estado de **disponibilidad, capacidad, configuración, seguridad e higiene** de un entorno vSphere. Está orientada a comités de riesgo tecnológico, revisiones de Seguridad de la Información y seguimiento de planes de remediación.
+La auditoría técnica consolida en un único informe formal el estado de **disponibilidad, capacidad, rendimiento, configuración, seguridad e higiene** de un entorno vSphere. Está orientada a comités de riesgo tecnológico, revisiones de Seguridad de la Información y seguimiento de planes de remediación.
 
 ## Fuentes y alcance
 
 | Fuente | Método | Elementos evaluados |
 |---|---|---|
-| Inventario y configuración | `New-Report.ps1` | VMs, hosts, clústeres (HA/DRS), datastores, alarmas, snapshots, configuración de VMs, certificado de vCenter, licencias |
+| Inventario y configuración | `New-Report.ps1` | VMs, hosts, clústeres (HA/DRS, control de admisión), holgura N+1, datastores, resource pools, alarmas, snapshots, configuración de VMs, certificado de vCenter, licencias |
 | Configuración de hosts | `Invoke-HostCheck.ps1` | VIBs y drivers, NIC, paths de almacenamiento, NTP, syslog, coredump, plataforma, servicios SSH/Shell, certificados de host |
+| Rendimiento | `Invoke-PerfCheck.ps1` (`metric.sample`) | CPU ready por vCPU, latencia de datastores, CPU de hosts, ballooning, swap y paquetes descartados en una ventana de tiempo (`-PerfWindow`, 24 h por defecto) |
 | Controles de acceso | `permissions.ls`, `role.ls` | Asignaciones con rol Administrador en la raíz del inventario |
 
 | Alcance (`-Scope`) | Dominios evaluados |
 |---|---|
-| `full` (por defecto) | Disponibilidad, Capacidad, Configuración, Seguridad, Higiene |
+| `full` (por defecto) | Disponibilidad, Capacidad, Rendimiento, Configuración, Seguridad, Higiene |
 | `security` | Seguridad, Configuración |
 | `capacity` | Capacidad, Disponibilidad |
+| `performance` | Capacidad, Rendimiento |
+
+`-Scope` selecciona los dominios que se puntúan e incluyen en el informe; la recolección ejecuta todas las fuentes. `-Cluster` limita la revisión de hosts y la de rendimiento.
 
 **Fuera de alcance:** sistemas operativos invitados, aplicaciones, respaldos, red física fuera del host y seguridad perimetral.
 
@@ -42,7 +46,10 @@ La auditoría técnica consolida en un único informe formal el estado de **disp
    ```powershell
    ./scripts/Invoke-Audit.ps1 -Env prod
    ./scripts/Invoke-Audit.ps1 -Env prod -Cluster CL-PROD-01 -Scope security
+   ./scripts/Invoke-Audit.ps1 -Env prod -Scope performance -PerfWindow 7d
    ```
+
+   La recolección consta de cuatro pasos: inventario y configuración, configuración de hosts, rendimiento y controles de acceso. El paso de rendimiento reutiliza el inventario recién recolectado y consulta la ventana indicada en `-PerfWindow` (`1h`, `24h` o `7d`; 24 h por defecto). `-SkipPerf` lo omite.
 
 3. Revisar `auditoria.html` en el navegador (el botón superior derecho alterna entre tema claro y oscuro) y, si corresponde, guardarlo como PDF (**Imprimir → Guardar como PDF**, tamaño A4). La impresión utiliza siempre el tema claro.
 
@@ -54,16 +61,20 @@ La auditoría técnica consolida en un único informe formal el estado de **disp
 
 Todas las consultas son de solo lectura y quedan registradas en la bitácora de auditoría.
 
+### Sin datos de rendimiento
+
+Una falla en el paso de rendimiento no detiene la auditoría. Cuando no hay datos de rendimiento (paso omitido con `-SkipPerf`, consulta fallida o auditoría recolectada antes de la versión 1.7, sin carpeta `perf/`), el dominio Rendimiento **no se puntúa**, porque un indicador de 100 sugeriría que fue evaluado. Si el alcance incluye ese dominio (`full` o `performance`), se agrega el hallazgo de cobertura `coverage-perf` con el motivo, que se presenta como limitación en la metodología. El motivo se registra en `raw/meta-audit.json` (`perfSkipped`, `perfError`).
+
 ## Estructura del informe
 
 | Sección | Contenido |
 |---|---|
 | Portada | Entorno, alcance, fecha, responsable de la elaboración, identificador, versión y clasificación |
 | 1. Resumen ejecutivo | Síntesis, indicador por dominio, hallazgos por severidad y principales riesgos |
-| 2. Alcance y metodología | Fuentes, métodos, cuenta y ventana, limitaciones, cobertura, matriz dominio × severidad |
+| 2. Alcance y metodología | Fuentes, métodos (con ventana, intervalo y nivel de estadísticas de la fuente de rendimiento), cuenta y ventana, limitaciones, cobertura, matriz dominio × severidad |
 | 3. Hallazgos detallados | Ficha por hallazgo: ID, objeto, severidad, dominio, evidencia, riesgo, recomendación, verificación, referencia y fuente |
 | 4. Plan de remediación | Tabla de críticos y advertencias para completar responsable, fecha y estado |
-| 5. Anexos | Resumen de inventario, resumen de hosts, administradores en la raíz, reportes de detalle y comandos utilizados |
+| 5. Anexos | A. Resumen de inventario · B. Resumen de la revisión de hosts · C. Resumen de rendimiento · D. Principales con rol Administrador en la raíz · E. Reportes de detalle · F. Comandos de recolección |
 | 6. Revisión y aprobación | Espacios para elaboración, revisión técnica, revisión de seguridad y aprobación |
 
 ## Estructura de salida
@@ -74,9 +85,12 @@ Todas las consultas son de solo lectura y quedan registradas en la bitácora de 
   - auditoria.md
   - inventario/ reporte de detalle y datos crudos
   - hosts/ revisión de hosts y datos crudos
+  - perf/
+    - perf-check.html revisión de rendimiento
+    - raw/ meta-perf.json, perf-host.json, perf-vm.json, perf-datastore.json, perf-errors.json, findings.json, summary.json
   - raw/
     - audit.json modelo consolidado del informe (referencia)
-    - meta-audit.json entorno, fecha, alcance, clústeres, usuario y versión de la recolección
+    - meta-audit.json entorno, fecha, alcance, clústeres, usuario, versión, ventana de rendimiento (perfWindow), omisión (perfSkipped) y error (perfError)
     - vcenter-access.json
 </FileTree>
 
@@ -88,7 +102,7 @@ Tras un período de remediación, ejecutar una nueva auditoría y compararla con
 ./scripts/Compare-Report.ps1 -Base reports/prod/20261017-090000-auditoria -Current reports/prod/20261117-090000-auditoria
 ```
 
-`Compare-Report.ps1` compara los datos de inventario de ambas auditorías (subcarpeta `inventario/`): cambios en VMs, asignación por clúster, crecimiento de datastores, snapshots y, en la sección *Evolución de hallazgos*, los hallazgos de inventario y configuración nuevos, resueltos y con cambio de severidad. No incorpora los hallazgos de la revisión de hosts (`hosts/raw/findings.json`) ni los de controles de acceso (administradores en la raíz), y no lee `audit.json`; el seguimiento de esos hallazgos se realiza contrastando los dos informes de auditoría. Ver [Tendencias](/vcenter/reportes/tendencias/).
+`Compare-Report.ps1` compara los datos de inventario de ambas auditorías (subcarpeta `inventario/`): cambios en VMs, asignación por clúster, crecimiento de datastores, snapshots y, en la sección *Evolución de hallazgos*, los hallazgos de inventario y configuración nuevos, resueltos y con cambio de severidad. No incorpora los hallazgos de la revisión de hosts (`hosts/raw/findings.json`), los de rendimiento (`perf/raw/findings.json`) ni los de controles de acceso (administradores en la raíz), y no lee `audit.json`; el seguimiento de esos hallazgos se realiza contrastando los dos informes de auditoría. Ver [Tendencias](/vcenter/reportes/tendencias/).
 
 `audit.json` es el modelo consolidado del informe (identificadores, dominios, indicadores y hallazgos). Se conserva como referencia y se vuelve a escribir cada vez que se regenera el informe.
 
@@ -99,9 +113,9 @@ Tras un período de remediación, ejecutar una nueva auditoría y compararla con
 ./scripts/Invoke-Audit.ps1 -FromRaw reports/prod/20261017-090000-auditoria -Scope security
 ```
 
-Regenera el informe a partir de los datos recolectados, sin consultar vCenter. Si no se indica `-Scope`, se conserva el alcance de la recolección original, guardado en `raw/meta-audit.json`; lo mismo ocurre con `task audit FROM=<carpeta>` sin `SCOPE` (ver [Atajos con Task](/vcenter/uso/taskfile/)).
+Regenera el informe a partir de los datos recolectados, sin consultar vCenter. Si no se indica `-Scope`, se conserva el alcance de la recolección original, guardado en `raw/meta-audit.json`; lo mismo ocurre con `task audit FROM=<carpeta>` sin `SCOPE` (ver [Atajos con Task](/vcenter/uso/taskfile/)). Si existe la carpeta `perf/`, la revisión de rendimiento también se regenera desde sus datos crudos y conserva su ventana original; `-PerfWindow` no aplica al regenerar. Una auditoría sin `perf/` se regenera con el dominio Rendimiento sin puntuar y declarado como cobertura.
 
-`Invoke-Audit.ps1` no admite umbrales propios, `-OutDir` ni `-MdMaxRows`: ejecuta `New-Report.ps1` e `Invoke-HostCheck.ps1` con sus valores por defecto (ver [Hallazgos y umbrales](/vcenter/reportes/hallazgos/)) y en formato HTML, también al regenerar con `-FromRaw`.
+`Invoke-Audit.ps1` no admite umbrales propios, `-OutDir` ni `-MdMaxRows`: ejecuta `New-Report.ps1`, `Invoke-HostCheck.ps1` e `Invoke-PerfCheck.ps1` con sus valores por defecto (ver [Hallazgos y umbrales](/vcenter/reportes/hallazgos/) y [Revisión de rendimiento](/vcenter/reportes/rendimiento/)) y en formato HTML, también al regenerar con `-FromRaw`.
 
 :::caution[Validación]
 El informe es un insumo técnico. Una auditoría formal debe ser validada por Auditoría Interna, Riesgo Tecnológico y Seguridad de la Información según sus procedimientos. El resumen de permisos contiene nombres de cuentas privilegiadas y debe tratarse como información sensible.

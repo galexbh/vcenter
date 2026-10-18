@@ -33,7 +33,8 @@ Las credenciales se guardan solo en Windows Credential Manager. Cada operación 
 | Área | Descripción |
 |---|---|
 | Consulta | Inventario completo con un número fijo de consultas en bloque (`object.collect`), sin depender del tamaño del entorno |
-| Reportes | Inventario, snapshots, capacidad y salud en HTML, Markdown y CSV, con hallazgos clasificados por severidad |
+| Reportes | Inventario, snapshots, capacidad (con holgura N+1 por clúster) y salud en HTML, Markdown y CSV, con hallazgos clasificados por severidad |
+| Rendimiento | CPU ready, latencia por datastore, CPU de hosts, ballooning, swap y paquetes descartados en una ventana de 1 h, 24 h o 7 días (`metric.sample`, p95 y máximo) |
 | Diagnóstico de hosts | Revisión por `esxcli` de cada host de un clúster (VIBs, NIC, paths, NTP, syslog, coredump) y detección de diferencias |
 | Auditoría | Informe formal imprimible con resumen ejecutivo, metodología, hallazgos `AUD-NNN`, plan de remediación y aprobación |
 | Tendencias | Comparación entre corridas o auditorías sin volver a consultar vCenter |
@@ -94,7 +95,7 @@ Después, abre Claude Code en la carpeta del proyecto y usa los comandos de la s
 | `/inventory prod` | Resumen de inventario en pantalla |
 | `/report prod health` | Reporte HTML, Markdown o CSV en `reports/` (`all`, `inventory`, `snapshots`, `capacity`, `health`) |
 | `/health prod` | Hallazgos priorizados con acciones sugeridas |
-| `/capacity prod` | Capacidad por clúster y holgura ante la falla de un host |
+| `/capacity prod` | Capacidad por clúster, holgura N+1 ante la falla de un host y, si hace falta, CPU ready en una ventana de tiempo |
 | `/snapshot-audit prod 7` | Snapshots por antigüedad y plan de limpieza propuesto (no ejecuta) |
 | `/host-check prod CL-PROD-01` | Revisión `esxcli` por host y detección de diferencias |
 | `/trend prod` | Tendencias entre las dos últimas corridas |
@@ -112,7 +113,8 @@ Después, abre Claude Code en la carpeta del proyecto y usa los comandos de la s
 | Salud, inventario, capacidad, snapshots | `task health ENV=prod` · `task inventory ENV=prod` · `task capacity ENV=prod` · `task snapshots ENV=prod` |
 | Reporte a medida | `task report ENV=prod TYPE=all -- -Format csv` |
 | Revisión de hosts | `task host-check ENV=prod CLUSTER=CL-PROD-01` |
-| Auditoría | `task audit ENV=prod SCOPE=security` |
+| Rendimiento | `task perf ENV=prod` · `task perf ENV=prod WINDOW=1h CLUSTER=CL-PROD-01` |
+| Auditoría | `task audit ENV=prod` · `task audit ENV=prod SCOPE=security` (`full`, `security`, `capacity`, `performance`) · `task audit ENV=prod SCOPE=performance WINDOW=7d` |
 | Tendencias | `task trend ENV=prod` |
 | Reanalizar sin consultar vCenter | `task health FROM=reports/prod/<marca>` |
 | Instalar o actualizar govc | `task install` · `task install -- -Version vX.Y.Z` |
@@ -147,13 +149,13 @@ En `prod` y `dr`, las operaciones destructivas solo las ejecuta una persona en u
 ## Pruebas
 
 ```powershell
-task test          # guardas (clasificación y hook) y regresión de reportes, CSV, hosts, auditoría y tendencias
+task test          # guardas (clasificación y hook) y regresión de reportes, CSV, hosts, rendimiento, auditoría y tendencias
 task test:log      # integridad de la bitácora
 ```
 
 ### Sin vCenter real
 
-- **Datos de demostración:** `task demo` crea un entorno ficticio en `reports/demo/<marca>-auditoria`, con el reporte de inventario, la revisión de hosts y la auditoría. Para generar otros reportes sobre esos datos: `task health FROM=reports/demo/<marca>-auditoria/inventario`.
+- **Datos de demostración:** `task demo` crea un entorno ficticio en `reports/demo/<marca>-auditoria`, con el reporte de inventario, la revisión de hosts, la revisión de rendimiento y la auditoría. Para generar otros reportes sobre esos datos: `task health FROM=reports/demo/<marca>-auditoria/inventario`.
 - **Simulador:**
 
   ```powershell

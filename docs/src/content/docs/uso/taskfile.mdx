@@ -27,7 +27,8 @@ Después de instalarlo, abrir una terminal nueva para que `task` quede disponibl
 | `task report` | `ENV` o `FROM`, `TYPE` (`all` por defecto) | `New-Report.ps1` |
 | `task inventory` · `health` · `capacity` · `snapshots` | `ENV` o `FROM` | `New-Report.ps1 -Type <tipo>` |
 | `task host-check` | `ENV` o `FROM`, `CLUSTER` (opcional, solo con `ENV`) | `Invoke-HostCheck.ps1` |
-| `task audit` | `ENV` o `FROM`, `SCOPE` (opcional: sin él, `full` con `ENV` y el alcance guardado con `FROM`), `CLUSTER` (opcional, solo con `ENV`) | `Invoke-Audit.ps1` |
+| `task perf` | `ENV` o `FROM`, `WINDOW` (opcional: `1h`, `24h` o `7d`; `24h` por defecto; solo con `ENV`), `CLUSTER` (opcional, solo con `ENV`) | `Invoke-PerfCheck.ps1` |
+| `task audit` | `ENV` o `FROM`, `SCOPE` (opcional: `full`, `security`, `capacity` o `performance`; sin él, `full` con `ENV` y el alcance guardado con `FROM`), `WINDOW` (opcional, ventana de rendimiento, solo con `ENV`), `CLUSTER` (opcional, solo con `ENV`) | `Invoke-Audit.ps1` |
 | `task trend` | `ENV` | `Compare-Report.ps1` |
 | `task demo` | — | `New-DemoData.ps1` y los reportes de inventario, hosts y auditoría sobre esos datos |
 | `task test` | — | `Test-Guards.ps1` y `Test-Reports.ps1` |
@@ -35,7 +36,7 @@ Después de instalarlo, abrir una terminal nueva para que `task` quede disponibl
 | `task docs` | — | Servidor local de esta documentación en `http://localhost:4321/vcenter/` |
 | `task docs:build` | — | Compilación de esta documentación en `docs/dist/` |
 
-Las variables se indican como `NOMBRE=valor`. Los reportes requieren `ENV` (consulta el entorno) o `FROM` (vuelve a analizar una carpeta ya recolectada en `reports/`, sin consultar vCenter); sin ninguna de las dos, la tarea se cancela. `TYPE` y `SCOPE` solo admiten los valores del script; un valor distinto cancela la tarea antes de ejecutar nada.
+Las variables se indican como `NOMBRE=valor`. Los reportes requieren `ENV` (consulta el entorno) o `FROM` (vuelve a analizar una carpeta ya recolectada en `reports/`, sin consultar vCenter); sin ninguna de las dos, la tarea se cancela. `TYPE`, `SCOPE` y `WINDOW` solo admiten los valores del script; un valor distinto cancela la tarea antes de ejecutar nada.
 
 `task credential` registra o reemplaza la credencial de un entorno. La contraseña la solicita `cmdkey` por consola y nunca pasa por argumentos. `task credential:list` muestra las credenciales registradas sin revelar contraseñas, y `task credential:remove` elimina la de un entorno tras pedir confirmación (ver [Configuración](/vcenter/inicio/configuracion/)). Ninguna de las tres admite parámetros libres y todas se cancelan dentro de Claude Code antes de ejecutar el script.
 
@@ -46,8 +47,12 @@ task health ENV=prod
 task report ENV=prod TYPE=inventory -- -Format csv
 task snapshots ENV=prod -- -SnapshotWarnDays 3
 task host-check ENV=prod CLUSTER=CL-PROD-01
+task perf ENV=prod WINDOW=24h
+task perf ENV=prod CLUSTER=CL-PROD-01 WINDOW=1h
 task audit ENV=prod SCOPE=security
+task audit ENV=prod SCOPE=performance WINDOW=7d
 task health FROM=reports/prod/20261017-080000
+task perf FROM=reports/prod/20261018-090000 -- -DsLatencyWarnMs 15
 task demo
 task install -- -WithVcsim
 ```

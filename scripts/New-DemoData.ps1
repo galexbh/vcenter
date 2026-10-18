@@ -266,6 +266,6 @@ if ($EdgeCases) {
     $perfHost[6].ok = $false; $perfHost[6].error = 'host notResponding'
     $perfErrors = @([pscustomobject]@{ kind = 'vm'; entities = 12; error = 'NoPermission: Permission to perform this operation was denied.' })
 }
-Save $perfDir 'meta-perf' ([ordered]@{ env = 'demo'; generated = $now.ToString('o'); user = 'DEMO\usuario.demo'; window = '24h'; interval = 300; samples = 288; intervalLevel = 1; cluster = @(); missing = @('net.droppedRx.summation', 'net.droppedTx.summation') })
+Save $perfDir 'meta-perf' ([ordered]@{ env = 'demo'; generated = $now.ToString('o'); user = 'DEMO\usuario.demo'; window = '24h'; interval = 300; samples = 288; intervalLevel = 1; cluster = @(); missing = @('net.droppedRx.summation (hosts)', 'net.droppedTx.summation (hosts)') })
 Save $perfDir 'perf-host' $perfHost; Save $perfDir 'perf-vm' $perfVm; Save $perfDir 'perf-datastore' $perfDs; Save $perfDir 'perf-errors' $perfErrors
 "Datos de demostración generados en $AuditDir"

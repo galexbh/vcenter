@@ -26,6 +26,7 @@ Cada hallazgo incluye **severidad**, **categoría**, **objeto**, **evidencia**, 
 | Configuración VM | CD/DVD conectado a una ISO de datastore | Info | Impide vMotion y el balanceo de DRS |
 | Configuración VM | Versión de hardware inferior a la mínima | Info | Sin acceso a funcionalidades y correcciones recientes |
 | Clúster | HA deshabilitado | Crítico | Las VMs no se reinician automáticamente ante la falla de un host |
+| Clúster | HA activo con el control de admisión desactivado | Advertencia | vSphere permite encender VMs aunque ya no haya capacidad para reiniciarlas ante una falla |
 | Clúster | DRS deshabilitado o en modo manual | Advertencia | Sin balanceo automático de carga |
 | Hosts | Sin conexión | Crítico | VMs sin gestión ni protección de HA efectiva |
 | Hosts | En modo mantenimiento | Info | Capacidad reducida si no existe una ventana activa |
@@ -33,6 +34,13 @@ Cada hallazgo incluye **severidad**, **categoría**, **objeto**, **evidencia**, 
 | Capacidad | vCPU:pCore ≥ 6 | Crítico | CPU Ready elevado y latencia |
 | Capacidad | vCPU:pCore ≥ 4 | Advertencia | Requiere seguimiento de CPU Ready |
 | Capacidad | RAM asignada / física > 1,0 | Advertencia | Sobrecompromiso; holgura insuficiente para HA |
+| Capacidad | Holgura N+1 de memoria o CPU: uso > 100 % de la capacidad restante sin el host mayor | Crítico | La carga actual no cabe si falla un host; HA no podría reiniciar todas las VMs |
+| Capacidad | Holgura N+1 de memoria o CPU: uso ≥ 90 % de la capacidad restante | Advertencia | Margen escaso ante la falla de un host |
+| Capacidad | Un solo host activo en el clúster | Info | Sin tolerancia a la falla de un host |
+| Capacidad | Memoria recuperada por balloon en una VM | Advertencia | Presión de memoria en el host |
+| Capacidad | Memoria de una VM en swap del hipervisor | Advertencia | Degradación severa del rendimiento |
+| Capacidad | Memoria comprimida por el host | Info | Señal temprana de presión de memoria |
+| Capacidad | Resource pool con límite de CPU o memoria | Advertencia | Contención para todas las VMs del pool aunque el clúster disponga de recursos |
 | VMware Tools | No instalado o no en ejecución | Advertencia | Sin apagado ordenado, *quiesce* ni métricas del invitado |
 | VMware Tools | Desactualizado | Info | Actualizar en ventana de mantenimiento |
 | Certificados | Certificado de vCenter vencido | Crítico | Interrupción de conexiones y alertas de confianza |
@@ -42,7 +50,13 @@ Cada hallazgo incluye **severidad**, **categoría**, **objeto**, **evidencia**, 
 | Alarmas | Roja / amarilla / otro estado | Crítico / Advertencia / Info | Según el procedimiento de la alarma |
 | Higiene | VMs apagadas | Info | Consumo de almacenamiento y licencias |
 
-Los hallazgos de VMware Tools, VMs apagadas, consolidación pendiente, límites de CPU o memoria, versión de hardware e ISO conectada se **agrupan** en una sola fila por condición.
+Los hallazgos de VMware Tools, VMs apagadas, consolidación pendiente, límites de CPU o memoria, versión de hardware, ISO conectada, balloon, swap y memoria comprimida se **agrupan** en una sola fila por condición.
+
+### Holgura N+1
+
+Para cada clúster, la holgura N+1 compara el uso actual de memoria y de CPU (`quickStats` de los hosts) con la capacidad que queda al descontar el host de mayor capacidad. Solo se consideran los hosts **activos**: conectados y fuera de modo mantenimiento. El resultado se muestra en las columnas *CPU N+1 %* y *RAM N+1 %* de la tabla de capacidad; un valor superior a 100 % indica que la carga no cabe si falla ese host. Las reglas son `cl-n1-mem` y `cl-n1-cpu` (umbral de advertencia `-N1WarnPct`) y `cl-n1-single` cuando el clúster tiene un solo host activo. El control de admisión de HA desactivado se informa con `cl-ha-admission`, en la categoría Clúster.
+
+El balloon, el swap y la compresión de memoria (`vm-balloon`, `vm-swap`, `vm-compressed`) se leen de `quickStats` y reflejan el valor **instantáneo** en el momento de la recolección. Para evaluarlos en una ventana de tiempo, junto con CPU ready y latencia, se utiliza la [revisión de rendimiento](/vcenter/reportes/rendimiento/). La regla `rp-limit` evalúa los resource pools, excepto el pool raíz `Resources` de cada clúster o host. La regla `cl-vcpu` sugiere como verificación `./scripts/Invoke-PerfCheck.ps1 -Env <entorno> -Cluster '<clúster>'`.
 
 ## Reglas de la revisión de hosts
 
@@ -61,7 +75,31 @@ Los hallazgos de VMware Tools, VMs apagadas, consolidación pendiente, límites 
 
 Detalle en [Diagnóstico de hosts con esxcli](/vcenter/uso/esxcli/#revisión-por-clúster-host-check).
 
+## Reglas de la revisión de rendimiento
+
+`Invoke-PerfCheck.ps1` evalúa métricas en una ventana de tiempo (24 h por defecto). Sus hallazgos pertenecen a la categoría Rendimiento.
+
+| Regla | Condición | Severidad |
+|---|---|---|
+| `perf-cpu-ready` | CPU ready p95 por vCPU ≥ 10 % / ≥ 5 % | Crítico / Advertencia |
+| `perf-ds-latency` | Latencia p95 del peor host por datastore ≥ 30 ms / ≥ 20 ms | Crítico / Advertencia |
+| `perf-host-cpu` | CPU p95 del host ≥ 95 % / ≥ 85 % | Crítico / Advertencia |
+| `perf-balloon` | Ballooning en la ventana | Advertencia |
+| `perf-swap` | Swap-in sostenido (p95 > 0) / solo puntual (máximo > 0) | Advertencia / Info |
+| `perf-net-drops` | Paquetes descartados en el host | Advertencia |
+| `coverage-perf-counters`, `coverage-perf-hosts`, `coverage-perf-error` | Contadores sin datos, hosts sin métricas o consultas fallidas | Info (Cobertura) |
+
+| Parámetro | Valor por defecto |
+|---|---|
+| `-CpuReadyWarnPct` / `-CpuReadyCritPct` | 5 / 10 |
+| `-DsLatencyWarnMs` / `-DsLatencyCritMs` | 20 / 30 |
+| `-HostCpuWarnPct` / `-HostCpuCritPct` | 85 / 95 |
+
+Fórmulas, ventanas, nivel de estadísticas y cobertura en [Revisión de rendimiento](/vcenter/reportes/rendimiento/).
+
 ## Parámetros
+
+Parámetros de `New-Report.ps1`:
 
 | Parámetro | Valor por defecto |
 |---|---|
@@ -70,12 +108,13 @@ Detalle en [Diagnóstico de hosts con esxcli](/vcenter/uso/esxcli/#revisión-por
 | `-VcpuRatioWarn` / `-VcpuRatioCrit` | 4 / 6 |
 | `-MemRatioWarn` | 1,0 |
 | `-HostMemWarnPct` | 85 |
+| `-N1WarnPct` | 90 (% de uso sobre la capacidad restante sin el host mayor) |
 | `-MinHwVersion` | 14 |
 | `-CertWarnDays` / `-LicenseWarnDays` | 60 / 60 |
 | `-MdMaxRows` | 200 |
 
 :::note[Práctica habitual, no norma]
-Los umbrales de sobresuscripción y antigüedad son referencias habituales de la industria. Cuando exista una política interna de capacidad, los parámetros deben ajustarse a ella.
+Los umbrales de sobresuscripción, holgura N+1, rendimiento y antigüedad son referencias habituales de la industria. Cuando exista una política interna de capacidad, los parámetros deben ajustarse a ella.
 :::
 
 ## Del hallazgo a la acción

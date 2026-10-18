@@ -51,7 +51,8 @@ MOID directo: `Tipo:valor`, p. ej. `VirtualMachine:vm-123`, `Alarm:alarm-7`.
 | Detalle de una VM | `vm.info -json -r <vm>` (`-r` incluye recursos) | `vm.info` sin `-json` |
 | Snapshots de una VM | `snapshot.tree -vm <vm> -D -i -s` | |
 | Eventos recientes | `events -n 50 <ruta>` | `tasks` sin límite |
-| Métricas | `metric.sample -n 12 -json <ruta> cpu.usage.average mem.usage.average` | intervalos muy largos |
+| Métricas puntuales | `metric.sample -n 12 -json <ruta-de-VM-o-host> cpu.usage.average mem.usage.average` (o `HostSystem:<id>` / `VirtualMachine:<id>`) | rutas de clúster, intervalos muy largos |
+| Rendimiento en una ventana | `./scripts/Invoke-PerfCheck.ps1 -Env <env> [-Cluster <cl>] [-Window 1h\|24h\|7d]` (lote, p95/máx., cobertura) | bucles de `metric.sample` por VM |
 | Varias VMs | `vm.info -json vm1 vm2 vm3` (acepta varios) | una llamada por VM |
 
 Tipos de `-type`: `m` VM, `h` host, `s` datastore, `c` clúster, `r` compute resource, `n` red, `g` portgroup distribuido, `w` DVS, `p` resource pool, `f` carpeta, `d` datacenter, `a` vApp.

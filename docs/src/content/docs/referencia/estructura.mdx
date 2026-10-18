@@ -49,6 +49,7 @@ import { FileTree } from '@astrojs/starlight/components';
   - govc.ps1 punto único de acceso
   - New-Report.ps1
   - Invoke-HostCheck.ps1
+  - Invoke-PerfCheck.ps1 revisión de rendimiento (metric.sample)
   - Invoke-Audit.ps1
   - Compare-Report.ps1
   - Test-Guards.ps1
@@ -72,6 +73,9 @@ import { FileTree } from '@astrojs/starlight/components';
 - specs/ no versionado (salvo .gitkeep)
 - docs/ este sitio (Astro Starlight), publicado en GitHub Pages
 - **reports/** no versionado
+  - prod/
+    - 20261017-080000/ reporte de New-Report.ps1, revisión de hosts o de rendimiento (perf-check.html) con su raw/
+    - 20261017-090000-auditoria/ auditoria.html con inventario/, hosts/, perf/ y raw/
 - **logs/** no versionado
 - **tools/** no versionado (govc.exe, vcsim.exe)
 </FileTree>

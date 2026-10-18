@@ -9,13 +9,16 @@ sidebar:
 
 | Dominio | Categorías incluidas |
 |---|---|
-| Disponibilidad | Hosts, Alarmas, Storage (paths), Red física, Clúster (HA/DRS) |
-| Capacidad | Almacenamiento, Capacidad |
+| Disponibilidad | Hosts, Alarmas, Storage (paths), Red física, Clúster (HA/DRS, control de admisión de HA) |
+| Capacidad | Almacenamiento, Capacidad (incluidas la holgura N+1, la presión de memoria instantánea y los límites de resource pools) |
+| Rendimiento | Rendimiento: CPU ready, latencia de datastores, CPU de hosts, ballooning, swap y paquetes descartados en la ventana evaluada |
 | Configuración | VMware Tools, Drift de VIBs/drivers, Tiempo, Diagnóstico, Plataforma, Configuración de VMs, Licencias |
 | Seguridad | Servicios de acceso (SSH/Shell), Logs, Certificados, Permisos |
 | Higiene | Snapshots, VMs apagadas |
 
-Los hallazgos de **Cobertura** (hosts o controles que no pudieron evaluarse) no se puntúan: se informan como limitaciones en la sección de metodología.
+Los hallazgos de **Cobertura** (hosts, controles o contadores que no pudieron evaluarse) no se puntúan: se informan como limitaciones en la sección de metodología.
+
+El dominio **Rendimiento** solo se puntúa cuando la auditoría dispone de datos de rendimiento (carpeta `perf/`). Sin ellos, el dominio no muestra indicador y la ausencia se declara con el hallazgo de cobertura `coverage-perf`. Ver [Sin datos de rendimiento](/vcenter/auditoria/ejecutar/#sin-datos-de-rendimiento).
 
 ## Indicador por dominio
 
@@ -54,7 +57,8 @@ Las referencias indican el tema de la guía (por ejemplo, «registro remoto (sys
 
 ## Límites de las conclusiones
 
-- La evaluación refleja el estado **en el momento de la recolección**.
-- Se evalúa la configuración declarada y el estado reportado por vCenter, no el consumo histórico ni el comportamiento bajo carga.
+- La evaluación de configuración, capacidad y disponibilidad refleja el estado **en el momento de la recolección**. La sobresuscripción y la holgura N+1 se calculan sobre recursos asignados y el uso instantáneo.
+- Con datos de rendimiento, el consumo se evalúa solo en la ventana indicada en la metodología (1 h, 24 h o 7 días). Los contadores que el nivel de estadísticas de vCenter no conserva se declaran como cobertura, no como ausencia de problemas. Sin datos de rendimiento, no se evalúa el consumo en una ventana de tiempo.
+- Los umbrales de rendimiento (CPU ready, latencia, CPU de hosts) son de práctica habitual, no normativos; deben validarse con Infraestructura y Arquitectura.
 - La ausencia de hallazgos en un dominio no implica ausencia de riesgo fuera del alcance evaluado.
 - Las recomendaciones requieren la validación del área dueña antes de ejecutarse.

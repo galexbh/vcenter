@@ -24,12 +24,16 @@ Desde Claude: `/report prod health` o `/report prod inventory csv`. Desde una te
 | Tipo | Secciones |
 |---|---|
 | `health` | Hallazgos y sugerencias |
-| `capacity` | Capacidad por clúster, datastores, hosts, y certificado y licencias |
+| `capacity` | Capacidad por clúster (con holgura N+1 de CPU y RAM), resource pools (si existen fuera del pool raíz), datastores, hosts, y certificado y licencias |
 | `snapshots` | Snapshots con antigüedad |
 | `inventory` | Máquinas virtuales |
 | `all` (por defecto) | Todas las anteriores |
 
 Todos los reportes incluyen indicadores: VMs, encendidas, apagadas, plantillas, hosts, clústeres, datastores, snapshots, hallazgos críticos y advertencias.
+
+En la sección de capacidad, la tabla *Capacidad por clúster* incluye las columnas **CPU N+1 %** y **RAM N+1 %**: el uso actual frente a la capacidad que queda al perder el host de mayor capacidad del clúster (un valor superior a 100 % indica que la carga no cabe). La tabla *Resource pools* muestra los límites y reservas de CPU y memoria de cada pool, excepto el pool raíz `Resources`; un límite de `-1` significa sin límite. Ver [Holgura N+1](/vcenter/reportes/hallazgos/#holgura-n1).
+
+El reporte de capacidad refleja recursos asignados y el uso en el momento de la recolección. Para medir CPU ready, latencia de almacenamiento, CPU de hosts y presión de memoria en una ventana de tiempo se utiliza `task perf ENV=prod` o `./scripts/Invoke-PerfCheck.ps1 -Env prod` (ver [Revisión de rendimiento](/vcenter/reportes/rendimiento/)).
 
 ## Recolección
 
@@ -37,13 +41,14 @@ El número de consultas es fijo e independiente del tamaño del inventario. Toda
 
 | # | Consulta | Datos |
 |---|---|---|
-| 1 | `object.collect -type m` | VMs: estado, host, CPU, RAM, disco, sistema operativo, IP, VMware Tools, snapshots, versión de hardware, límites, consolidación pendiente, unidades de CD/DVD (se omiten con `-SkipDeviceScan`) |
+| 1 | `object.collect -type m` | VMs: estado, host, CPU, RAM, disco, sistema operativo, IP, VMware Tools, snapshots, versión de hardware, límites, consolidación pendiente, memoria en balloon, swap y comprimida (`quickStats`), unidades de CD/DVD (se omiten con `-SkipDeviceScan`) |
 | 2 | `object.collect -type h` | Hosts: cores, frecuencia, RAM, uso, conexión, mantenimiento, versión |
 | 3 | `object.collect -type r` | Recursos de cómputo |
-| 4 | `object.collect -type c` | Clústeres: estado de HA y DRS, comportamiento de DRS |
-| 5 | `object.collect -type s` | Datastores: capacidad, espacio libre, espacio sin comprometer, tipo, accesibilidad |
-| 6 | `object.collect / triggeredAlarmState` | Alarmas activas (más una lectura por alarma distinta para obtener su nombre) |
-| 7 | `about.cert`, `license.ls` | Certificado de vCenter y licencias |
+| 4 | `object.collect -type c` | Clústeres: estado de HA y DRS, comportamiento de DRS, control de admisión de HA |
+| 5 | `object.collect -type s` | Datastores: capacidad, espacio libre, espacio sin comprometer, tipo, accesibilidad, URL (`summary.url`, para traducir las métricas de latencia) |
+| 6 | `object.collect -type p` | Resource pools: padre, asignación de CPU y memoria (límite y reserva) |
+| 7 | `object.collect / triggeredAlarmState` | Alarmas activas (más una lectura por alarma distinta para obtener su nombre) |
+| 8 | `about.cert`, `license.ls` | Certificado de vCenter y licencias |
 
 Con `-SkipDeviceScan` no se recolectan las unidades de CD/DVD de las VMs y, por lo tanto, no se evalúa la regla de ISO conectada. Se recomienda en inventarios de miles de VMs, porque reduce de forma considerable el volumen de datos y el consumo de memoria. La omisión no pasa inadvertida: se declara como un hallazgo Info de cobertura (`coverage-devices`), que la auditoría presenta como limitación y no puntúa.
 
@@ -65,6 +70,7 @@ Con `-SkipDeviceScan` no se recolectan las unidades de CD/DVD de las VMs y, por 
         - compute.json
         - clusters.json
         - datastores.json
+        - pools.json resource pools
         - alarms.json
         - vcenter.json certificado y licencias
 </FileTree>
@@ -95,6 +101,8 @@ Es posible modificar umbrales, tipo o formato sobre una corrida existente:
 ```powershell
 ./scripts/New-Report.ps1 -FromRaw reports/prod/20261017-080000 -Type health -SnapshotWarnDays 3
 ```
+
+Las corridas recolectadas antes de la versión 1.7 no contienen `raw/pools.json` ni la memoria en balloon, swap o comprimida de las VMs: al recalcularlas, la tabla de resource pools no aparece y las reglas `rp-limit`, `vm-balloon`, `vm-swap` y `vm-compressed` no producen hallazgos.
 
 ## Confidencialidad
 

@@ -7,6 +7,7 @@
       "PowerShell(./scripts/Invoke-HostCheck.ps1 *)",
       "PowerShell(./scripts/Compare-Report.ps1 *)",
       "PowerShell(./scripts/Invoke-Audit.ps1 *)",
+      "PowerShell(./scripts/Invoke-PerfCheck.ps1 *)",
       "PowerShell(./scripts/Test-Guards.ps1)",
       "PowerShell(.\\scripts\\Test-Guards.ps1)",
       "PowerShell(./scripts/Test-AuditLog.ps1*)",

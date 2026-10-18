@@ -34,6 +34,7 @@ Ver [Wrapper govc.ps1](/vcenter/uso/wrapper/).
 | `-VcpuRatioWarn` / `-VcpuRatioCrit` | double | 4 / 6 | |
 | `-MemRatioWarn` | double | 1,0 | |
 | `-HostMemWarnPct` | int | 85 | |
+| `-N1WarnPct` | int | 90 | Advertencia de holgura N+1: % de uso sobre la capacidad que queda sin el host mayor |
 | `-MinHwVersion` | int | 14 | |
 | `-CertWarnDays` / `-LicenseWarnDays` | int | 60 / 60 | |
 | `-SkipDeviceScan` | switch | — | Omite la detección de ISO conectada. Recomendado con miles de VMs (con 5000 VMs reduce el volumen de ~65 MB a ~6 MB y ~1 GB de memoria). Se informa como limitación de cobertura |
@@ -53,13 +54,33 @@ Ver [Wrapper govc.ps1](/vcenter/uso/wrapper/).
 | `-CertWarnDays` | int | 60 | |
 | `-MdMaxRows` | int | 200 | |
 
+## Invoke-PerfCheck.ps1
+
+| Parámetro | Tipo | Valor por defecto | Descripción |
+|---|---|---|---|
+| `-Env` | string | — | Entorno (obligatorio si no se usa `-FromRaw`) |
+| `-Cluster` | string[] | todos | Filtro por clúster |
+| `-Window` | `1h` `24h` `7d` | `24h` | Ventana: 20 s × 180 muestras (tiempo real), 300 s × 288 o 1800 s × 336 (histórico de vCenter) |
+| `-Format` | `html`, `md` | ambos | |
+| `-FromRaw` | ruta | — | Recalcula desde una corrida existente (conserva entorno y ventana) |
+| `-OutDir` | ruta | `reports/<env>/<marca>` | Carpeta de salida (la usa `Invoke-Audit.ps1`) |
+| `-InventoryDir` | ruta | — | Carpeta de una corrida de `New-Report.ps1` cuyo `raw/` se reutiliza en lugar de volver a consultar hosts, VMs y datastores (la usa `Invoke-Audit.ps1`) |
+| `-CpuReadyWarnPct` / `-CpuReadyCritPct` | double | 5 / 10 | CPU ready p95 por vCPU, en % |
+| `-DsLatencyWarnMs` / `-DsLatencyCritMs` | double | 20 / 30 | Latencia p95 del peor host por datastore, en ms |
+| `-HostCpuWarnPct` / `-HostCpuCritPct` | double | 85 / 95 | CPU p95 del host, en % |
+| `-MdMaxRows` | int | 200 | |
+
+Ver [Revisión de rendimiento](/vcenter/reportes/rendimiento/).
+
 ## Invoke-Audit.ps1
 
 | Parámetro | Tipo | Valor por defecto | Descripción |
 |---|---|---|---|
 | `-Env` | string | — | Entorno (obligatorio si no se usa `-FromRaw`) |
-| `-Cluster` | string[] | todos | Limita la revisión de hosts |
-| `-Scope` | `full` `security` `capacity` | `full` | Dominios evaluados |
+| `-Cluster` | string[] | todos | Limita la revisión de hosts y la de rendimiento |
+| `-Scope` | `full` `security` `capacity` `performance` | `full` | Dominios evaluados (`performance`: Capacidad y Rendimiento) |
+| `-PerfWindow` | `1h` `24h` `7d` | `24h` | Ventana de la revisión de rendimiento; no aplica con `-FromRaw` |
+| `-SkipPerf` | switch | — | Omite la revisión de rendimiento; el dominio no se puntúa y se declara como cobertura |
 | `-Format` | `html`, `md` | ambos | |
 | `-FromRaw` | ruta | — | Regenera el informe desde una auditoría existente |
 | `-MaxRootAdmins` | int | 5 | Umbral de principales con rol Administrador en la raíz |
@@ -80,7 +101,7 @@ Ver [Wrapper govc.ps1](/vcenter/uso/wrapper/).
 
 | Script | Función | Salida |
 |---|---|---|
-| `Test-Reports.ps1 [-Keep]` | Pruebas de regresión de reportes, CSV, hosts, auditoría y tendencias (ver [Pruebas](/vcenter/referencia/pruebas/)) | Código de salida igual al número de fallas |
+| `Test-Reports.ps1 [-Keep]` | Pruebas de regresión de reportes, CSV, hosts, rendimiento, auditoría y tendencias (ver [Pruebas](/vcenter/referencia/pruebas/)) | Código de salida igual al número de fallas |
 | `Test-Guards.ps1 [-HookPath]` | Pruebas del clasificador y del hook; `-HookPath` prueba una copia alternativa del hook (por ejemplo, una versión preparada para revisión) | Código de salida igual al número de fallas |
 | `Test-AuditLog.ps1 [-Path]` | Verificación de la cadena de hashes de la bitácora | `0` si está íntegra; `1` e indicación de la línea si no |
 

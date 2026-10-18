@@ -21,7 +21,8 @@ sidebar:
 | Datastores vSAN | `find / -type s -summary.type vsan` | — |
 | Detalle de varias VMs | `vm.info -json -r vm1 vm2 vm3` | Una llamada por VM |
 | Eventos | `events -n 50 <ruta>` | `tasks` sin límite |
-| Métricas | `metric.sample -n 12 -json <ruta> cpu.usage.average` | Intervalos extensos |
+| Métricas de una VM o un host | `metric.sample -n 12 -json <ruta de VM o host> cpu.usage.average` | Rutas de clúster; intervalos extensos |
+| Rendimiento de un clúster o del entorno | `./scripts/Invoke-PerfCheck.ps1 -Env <entorno> -Cluster <clúster>` (ver [Revisión de rendimiento](/vcenter/reportes/rendimiento/)) | Una consulta de `metric.sample` por VM |
 
 Alias de `-type`: `m` VM · `h` host · `s` datastore · `c` clúster · `r` recurso de cómputo · `n` red · `g` portgroup distribuido · `w` switch distribuido · `p` resource pool · `f` carpeta · `d` datacenter · `a` vApp.
 

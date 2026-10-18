@@ -26,7 +26,7 @@ Las guardas (`.claude/hooks/govc-guard.ps1`, `.claude/hooks/read-guard.sh`, `scr
 - Inventario masivo: `object.collect -json -type <m|h|s|r|c> / <propiedades…>` (una llamada) en vez de `vm.info` por VM. La salida es un flujo de objetos: usa `ConvertFrom-GovcCollect` de `scripts/lib/GovcJson.psm1`.
 - Filtra en el servidor: `find / -type m -runtime.powerState poweredOff`, `find / -type s -summary.type vsan`.
 - Flags con punto (`-runtime.powerState`) funcionan sin comillas (el wrapper los recompone). Valores con comas o espacios: entre comillas.
-- Para re-analizar sin volver a consultar vCenter: `-FromRaw reports/<env>/<marca>` (New-Report, Invoke-HostCheck, Invoke-Audit) y `Compare-Report.ps1` para tendencias.
+- Para re-analizar sin volver a consultar vCenter: `-FromRaw reports/<env>/<marca>` (New-Report, Invoke-HostCheck, Invoke-PerfCheck, Invoke-Audit) y `Compare-Report.ps1` para tendencias.
 - Varias lecturas en un script: usa `Invoke-GovcBatch` (`scripts/lib/GovcBatch.psm1`, modo `-Batch` del wrapper): una sola sesión, solo lecturas. No gestiones sesiones de govc por tu cuenta.
 
 ## Pruebas
@@ -40,11 +40,12 @@ Tras cambiar un script de reportes, una plantilla o un módulo: `./scripts/Test-
 | `scripts/govc.ps1` | Wrapper: perfil + credencial + política + bitácora encadenada (`logs/`). Editarlo requiere aprobación |
 | `scripts/New-Report.ps1` | Reportes `inventory`, `snapshots`, `capacity`, `health`, `all` en HTML/MD/CSV; escribe `raw/findings.json` y `raw/summary.json` |
 | `scripts/Invoke-HostCheck.ps1` | Revisión esxcli por host (solo lectura) y drift entre hosts |
-| `scripts/Invoke-Audit.ps1` | Auditoría completa con informe formal (`templates/audit.html`) |
+| `scripts/Invoke-PerfCheck.ps1` | Rendimiento en una ventana `1h`/`24h`/`7d` (solo lectura, `metric.sample` en lote): CPU ready, latencia por datastore, CPU de hosts, ballooning, swap, drops; contadores sin datos = cobertura |
+| `scripts/Invoke-Audit.ps1` | Auditoría completa con informe formal (`templates/audit.html`), incluido el dominio Rendimiento (`-Scope performance`, `-PerfWindow`, `-SkipPerf`) |
 | `scripts/Compare-Report.ps1` | Tendencias entre dos corridas o dos auditorías |
 | `scripts/Test-Guards.ps1` | Pruebas de clasificación y hook (`-HookPath` para probar una versión preparada) |
 | `scripts/Test-AuditLog.ps1` | Verificación de integridad de la bitácora |
-| `scripts/Test-Reports.ps1` | Pruebas de regresión de reportes, CSV, hosts, auditoría y tendencias (datos demo) |
+| `scripts/Test-Reports.ps1` | Pruebas de regresión de reportes, CSV, hosts, rendimiento, auditoría y tendencias (datos demo) |
 | `scripts/New-DemoData.ps1` | Entorno ficticio `demo` para ver o probar reportes sin vCenter (`-EdgeCases` para pruebas) |
 | `scripts/Install-Govc.ps1` | Instala la versión estable más alta de govc (o `-Version`) con verificación SHA256 (`-WithVcsim` para simulador) |
 | `scripts/Set-GovcCredential.ps1` | Registra, lista o elimina credenciales en Credential Manager; lo ejecuta una persona en su terminal (`task credential`, `credential:list`, `credential:remove`) |

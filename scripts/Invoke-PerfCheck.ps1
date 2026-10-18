@@ -122,13 +122,16 @@ if ($FromRaw) {
     }
     [Console]::Error.WriteLine('Listando entidades e intervalos de estadísticas...')
     $r1 = Invoke-GovcBatch -Env $Env -Commands $cmds
+    # metric.interval.info imprime texto aunque reciba -json (govc 0.56): bloques "ID: 300 … Level: 1".
     $levels = @()
-    if ($r1[0].exitCode -eq 0 -and "$($r1[0].stdout)".Trim()) {
-        try {
-            $iv = "$($r1[0].stdout)" | ConvertFrom-Json -Depth 10 -NoEnumerate
-            $ivList = if ($iv -is [array]) { $iv } else { Q $iv @('info', 'Info', 'intervals', 'Intervals', 'historicalInterval', 'HistoricalInterval') @() }
-            $levels = @($ivList | ForEach-Object { [pscustomobject]@{ period = [int](Q $_ @('samplingPeriod', 'SamplingPeriod') 0); level = [int](Q $_ @('level', 'Level') 0); enabled = [bool](Q $_ @('enabled', 'Enabled') $true) } })
-        } catch { $levels = @() }
+    if ($r1[0].exitCode -eq 0) {
+        foreach ($blk in ("$($r1[0].stdout)" -split '(?m)^(?=\s*ID:)')) {
+            if ($blk -match '(?m)^\s*ID:\s*(\d+)' ) {
+                $period = [int]$Matches[1]
+                $lv = if ($blk -match '(?m)^\s*Level:\s*(\d+)') { [int]$Matches[1] } else { $null }
+                $levels += [pscustomobject]@{ period = $period; level = $lv }
+            }
+        }
     }
     if ($useInv) {
         $rd = { param($n) $f = Join-Path $invRaw "$n.json"; if (Test-Path $f) { @(Get-Content $f -Raw | ConvertFrom-Json -DateKind String) } else { @() } }
@@ -209,7 +212,8 @@ if ($FromRaw) {
                 balloonMB = & $statsOf (& $find 'vm' $v.id 'mem.vmmemctl.average') (1 / 1024)
                 swapinKBps = & $statsOf (& $find 'vm' $v.id 'mem.swapinRate.average')
             } })
-    $dsPerf = @(foreach ($g in @($series | Where-Object { $_.kind -eq 'hostds' -and $_.instance } | Group-Object entity, instance)) {
+    # Instancia = UUID del datastore. Se ignoran '*' y las series vacías (p. ej. el simulador vcsim no publica latencias).
+    $dsPerf = @(foreach ($g in @($series | Where-Object { $_.kind -eq 'hostds' -and $_.instance -and $_.instance -ne '*' -and @($_.values | Where-Object { $_ -ge 0 }).Count } | Group-Object entity, instance)) {
             $f = $g.Group[0]; $h = $hostInfo[$f.entity]
             $rd = $g.Group | Where-Object counter -eq 'datastore.totalReadLatency.average' | Select-Object -First 1
             $wr = $g.Group | Where-Object counter -eq 'datastore.totalWriteLatency.average' | Select-Object -First 1
@@ -222,7 +226,9 @@ if ($FromRaw) {
     $present = @{}; foreach ($s in $series) { if (@($s.values | Where-Object { $_ -ge 0 }).Count) { $present["$($s.kind)|$($s.counter)"] = $true } }
     $expected = @($hostAggCounters | ForEach-Object { "host|$_" }) + @($hostDsCounters | ForEach-Object { "hostds|$_" }) + @($vmCounters | ForEach-Object { "vm|$_" })
     $kindsRun = @($jobs.kind | Sort-Object -Unique)
-    $missing = @($expected | Where-Object { ($_ -split '\|')[0] -in $kindsRun -and -not $present[$_] } | ForEach-Object { ($_ -split '\|')[1] } | Sort-Object -Unique)
+    $kindLabel = @{ host = 'hosts'; hostds = 'hosts'; vm = 'VMs' }
+    $missing = @($expected | Where-Object { ($_ -split '\|')[0] -in $kindsRun -and -not $present[$_] } |
+        ForEach-Object { $k, $c = $_ -split '\|'; "$c ($($kindLabel[$k]))" } | Sort-Object -Unique)
     $lvl = @($levels | Where-Object { $_.period -eq $win.i } | Select-Object -First 1)
     $meta = [pscustomobject]@{
         env = $Env; generated = $generated.ToString('o'); user = "$env:USERDOMAIN\$env:USERNAME"; window = $Window; interval = $win.i; samples = $win.n

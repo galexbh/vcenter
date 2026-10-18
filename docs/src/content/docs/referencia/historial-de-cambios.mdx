@@ -5,6 +5,32 @@ sidebar:
   order: 6
 ---
 
+## 1.7 — Octubre 2026
+
+**Rendimiento**
+- `Invoke-PerfCheck.ps1` (nuevo, solo lectura): CPU ready por vCPU, latencia por datastore (peor host), CPU de hosts, ballooning, swap y paquetes descartados en una ventana de `1h`, `24h` (por defecto) o `7d`, con p95 y máximo. Página [Revisión de rendimiento](/vcenter/reportes/rendimiento/).
+- `metric.sample` en modo lote, en trozos de 50 entidades y con una sola sesión; solo se guardan agregados por entidad y contador. `-FromRaw` recalcula con otros umbrales sin consultar vCenter.
+- Los contadores sin datos (por el nivel de estadísticas del intervalo), los hosts sin conexión y las consultas fallidas se declaran como cobertura, no como ausencia de problemas.
+- `task perf ENV=<entorno> [WINDOW=…] [CLUSTER=…]` o `FROM=<carpeta>`.
+
+**Capacidad**
+- Holgura N+1 por clúster (`cl-n1-mem`, `cl-n1-cpu`, `cl-n1-single`): uso actual frente a la capacidad que queda sin el host mayor, solo con hosts activos. Columnas *CPU N+1 %* y *RAM N+1 %* en la tabla de capacidad y parámetro `-N1WarnPct` (90 por defecto).
+- Control de admisión de HA desactivado (`cl-ha-admission`).
+- Balloon, swap y memoria comprimida por VM (`vm-balloon`, `vm-swap`, `vm-compressed`) a partir de `quickStats`.
+- Resource pools con límite (`rp-limit`) y tabla *Resource pools*; nuevo `raw/pools.json`.
+- Los datastores incluyen `summary.url`, que permite traducir las métricas de latencia al nombre del datastore.
+- `cl-vcpu` sugiere `Invoke-PerfCheck.ps1` como verificación, en lugar de un `metric.sample` sobre el clúster.
+
+**Auditoría**
+- Dominio Rendimiento (seis dominios), alcance `-Scope performance` (Capacidad y Rendimiento), `-PerfWindow` y `-SkipPerf`. `task audit` admite `SCOPE=performance` y `WINDOW=`.
+- La recolección tiene cuatro pasos; el de rendimiento reutiliza el inventario y, si falla, no detiene la auditoría.
+- Sin datos de rendimiento, el dominio no se puntúa y se declara como cobertura (`coverage-perf`). `-FromRaw` regenera `perf/` si existe.
+- Metodología con ventana, intervalo y nivel de estadísticas; limitaciones actualizadas; anexos A a F (nuevo anexo C, *Resumen de rendimiento*).
+
+**Pruebas**
+- `Test-Reports.ps1`: reglas nuevas de capacidad, bloque de `Invoke-PerfCheck.ps1`, alcance `performance` y auditoría sin `perf/`. Datos de demostración con rendimiento y N+1.
+- `Test-Guards.ps1`: clasificación de `metric.*` (consultas como lectura; cambios de intervalos y niveles como escritura).
+
 ## 1.6 — Octubre 2026
 
 **Publicación**

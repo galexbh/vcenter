@@ -28,7 +28,8 @@ sidebar:
 | `pre-commit: el diff parece contener credenciales` | El contenido agregado incluye una contraseña o una URL con usuario y contraseña | Retirar el secreto del archivo, registrarlo en Credential Manager y, si llegó a compartirse, rotarlo |
 | `task` no se reconoce como comando | Task no instalado o terminal abierta antes de instalarlo | `winget install --id Task.Task -e` y abrir una terminal nueva |
 | `Indica ENV=<entorno> o FROM=<carpeta en reports/>` | Tarea de reporte, revisión de hosts o auditoría sin origen de datos | Indicar `ENV=` o `FROM=` |
-| `SCOPE admite full, security o capacity` | Valor de `SCOPE` no válido en `task audit` | Corregir el valor u omitirlo |
+| `SCOPE admite full, security, capacity o performance` | Valor de `SCOPE` no válido en `task audit` | Corregir el valor u omitirlo |
+| `WINDOW admite 1h, 24h o 7d` | Valor de `WINDOW` no válido en `task perf` o `task audit` | Corregir el valor u omitirlo (24 h por defecto) |
 | `La credencial la registra una persona en su propia terminal, no Claude.` | `task credential` se ejecutó dentro de Claude Code (incluido el prefijo `!`) | Ejecutarla en una terminal propia, fuera de Claude Code |
 | `Las credenciales las consulta una persona en su propia terminal, no Claude.` / `La credencial la elimina una persona en su propia terminal, no Claude.` | `task credential:list` o `task credential:remove` se ejecutó dentro de Claude Code | Ejecutarla en una terminal propia, fuera de Claude Code |
 | `task: Task "credential:remove" cancelled by user` | Se respondió que no a la confirmación | Comportamiento esperado; la credencial no se modificó |
