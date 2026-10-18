@@ -55,13 +55,16 @@ foreach ($c in $clusters) {
 $hosts[3].'runtime.inMaintenanceMode' = $true                       # esx04 en mantenimiento
 $hosts[5].'summary.quickStats.overallMemoryUsage' = 470000          # esx06 con RAM alta
 $hosts[6].'summary.config.product.fullName' = 'VMware ESXi 8.0.2 build-22380479'
+# Holgura N+1: CL-PROD-01 cabe sin su host mayor; CL-PROD-02 no (memoria por encima de lo que queda).
+$hosts[0].'summary.quickStats.overallMemoryUsage' = 280000; $hosts[1].'summary.quickStats.overallMemoryUsage' = 300000; $hosts[2].'summary.quickStats.overallMemoryUsage' = 260000
+$hosts[4].'summary.quickStats.overallMemoryUsage' = 400000; $hosts[6].'summary.quickStats.overallMemoryUsage' = 380000
 
 $compute = @($clusters | ForEach-Object {
         $n = $_.hosts
         [pscustomobject]@{ _type = 'ClusterComputeResource'; _moref = $_.id; name = $_.name; 'summary.numCpuCores' = 32 * $n; 'summary.totalMemory' = [long](512 * $GB * $n); 'summary.numHosts' = $n; 'summary.numEffectiveHosts' = $n }
     })
 $clusterCfg = @($clusters | ForEach-Object {
-        [pscustomobject]@{ _type = 'ClusterComputeResource'; _moref = $_.id; name = $_.name; configurationEx = [pscustomobject]@{ dasConfig = [pscustomobject]@{ enabled = $_.ha }; drsConfig = [pscustomobject]@{ enabled = $_.drs; defaultVmBehavior = $_.behavior } } }
+        [pscustomobject]@{ _type = 'ClusterComputeResource'; _moref = $_.id; name = $_.name; configurationEx = [pscustomobject]@{ dasConfig = [pscustomobject]@{ enabled = $_.ha; admissionControlEnabled = ($_.name -ne 'CL-PROD-01') }; drsConfig = [pscustomobject]@{ enabled = $_.drs; defaultVmBehavior = $_.behavior } } }
     })
 
 # --- VMs ---------------------------------------------------------------------------
@@ -89,6 +92,7 @@ foreach ($r in $roles) {
             'guest.ipAddress' = "10.20.$([int](10 + $vi / 50)).$((10 + $vi) % 250)"; 'config.template' = $false
             'snapshot.rootSnapshotList' = @(); 'runtime.consolidationNeeded' = $false; 'config.version' = 'vmx-20'
             'config.cpuAllocation.limit' = -1; 'config.memoryAllocation.limit' = -1; 'config.hardware.device' = @()
+            'summary.quickStats.balloonedMemory' = 0; 'summary.quickStats.swappedMemory' = 0; 'summary.quickStats.compressedMemory' = 0
         }
     }
 }
@@ -107,6 +111,9 @@ foreach ($n in 'win-app04', 'win-app05', 'win-ad03') { $byName[$n].'config.versi
 $byName['win-app06'].'guest.toolsRunningStatus' = 'guestToolsNotRunning'
 $byName['web-banca07'].'guest.toolsVersionStatus2' = 'guestToolsNeedUpgrade'
 $byName['web-banca08'].'guest.toolsVersionStatus2' = 'guestToolsNeedUpgrade'
+$byName['app-erp03'].'summary.quickStats.balloonedMemory' = 2048      # MB
+$byName['db-core02'].'summary.quickStats.swappedMemory' = 512         # MB
+$byName['web-banca05'].'summary.quickStats.compressedMemory' = 1048576  # KB
 foreach ($n in 'test-qa03', 'test-qa04') { $byName[$n].'runtime.powerState' = 'poweredOff'; $byName[$n].'guest.toolsRunningStatus' = 'guestToolsNotRunning'; $byName[$n].'guest.ipAddress' = '' }
 $tpl = $vms[0].PSObject.Copy(); $tpl._moref = 'vm-2001'; $tpl.name = 'tpl-rhel9-2026q3'; $tpl.'config.template' = $true; $tpl.'runtime.powerState' = 'poweredOff'
 $vms += $tpl
@@ -128,7 +135,11 @@ if ($EdgeCases) {
 $hostsOut = @($hosts | ForEach-Object { $o = $_.PSObject.Copy(); $o.PSObject.Properties.Remove('cluster'); $o })
 
 # --- Datastores, alarmas, vCenter ----------------------------------------------------
-function DS($id, $name, $capTB, $usedPct, $uncTB, $type = 'VMFS') { [pscustomobject]@{ _type = 'Datastore'; _moref = $id; name = $name; 'summary.capacity' = [long]($capTB * 1TB); 'summary.freeSpace' = [long]($capTB * 1TB * (1 - $usedPct / 100)); 'summary.uncommitted' = [long]($uncTB * 1TB); 'summary.type' = $type; 'summary.accessible' = $true } }
+function DS($id, $name, $capTB, $usedPct, $uncTB, $type = 'VMFS') {
+    # UUID ficticio derivado del id: las métricas de latencia identifican el datastore por él.
+    $uuid = '6e2f{0:0000}-0a1b2c3d-4e5f-0050560a{0:0000}' -f [int]($id -replace '\D', '')
+    [pscustomobject]@{ _type = 'Datastore'; _moref = $id; name = $name; 'summary.capacity' = [long]($capTB * 1TB); 'summary.freeSpace' = [long]($capTB * 1TB * (1 - $usedPct / 100)); 'summary.uncommitted' = [long]($uncTB * 1TB); 'summary.type' = $type; 'summary.accessible' = $true; 'summary.url' = "ds:///vmfs/volumes/$uuid/" }
+}
 $datastores = @(
     DS 'datastore-11' 'DS-PROD-01' 20 92.4 2
     DS 'datastore-12' 'DS-PROD-02' 20 83.1 14
@@ -150,6 +161,17 @@ $vcenter = [pscustomobject]@{
 $meta = [ordered]@{ env = 'demo'; generated = $now.ToString('o'); user = 'DEMO\usuario.demo' }
 Save $inv 'meta' $meta; Save $inv 'vms' $vms; Save $inv 'hosts' $hostsOut; Save $inv 'compute' $compute; Save $inv 'clusters' $clusterCfg
 Save $inv 'datastores' $datastores; Save $inv 'alarms' $alarms; Save $inv 'vcenter' $vcenter
+function Pool($id, $name, $parent, $cpuLimit = -1, $memLimit = -1) {
+    [pscustomobject]@{ _type = 'ResourcePool'; _moref = $id; name = $name; parent = $parent
+        'config.cpuAllocation' = [pscustomobject]@{ limit = $cpuLimit; reservation = 0; expandableReservation = $true }
+        'config.memoryAllocation' = [pscustomobject]@{ limit = $memLimit; reservation = 0; expandableReservation = $true } }
+}
+Save $inv 'pools' @(
+    Pool 'resgroup-10' 'Resources' (Ref 'ClusterComputeResource' 'domain-c10')
+    Pool 'resgroup-20' 'Resources' (Ref 'ClusterComputeResource' 'domain-c20')
+    Pool 'resgroup-11' 'RP-Produccion' (Ref 'ResourcePool' 'resgroup-10')
+    Pool 'resgroup-12' 'RP-QA' (Ref 'ResourcePool' 'resgroup-10') 8000 16384   # límites que generan contención
+)
 
 # --- Revisión de hosts (esxcli) ---------------------------------------------------------
 $hl = @($hosts | ForEach-Object { [pscustomobject]@{ name = $_.name; cluster = $_.cluster; state = 'connected' } })
@@ -213,5 +235,37 @@ $perm = @(
 )
 $roleList = @([pscustomobject]@{ roleId = -1; name = 'Admin' }, [pscustomobject]@{ roleId = -2; name = 'ReadOnly' }, [pscustomobject]@{ roleId = -5; name = 'NoAccess' })
 Save $aud 'vcenter-access' ([ordered]@{ permissions = $perm; roles = $roleList; ok = $true })
-Save $aud 'meta-audit' ([ordered]@{ env = 'demo'; generated = $now.ToString('o'); scope = 'full'; cluster = @(); user = 'DEMO\usuario.demo'; version = '1.0' })
+Save $aud 'meta-audit' ([ordered]@{ env = 'demo'; generated = $now.ToString('o'); scope = 'full'; cluster = @(); user = 'DEMO\usuario.demo'; version = '1.0'; perfWindow = '24h' })
+
+# --- Rendimiento (agregados de 24 h, como los deja Invoke-PerfCheck.ps1) ------------------
+# Semilla propia: no altera la secuencia aleatoria de las secciones anteriores.
+$prnd = [Random]::new(20261018)
+$perfDir = Join-Path $AuditDir 'perf/raw'; New-Item -ItemType Directory -Force -Path $perfDir | Out-Null
+function St($avg, $p95, $max) { [pscustomobject]@{ avg = [math]::Round($avg, 2); p95 = [math]::Round($p95, 2); max = [math]::Round($max, 2); n = 288 } }
+$hostName = @{}; $hostCl = @{}; foreach ($h in $hosts) { $hostName[$h._moref] = $h.name; $hostCl[$h._moref] = $h.cluster }
+$perfHost = @(foreach ($h in $hosts) {
+        $p = if ($h.name -eq 'esx03.demo.local') { 96.4 } else { 35 + $prnd.Next(0, 30) }
+        [pscustomobject]@{ name = $h.name; cluster = $h.cluster; ok = $true; error = ''; cpuPct = (St ($p * 0.7) $p ([math]::Min(100, $p + 3))); balloonMB = (St 0 0 0); swapinKBps = (St 0 0 0); dropsRx = $null; dropsTx = $null }
+    })
+$perfVm = @(foreach ($v in $vms | Where-Object { $_.'runtime.powerState' -eq 'poweredOn' -and -not $_.'config.template' -and $_.PSObject.Properties['runtime.host'] }) {
+        $r = switch ($v.name) { 'app-erp01' { 12.3 } 'db-core01' { 7.1 } default { 0.3 + $prnd.Next(0, 25) / 10 } }
+        $bal = if ($v.name -eq 'app-erp03') { St 900 1800 2048 } else { St 0 0 0 }
+        $sw = switch ($v.name) { 'db-core02' { St 60 120 410 } 'web-banca02' { St 1 0 300 } default { St 0 0 0 } }
+        $hid = $v.'runtime.host'.value
+        [pscustomobject]@{ name = $v.name; cluster = $hostCl[$hid]; host = $hostName[$hid]; vcpu = $v.'summary.config.numCpu'; readyPct = (St ($r * 0.6) $r ($r * 1.4)); balloonMB = $bal; swapinKBps = $sw }
+    })
+$perfDs = @(foreach ($h in $hosts) {
+        foreach ($d in $datastores | Where-Object { $_.'summary.type' -eq 'VMFS' }) {
+            $p = switch ($d.name) { 'DS-PROD-01' { if ($h.name -eq 'esx02.demo.local') { 35.2 } else { 14 + $prnd.Next(0, 6) } } 'DS-PROD-02' { 22.5 } default { 2 + $prnd.Next(0, 6) } }
+            [pscustomobject]@{ datastore = $d.name; host = $h.name; cluster = $h.cluster; readMs = (St ($p * 0.5) $p ($p * 2)); writeMs = (St ($p * 0.4) ($p * 0.8) ($p * 1.6)) }
+        }
+    })
+$perfErrors = @()
+if ($EdgeCases) {
+    # Un host sin métricas y una consulta fallida: deben salir como cobertura agrupada, sin puntuar.
+    $perfHost[6].ok = $false; $perfHost[6].error = 'host notResponding'
+    $perfErrors = @([pscustomobject]@{ kind = 'vm'; entities = 12; error = 'NoPermission: Permission to perform this operation was denied.' })
+}
+Save $perfDir 'meta-perf' ([ordered]@{ env = 'demo'; generated = $now.ToString('o'); user = 'DEMO\usuario.demo'; window = '24h'; interval = 300; samples = 288; intervalLevel = 1; cluster = @(); missing = @('net.droppedRx.summation', 'net.droppedTx.summation') })
+Save $perfDir 'perf-host' $perfHost; Save $perfDir 'perf-vm' $perfVm; Save $perfDir 'perf-datastore' $perfDs; Save $perfDir 'perf-errors' $perfErrors
 "Datos de demostración generados en $AuditDir"

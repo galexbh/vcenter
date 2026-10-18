@@ -82,7 +82,7 @@
   .blank { min-width: 90px; border-bottom: 1px solid var(--muted) !important; }
 
   /* Indicadores */
-  .scores { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin: 10px 0 14px; }
+  .scores { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 8px; margin: 10px 0 14px; }
   .score { border: 1px solid var(--line); border-top: 4px solid var(--muted); padding: 10px; border-radius: 4px; }
   .score .v { font-size: 20pt; font-weight: 700; font-variant-numeric: tabular-nums; }
   .score .l { font-size: 9pt; color: var(--muted); }

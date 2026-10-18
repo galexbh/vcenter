@@ -50,9 +50,14 @@ try {
         @('vm-consolidate', 'Advertencia'), @('vm-limits', 'Advertencia'), @('vm-iso', 'Info'), @('vm-hwversion', 'Info'),
         @('cert-vc', 'Advertencia'), @('license-*', 'Advertencia'), @('tools-notrunning', 'Advertencia'), @('tools-old', 'Info'),
         @('vm-off', 'Info'), @('host-maint', 'Info'), @('host-mem', 'Advertencia'), @('snap-age-pre-update-CHG-0912', 'Crítico'),
-        @('snap-age-VEEAM*', 'Advertencia'), @('alarm-*', 'Crítico')
+        @('snap-age-VEEAM*', 'Advertencia'), @('alarm-*', 'Crítico'),
+        @('cl-n1-mem', 'Crítico'), @('cl-ha-admission', 'Advertencia'), @('vm-balloon', 'Advertencia'), @('vm-swap', 'Advertencia'),
+        @('vm-compressed', 'Info'), @('rp-limit', 'Advertencia')
     )
     foreach ($e in $expected) { Check "New-Report: regla $($e[0]) ($($e[1]))" (HasRule $nf $e[0] $e[1]) }
+    # N+1: CL-PROD-01 cabe sin su host mayor (sin hallazgo); el pool raíz «Resources» no se evalúa.
+    Check 'New-Report: N+1 solo en el clúster sin holgura' (-not @($nf | Where-Object { $_.rule -like 'cl-n1-*' -and $_.object -eq 'CL-PROD-01' }).Count)
+    Check 'New-Report: rp-limit no evalúa el pool raíz' (-not @($nf | Where-Object { $_.rule -eq 'rp-limit' -and $_.object -eq 'Resources' }).Count)
     Check 'New-Report: todos los hallazgos tienen regla' (-not @($nf | Where-Object { -not $_.rule }).Count)
     $sum = Json (Join-Path $rep 'raw/summary.json')
     $realVms = @($rawVms | Where-Object { -not $_.'config.template' })
@@ -129,6 +134,35 @@ try {
     $cov = @($hf | Where-Object rule -eq 'coverage-coredump')
     Check 'HostCheck: cobertura agrupada por chequeo' ($cov.Count -eq 1 -and $cov[0].object -eq '2 hosts') "$($cov.Count) hallazgos"
 
+    # --- 3b. Invoke-PerfCheck -------------------------------------------------------------------
+    $pdir = Join-Path $audit 'perf'
+    $pc = Quiet { & "$S/Invoke-PerfCheck.ps1" -FromRaw $pdir -Format html, md }
+    Check 'PerfCheck: termina sin error' ($null -ne $pc)
+    $pf = @(Json (Join-Path $pdir 'raw/findings.json'))
+    $perfRules = @(
+        @('perf-cpu-ready', 'Crítico'), @('perf-cpu-ready', 'Advertencia'), @('perf-ds-latency', 'Crítico'), @('perf-ds-latency', 'Advertencia'),
+        @('perf-host-cpu', 'Crítico'), @('perf-balloon', 'Advertencia'), @('perf-swap', 'Advertencia'), @('perf-swap', 'Info'),
+        @('coverage-perf-counters', 'Info'), @('coverage-perf-hosts', 'Info'), @('coverage-perf-error', 'Info')
+    )
+    foreach ($e in $perfRules) { Check "PerfCheck: regla $($e[0]) ($($e[1]))" (HasRule $pf $e[0] $e[1]) }
+    Check 'PerfCheck: hallazgos en categoría Rendimiento o Cobertura' (-not @($pf | Where-Object { $_.category -notin 'Rendimiento', 'Cobertura' }).Count)
+    Check 'PerfCheck: latencia por datastore (un hallazgo por datastore)' (@($pf | Where-Object { $_.rule -eq 'perf-ds-latency' -and $_.object -eq 'DS-PROD-01' }).Count -eq 1)
+    Check 'PerfCheck: host sin métricas no se evalúa' (-not @($pf | Where-Object { $_.rule -eq 'perf-host-cpu' -and $_.object -eq 'esx07.demo.local' }).Count)
+    # -FromRaw recalcula con otros umbrales sin volver a consultar.
+    Quiet { & "$S/Invoke-PerfCheck.ps1" -FromRaw $pdir -Format md -DsLatencyWarnMs 40 -DsLatencyCritMs 50 } | Out-Null
+    Check 'PerfCheck: -FromRaw aplica umbrales nuevos' (-not (HasRule @(Json (Join-Path $pdir 'raw/findings.json')) 'perf-ds-latency'))
+    Quiet { & "$S/Invoke-PerfCheck.ps1" -FromRaw $pdir -Format html, md } | Out-Null
+    # Funciones internas: estadísticas sin valores -1 y formatos de salida de metric.sample.
+    $past = [System.Management.Automation.Language.Parser]::ParseFile("$S/Invoke-PerfCheck.ps1", [ref]$null, [ref]$null)
+    foreach ($fn in $past.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -in 'P', 'Q', 'Get-Stats', 'ConvertFrom-MetricSample' }, $true)) { . ([scriptblock]::Create($fn.Extent.Text)) }
+    $st = Get-Stats @(-1, 10, 20, -1, 30, 40)
+    Check 'PerfCheck: estadísticas descartan -1' ($st.n -eq 4 -and $st.avg -eq 25 -and $st.max -eq 40) ($st | ConvertTo-Json -Compress)
+    Check 'PerfCheck: serie solo con -1 = sin datos' ($null -eq (Get-Stats @(-1, -1)))
+    $msA = @(ConvertFrom-MetricSample '{"sample":[{"entity":{"type":"HostSystem","value":"host-10"},"value":[{"name":"cpu.usage.average","instance":"","value":[1,2]},{"name":"datastore.totalReadLatency.average","instance":"uuid-1","value":[3]}]}]}')
+    $msB = @(ConvertFrom-MetricSample '[{"Entity":{"Type":"VirtualMachine","Value":"vm-1"},"Value":[{"Name":"cpu.ready.summation","Instance":"","Value":[200,400]}]}]')
+    Check 'PerfCheck: interpreta metric.sample con objeto raíz' ($msA.Count -eq 2 -and $msA[1].instance -eq 'uuid-1' -and $msA[0].entity -eq 'host-10')
+    Check 'PerfCheck: interpreta metric.sample como arreglo y en mayúsculas' ($msB.Count -eq 1 -and $msB[0].counter -eq 'cpu.ready.summation' -and ($msB[0].values -join ',') -eq '200,400')
+
     # --- 4. Invoke-Audit --------------------------------------------------------------------------
     $a = Quiet { & "$S/Invoke-Audit.ps1" -FromRaw $audit -Format html, md }
     Check 'Audit: termina sin error' ($null -ne $a)
@@ -158,6 +192,20 @@ try {
     $sj = Json (Join-Path $audit 'raw/audit.json')
     $domSec = @($sj.findings | ForEach-Object { $_.domain } | Sort-Object -Unique)
     Check 'Audit -Scope security: solo Seguridad y Configuración' (-not @($domSec | Where-Object { $_ -notin 'Seguridad', 'Configuración' }).Count) ($domSec -join ', ')
+    Check 'Audit: dominio Rendimiento puntuado con hallazgos' ($aj.scores.PSObject.Properties['Rendimiento'] -and @($aj.findings | Where-Object domain -eq 'Rendimiento').Count -gt 0)
+    Check 'Audit HTML: fuente de rendimiento en la metodología' ($ah -match '<td>Rendimiento</td><td>metric\.sample')
+    Quiet { & "$S/Invoke-Audit.ps1" -FromRaw $audit -Scope performance -Format md } | Out-Null
+    $pj = Json (Join-Path $audit 'raw/audit.json')
+    $domPerf = @($pj.scores.PSObject.Properties.Name)
+    Check 'Audit -Scope performance: solo Capacidad y Rendimiento' ((($domPerf | Sort-Object) -join ',') -eq 'Capacidad,Rendimiento') ($domPerf -join ', ')
+    # Auditoría sin perf/ (anterior a la fuente de rendimiento): el dominio no se puntúa y se declara como cobertura.
+    $old = Join-Path $work 'audit-sin-perf'
+    Copy-Item -LiteralPath $audit -Destination $old -Recurse
+    Remove-Item -LiteralPath (Join-Path $old 'perf') -Recurse -Force
+    $oa = Quiet { & "$S/Invoke-Audit.ps1" -FromRaw $old -Format html }
+    $oj = Json (Join-Path $old 'raw/audit.json')
+    Check 'Audit sin perf/: termina sin error' ($null -ne $oa)
+    Check 'Audit sin perf/: Rendimiento no puntuado y declarado como cobertura' (-not $oj.scores.PSObject.Properties['Rendimiento'] -and @($oj.coverage | Where-Object rule -eq 'coverage-perf').Count -eq 1)
 
     # --- 5. Compare-Report ---------------------------------------------------------------------------
     $base = Join-Path $work 'base'

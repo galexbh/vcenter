@@ -32,6 +32,8 @@ param(
     [double]$VcpuRatioCrit = 6,
     [double]$MemRatioWarn = 1.0,
     [int]$HostMemWarnPct = 85,
+    # Holgura N+1: % de la capacidad que queda tras perder el host mayor a partir del cual se advierte.
+    [int]$N1WarnPct = 90,
     [int]$MinHwVersion = 14,
     [int]$CertWarnDays = 60,
     [int]$LicenseWarnDays = 60,
@@ -69,13 +71,16 @@ $queries = [ordered]@{
                    'summary.config.guestFullName', 'summary.storage.committed', 'summary.storage.uncommitted',
                    'guest.toolsRunningStatus', 'guest.toolsVersionStatus2', 'guest.ipAddress', 'config.template',
                    'snapshot.rootSnapshotList', 'runtime.consolidationNeeded', 'config.version',
-                   'config.cpuAllocation.limit', 'config.memoryAllocation.limit', 'config.hardware.device')
+                   'config.cpuAllocation.limit', 'config.memoryAllocation.limit', 'config.hardware.device',
+                   'summary.quickStats.balloonedMemory', 'summary.quickStats.swappedMemory', 'summary.quickStats.compressedMemory')
     hosts      = @('h', 'name', 'parent', 'summary.hardware.numCpuCores', 'summary.hardware.cpuMhz', 'summary.hardware.memorySize',
                    'summary.quickStats.overallCpuUsage', 'summary.quickStats.overallMemoryUsage', 'runtime.connectionState',
                    'runtime.inMaintenanceMode', 'summary.config.product.fullName')
     compute    = @('r', 'name', 'summary.numCpuCores', 'summary.totalMemory', 'summary.numHosts', 'summary.numEffectiveHosts')
     clusters   = @('c', 'name', 'configurationEx')
-    datastores = @('s', 'name', 'summary.capacity', 'summary.freeSpace', 'summary.uncommitted', 'summary.type', 'summary.accessible')
+    # summary.url (ds:///vmfs/volumes/<uuid>/) permite traducir la instancia de las métricas de latencia al nombre.
+    datastores = @('s', 'name', 'summary.capacity', 'summary.freeSpace', 'summary.uncommitted', 'summary.type', 'summary.accessible', 'summary.url')
+    pools      = @('p', 'name', 'parent', 'config.cpuAllocation', 'config.memoryAllocation')
 }
 
 function Get-IsoDevices($devices) {
@@ -216,6 +221,10 @@ $vms = foreach ($v in $data.vms) {
         cpuLimit  = [long](P $v 'config.cpuAllocation.limit' -1)
         memLimit  = [long](P $v 'config.memoryAllocation.limit' -1)
         isos      = @(P $v 'config.hardware.device' @() | Where-Object { $_.connected })
+        # quickStats: balloon y swap en MB, compresión en KB (valor instantáneo al recolectar).
+        balloonMB = [long](P $v 'summary.quickStats.balloonedMemory' 0)
+        swapMB    = [long](P $v 'summary.quickStats.swappedMemory' 0)
+        compMB    = [math]::Round([double](P $v 'summary.quickStats.compressedMemory' 0) / 1024, 1)
     }
 }
 $vms = @($vms | Sort-Object name)
@@ -227,7 +236,31 @@ foreach ($c in $data.clusters) {
     $das = P $cfg 'dasConfig'; $drs = P $cfg 'drsConfig'
     $clusterCfg[$c._moref] = [pscustomobject]@{
         ha = [bool](P $das 'enabled' $false); drs = [bool](P $drs 'enabled' $false); behavior = "$(P $drs 'defaultVmBehavior' '')"
+        # $null si el dato no viene (no se infiere que esté desactivado).
+        admission = P $das 'admissionControlEnabled'
     }
+}
+
+# Capacidad y uso por host (MHz / MB), base de la holgura N+1.
+$hostCap = @{}
+foreach ($h in $data.hosts) {
+    $cores = [double](P $h 'summary.hardware.numCpuCores' 0); $mhz = [double](P $h 'summary.hardware.cpuMhz' 0)
+    $hostCap[$h._moref] = [pscustomobject]@{
+        clusterId = $(if ((P $h 'parent')) { $h.parent.value } else { $null })
+        active    = ((P $h 'runtime.connectionState' '') -eq 'connected' -and -not [bool](P $h 'runtime.inMaintenanceMode' $false))
+        cpuCap    = $cores * $mhz
+        cpuUsed   = [double](P $h 'summary.quickStats.overallCpuUsage' 0)
+        memCap    = [double](P $h 'summary.hardware.memorySize' 0) / 1MB
+        memUsed   = [double](P $h 'summary.quickStats.overallMemoryUsage' 0)
+    }
+}
+function Get-N1($clusterId, [string]$res) {
+    # Uso actual frente a la capacidad que queda al perder el host de mayor capacidad del clúster.
+    $act = @($hostCap.Values | Where-Object { $_.clusterId -eq $clusterId -and $_.active })
+    if ($act.Count -lt 2) { return [pscustomobject]@{ hosts = $act.Count; pct = $null; used = 0; left = 0 } }
+    $cap = ($act | Measure-Object "${res}Cap" -Sum).Sum; $max = ($act | Measure-Object "${res}Cap" -Maximum).Maximum
+    $used = ($act | Measure-Object "${res}Used" -Sum).Sum; $left = $cap - $max
+    [pscustomobject]@{ hosts = $act.Count; pct = $(if ($left -gt 0) { [math]::Round(100 * $used / $left, 1) } else { $null }); used = $used; left = $left }
 }
 
 $clusters = foreach ($c in $data.compute) {
@@ -238,9 +271,16 @@ $clusters = foreach ($c in $data.compute) {
     $vcpu = ($on | Measure-Object vcpu -Sum).Sum
     $vmem = [math]::Round((($on | Measure-Object memMB -Sum).Sum) / 1024, 1)
     $cc = $clusterCfg[$c._moref]
+    $n1m = Get-N1 $c._moref 'mem'; $n1c = Get-N1 $c._moref 'cpu'
     [pscustomobject]@{
         name      = $c.name
         isCluster = [bool]$cc
+        admission = $(if ($cc) { $cc.admission } else { $null })
+        activeHosts = $n1m.hosts
+        n1Mem     = $n1m
+        n1Cpu     = $n1c
+        n1MemPct  = $n1m.pct
+        n1CpuPct  = $n1c.pct
         ha        = $(if ($cc) { if ($cc.ha) { 'Sí' } else { 'No' } } else { '—' })
         drs       = $(if ($cc) { if ($cc.drs) { if ($cc.behavior) { $cc.behavior } else { 'Sí' } } else { 'No' } } else { '—' })
         hosts     = $members.Count
@@ -282,6 +322,18 @@ $datastores = @($data.datastores | ForEach-Object {
             provPct    = if ($cap) { [math]::Round(100 * ($cap - $free + $unc) / $cap, 1) } else { 0 }
         } } | Sort-Object usedPct -Descending)
 
+# Resource pools con límite (se excluye el pool raíz «Resources» de cada clúster o host).
+$pools = @($data.pools | Where-Object { $_.name -ne 'Resources' } | ForEach-Object {
+        $ca = P $_ 'config.cpuAllocation'; $ma = P $_ 'config.memoryAllocation'
+        [pscustomobject]@{
+            name       = $_.name
+            parent     = $(if ((P $_ 'parent')) { $nameById[$_.parent.value] } else { '' })
+            cpuLimit   = [long](P $ca 'limit' -1)
+            cpuReserve = [long](P $ca 'reservation' 0)
+            memLimit   = [long](P $ma 'limit' -1)
+            memReserve = [long](P $ma 'reservation' 0)
+        } } | Sort-Object name)
+
 $snapRows = @($realVms | ForEach-Object { $vm = $_; $_.snapshots | ForEach-Object {
             [pscustomobject]@{ vm = $vm.name; name = $_.name; created = $_.created.LocalDateTime.ToString('yyyy-MM-dd HH:mm'); ageDays = $_.ageDays; description = $_.description } } } |
     Sort-Object ageDays -Descending)
@@ -317,11 +369,24 @@ foreach ($h in $hosts) {
     if ($h.memPct -ge $HostMemWarnPct) { Add-Finding 'Advertencia' 'Capacidad' $h.name "Memoria en uso $($h.memPct)%" 'Revisar balanceo DRS o redistribuir cargas.' '' 'host-mem' }
 }
 foreach ($c in $clusters | Where-Object { $_.cores -gt 0 }) {
-    if ($c.vcpuRatio -ge $VcpuRatioCrit) { Add-Finding 'Crítico' 'Capacidad' $c.name "vCPU:pCore $($c.vcpuRatio):1" 'Sobresuscripción de CPU alta; revisar CPU Ready y right-sizing de VMs.' "$w metric.sample -n 12 '$($c.name)' cpu.ready.summation" 'cl-vcpu' }
-    elseif ($c.vcpuRatio -ge $VcpuRatioWarn) { Add-Finding 'Advertencia' 'Capacidad' $c.name "vCPU:pCore $($c.vcpuRatio):1" 'Monitorear CPU Ready; considerar right-sizing.' '' 'cl-vcpu' }
+    $perf = "./scripts/Invoke-PerfCheck.ps1 -Env $Env -Cluster '$($c.name)'"
+    if ($c.vcpuRatio -ge $VcpuRatioCrit) { Add-Finding 'Crítico' 'Capacidad' $c.name "vCPU:pCore $($c.vcpuRatio):1" 'Sobresuscripción de CPU alta; revisar CPU Ready y right-sizing de VMs.' $perf 'cl-vcpu' }
+    elseif ($c.vcpuRatio -ge $VcpuRatioWarn) { Add-Finding 'Advertencia' 'Capacidad' $c.name "vCPU:pCore $($c.vcpuRatio):1" 'Monitorear CPU Ready; considerar right-sizing.' $perf 'cl-vcpu' }
     if ($c.memRatio -gt $MemRatioWarn) { Add-Finding 'Advertencia' 'Capacidad' $c.name "RAM asignada/física $($c.memRatio)" 'Sobrecompromiso de memoria; revisar ballooning/swap y reservas de HA.' '' 'cl-mem' }
 }
 foreach ($c in $clusters | Where-Object { $_.isCluster }) {
+    # Holgura N+1 con el uso actual (quickStats): ¿la carga cabe si cae el host de mayor capacidad?
+    if ($c.activeHosts -eq 1) {
+        Add-Finding 'Info' 'Capacidad' $c.name 'Un solo host activo: sin tolerancia a la falla de un host' 'Confirmar que es intencional; con un solo host, HA no puede reiniciar VMs en otro.' '' 'cl-n1-single'
+    } elseif ($c.activeHosts -ge 2) {
+        foreach ($r in @(@{ k = 'mem'; n = $c.n1Mem; label = 'Memoria'; fmt = { param($x) "$([math]::Round($x / 1024)) GB" } }, @{ k = 'cpu'; n = $c.n1Cpu; label = 'CPU'; fmt = { param($x) "$([math]::Round($x / 1000)) GHz" } })) {
+            $n = $r.n; if ($null -eq $n.pct) { continue }
+            $ev = "$($r.label) en uso $(& $r.fmt $n.used); sin el host mayor quedan $(& $r.fmt $n.left) ($($n.pct)% de uso) con $($n.hosts) hosts activos"
+            if ($n.pct -gt 100) { Add-Finding 'Crítico' 'Capacidad' $c.name $ev 'La carga actual no cabe si falla un host: HA no podría reiniciar todas las VMs. Agregar capacidad o reducir carga.' '' "cl-n1-$($r.k)" }
+            elseif ($n.pct -ge $N1WarnPct) { Add-Finding 'Advertencia' 'Capacidad' $c.name $ev 'Holgura N+1 escasa; planificar capacidad antes de que la falla de un host deje VMs sin recursos.' '' "cl-n1-$($r.k)" }
+        }
+    }
+    if ($c.ha -eq 'Sí' -and $c.admission -eq $false) { Add-Finding 'Advertencia' 'Clúster' $c.name 'HA activo con el control de admisión desactivado' 'Sin control de admisión, vSphere permite encender VMs aunque ya no haya capacidad para reiniciarlas ante una falla; evaluar habilitarlo (cambio aprobado).' "$w object.collect -json -type c / name configurationEx.dasConfig.admissionControlEnabled" 'cl-ha-admission' }
     if ($c.ha -eq 'No') { Add-Finding 'Crítico' 'Clúster' $c.name 'vSphere HA deshabilitado' 'Habilitar HA para que las VMs se reinicien ante la falla de un host (cambio aprobado).' "$w object.collect -s '$($c.name)' configurationEx.dasConfig.enabled" 'cl-ha' }
     if ($c.drs -eq 'No') { Add-Finding 'Advertencia' 'Clúster' $c.name 'DRS deshabilitado' 'Evaluar habilitar DRS para balanceo automático y mantenimiento sin interrupción.' '' 'cl-drs' }
     elseif ($c.drs -eq 'manual') { Add-Finding 'Advertencia' 'Clúster' $c.name 'DRS en modo manual' 'En modo manual DRS solo recomienda; considerar partiallyAutomated o fullyAutomated.' '' 'cl-drs' }
@@ -338,6 +403,16 @@ Add-GroupFinding 'Info' 'VMware Tools' @($onVms | Where-Object { $_.toolsVer -in
 # Configuración de VMs (sin llamadas extra: todo viene del mismo object.collect).
 Add-GroupFinding 'Advertencia' 'Configuración VM' @($realVms | Where-Object consolidate) 'Consolidación de discos pendiente' 'Consolidar discos (Snapshots → Consolidar) en ventana; los delta sin consolidar degradan I/O y consumen espacio.' '' 'vm-consolidate'
 Add-GroupFinding 'Advertencia' 'Configuración VM' @($realVms | Where-Object { $_.cpuLimit -ge 0 -or $_.memLimit -ge 0 }) 'Límite de CPU o memoria configurado' 'Los límites provocan contención aunque el host tenga recursos; revisar si son intencionales.' '' 'vm-limits'
+
+# Presión de memoria por VM (quickStats, instantáneo). Invoke-PerfCheck.ps1 lo mide en una ventana de tiempo.
+Add-GroupFinding 'Advertencia' 'Capacidad' @($onVms | Where-Object { $_.balloonMB -gt 0 }) 'Memoria recuperada por balloon' 'El host está reclamando memoria al guest: revisar la presión de memoria del host y el tamaño de la VM.' '' 'vm-balloon'
+Add-GroupFinding 'Advertencia' 'Capacidad' @($onVms | Where-Object { $_.swapMB -gt 0 }) 'Memoria en swap del hipervisor' 'El swap del host degrada mucho el rendimiento: liberar memoria en el host o redistribuir cargas.' '' 'vm-swap'
+Add-GroupFinding 'Info' 'Capacidad' @($onVms | Where-Object { $_.compMB -gt 0 }) 'Memoria comprimida por el host' 'Señal temprana de presión de memoria; revisar junto con balloon y swap.' '' 'vm-compressed'
+foreach ($p in $pools | Where-Object { $_.cpuLimit -ge 0 -or $_.memLimit -ge 0 }) {
+    $lim = @($(if ($p.cpuLimit -ge 0) { "CPU $($p.cpuLimit) MHz" }), $(if ($p.memLimit -ge 0) { "memoria $($p.memLimit) MB" }) | Where-Object { $_ }) -join ', '
+    Add-Finding 'Advertencia' 'Capacidad' $p.name "Resource pool con límite: $lim" 'Un límite en el pool provoca contención para todas sus VMs aunque el clúster tenga recursos; confirmar que es intencional.' "$w pool.info '$($p.name)'" 'rp-limit'
+}
+
 $deviceScanned = if ($FromRaw) { [bool](P $meta 'deviceScan' $true) } else { -not $SkipDeviceScan }
 if ($deviceScanned) {
     Add-GroupFinding 'Info' 'Configuración VM' @($realVms | Where-Object { $_.isos.Count }) 'CD/DVD conectado a ISO de datastore' 'Desconectar la ISO cuando no se use: impide vMotion/DRS hacia hosts sin acceso al datastore.' '' 'vm-iso'
@@ -397,7 +472,10 @@ if (& $want 'health') {
     $sections.Add((New-ReportTable 'Hallazgos y sugerencias' (Get-FindingColumns) $sorted 'Los comandos son propuestas de consulta; ningún cambio se ejecutó.'))
 }
 if (& $want 'capacity') {
-    $sections.Add((New-ReportTable 'Capacidad por clúster' @('name:Clúster', 'ha:HA', 'drs:DRS', 'hosts:Hosts', 'cores:pCores', 'vcpu:vCPU (on)', 'vcpuRatio:vCPU:pCore', 'memGB:RAM física GB', 'vmemGB:RAM asignada GB', 'memRatio:Ratio RAM') $clusters))
+    $sections.Add((New-ReportTable 'Capacidad por clúster' @('name:Clúster', 'ha:HA', 'drs:DRS', 'hosts:Hosts', 'cores:pCores', 'vcpu:vCPU (on)', 'vcpuRatio:vCPU:pCore', 'memGB:RAM física GB', 'vmemGB:RAM asignada GB', 'memRatio:Ratio RAM', 'n1CpuPct:CPU N+1 %', 'n1MemPct:RAM N+1 %') $clusters "N+1: uso actual frente a la capacidad que queda al perder el host mayor (más de 100 % = no cabe). Advertencia ≥ $N1WarnPct %."))
+    if ($pools.Count) {
+        $sections.Add((New-ReportTable 'Resource pools' @('name:Pool', 'parent:Padre', 'cpuLimit:Límite CPU MHz', 'cpuReserve:Reserva CPU MHz', 'memLimit:Límite RAM MB', 'memReserve:Reserva RAM MB') $pools 'Límite -1 = sin límite.'))
+    }
     $sections.Add((New-ReportTable 'Datastores' @('name:Datastore', 'type:Tipo', 'capGB:Capacidad GB', 'freeGB:Libre GB', 'usedPct:Uso %', 'provPct:Aprovisionado %', 'accessible:Accesible') $datastores))
     $sections.Add((New-ReportTable 'Hosts' @('name:Host', 'cluster:Clúster', 'state:Estado', 'maint:Mantenimiento', 'cores:Cores', 'memGB:RAM GB', 'cpuPct:CPU %', 'memPct:RAM %', 'version:Versión') $hosts))
     if ($certRow -or $licRows.Count) {

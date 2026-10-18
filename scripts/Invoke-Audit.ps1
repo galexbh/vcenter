@@ -3,12 +3,14 @@
   Auditoría técnica completa de un entorno vCenter (solo lectura) con informe formal HTML/MD.
 
 .DESCRIPTION
-  Orquesta tres fuentes y consolida sus hallazgos en un único modelo de auditoría:
-    1. scripts/New-Report.ps1      inventario, capacidad, snapshots, configuración de VMs y clústeres,
-                                   certificado de vCenter y licencias.
+  Orquesta cuatro fuentes y consolida sus hallazgos en un único modelo de auditoría:
+    1. scripts/New-Report.ps1      inventario, capacidad (incluida la holgura N+1), snapshots,
+                                   configuración de VMs y clústeres, certificado de vCenter y licencias.
     2. scripts/Invoke-HostCheck.ps1 configuración de cada host vía esxcli (drift, red, storage, NTP,
                                    syslog, servicios, certificados de host).
-    3. Controles de acceso          permisos con rol Administrador en la raíz del inventario.
+    3. scripts/Invoke-PerfCheck.ps1 rendimiento en una ventana (-PerfWindow, 24h por defecto): CPU ready,
+                                   latencia de datastores, CPU de hosts, ballooning, swap. -SkipPerf la omite.
+    4. Controles de acceso          permisos con rol Administrador en la raíz del inventario.
   Asigna ID (AUD-001…), dominio, riesgo y referencia a cada hallazgo; calcula un indicador por
   dominio y genera auditoria.html (imprimible / PDF) y auditoria.md a partir de templates/audit.*,
   más raw/audit.json con el modelo consolidado. El seguimiento con Compare-Report.ps1 compara las
@@ -17,12 +19,15 @@
 .EXAMPLE
   ./scripts/Invoke-Audit.ps1 -Env prod
   ./scripts/Invoke-Audit.ps1 -Env prod -Cluster CL-PROD-01 -Scope security
+  ./scripts/Invoke-Audit.ps1 -Env prod -Scope performance -PerfWindow 7d
   ./scripts/Invoke-Audit.ps1 -FromRaw reports/prod/20261017-090000-auditoria
 #>
 param(
     [string]$Env,
     [string[]]$Cluster,
-    [ValidateSet('full', 'security', 'capacity')][string]$Scope = 'full',
+    [ValidateSet('full', 'security', 'capacity', 'performance')][string]$Scope = 'full',
+    [ValidateSet('1h', '24h', '7d')][string]$PerfWindow = '24h',
+    [switch]$SkipPerf,         # omite la fuente de rendimiento (queda declarada como cobertura)
     [ValidateSet('html', 'md')][string[]]$Format = @('html', 'md'),
     [string]$FromRaw,
     [int]$MaxRootAdmins = 5,
@@ -48,10 +53,11 @@ function Read-Json([string]$path, $default = @()) {
 }
 
 # --- Taxonomía de auditoría -----------------------------------------------------
-$domains = @('Disponibilidad', 'Capacidad', 'Configuración', 'Seguridad', 'Higiene')
+$domains = @('Disponibilidad', 'Capacidad', 'Rendimiento', 'Configuración', 'Seguridad', 'Higiene')
 $domainOf = @{
     'Hosts' = 'Disponibilidad'; 'Alarmas' = 'Disponibilidad'; 'Storage' = 'Disponibilidad'; 'Red física' = 'Disponibilidad'; 'Clúster' = 'Disponibilidad'
     'Almacenamiento' = 'Capacidad'; 'Capacidad' = 'Capacidad'
+    'Rendimiento' = 'Rendimiento'
     'VMware Tools' = 'Configuración'; 'Drift VIBs/drivers' = 'Configuración'; 'Tiempo' = 'Configuración'; 'Diagnóstico' = 'Configuración'
     'Plataforma' = 'Configuración'; 'Configuración VM' = 'Configuración'; 'Licencias' = 'Configuración'
     'Seguridad' = 'Seguridad'; 'Logs' = 'Seguridad'; 'Certificados' = 'Seguridad'; 'Permisos' = 'Seguridad'
@@ -65,6 +71,7 @@ $riskOf = @{
     'Clúster'            = 'Las VMs no se reinician automáticamente ante falla de un host, o la carga no se balancea.'
     'Almacenamiento'     = 'Si el datastore se llena, vSphere pausa las VMs que escriben en él.'
     'Capacidad'          = 'Contención de CPU o memoria; capacidad insuficiente para tolerar la falla de un host.'
+    'Rendimiento'        = 'Latencia o contención que degradan el servicio aunque la capacidad asignada parezca suficiente.'
     'VMware Tools'       = 'Sin apagado ordenado, sin quiesce para respaldos y sin métricas del sistema invitado.'
     'Drift VIBs/drivers' = 'Comportamiento inconsistente entre hosts; riesgo en vMotion, HA y soporte del fabricante.'
     'Tiempo'             = 'Desfase horario: afecta autenticación, certificados y correlación de eventos.'
@@ -98,6 +105,8 @@ if ($FromRaw) {
     if (-not $PSBoundParameters.ContainsKey('Scope')) { $Scope = $meta.scope }
     & (Join-Path $PSScriptRoot 'New-Report.ps1') -FromRaw (Join-Path $outDir 'inventario') -Format html | Out-Null
     & (Join-Path $PSScriptRoot 'Invoke-HostCheck.ps1') -FromRaw (Join-Path $outDir 'hosts') -Format html | Out-Null
+    # Auditorías anteriores a la fuente de rendimiento no tienen perf/: se declaran como cobertura más abajo.
+    if (Test-Path (Join-Path $outDir 'perf/raw/meta-perf.json')) { & (Join-Path $PSScriptRoot 'Invoke-PerfCheck.ps1') -FromRaw (Join-Path $outDir 'perf') -Format html | Out-Null }
 } else {
     if (-not $Env) { throw 'Indica -Env <entorno> o -FromRaw <carpeta>.' }
     $Env = $Env.ToLowerInvariant()
@@ -105,14 +114,26 @@ if ($FromRaw) {
     $outDir = Join-Path $root ("reports/{0}/{1:yyyyMMdd-HHmmss}-auditoria" -f $Env, $generated)
     New-Item -ItemType Directory -Force -Path (Join-Path $outDir 'raw') | Out-Null
 
-    [Console]::Error.WriteLine('== 1/3 Inventario, capacidad y configuración ==')
+    [Console]::Error.WriteLine('== 1/4 Inventario, capacidad y configuración ==')
     & (Join-Path $PSScriptRoot 'New-Report.ps1') -Env $Env -Type all -Format html -OutDir (Join-Path $outDir 'inventario') -SkipDeviceScan:$SkipDeviceScan | Out-Null
-    [Console]::Error.WriteLine('== 2/3 Configuración de hosts (esxcli) ==')
+    [Console]::Error.WriteLine('== 2/4 Configuración de hosts (esxcli) ==')
     $hcArgs = @{ Env = $Env; Format = 'html'; OutDir = (Join-Path $outDir 'hosts') }
     if ($Cluster) { $hcArgs.Cluster = $Cluster }
     & (Join-Path $PSScriptRoot 'Invoke-HostCheck.ps1') @hcArgs | Out-Null
 
-    [Console]::Error.WriteLine('== 3/3 Controles de acceso ==')
+    $perfError = ''
+    if ($SkipPerf) {
+        [Console]::Error.WriteLine('== 3/4 Rendimiento: omitido (-SkipPerf) ==')
+    } else {
+        [Console]::Error.WriteLine("== 3/4 Rendimiento (ventana $PerfWindow) ==")
+        # Reutiliza el inventario recién recolectado; una falla aquí no detiene la auditoría (queda como cobertura).
+        $pcArgs = @{ Env = $Env; Window = $PerfWindow; Format = 'html'; OutDir = (Join-Path $outDir 'perf'); InventoryDir = (Join-Path $outDir 'inventario') }
+        if ($Cluster) { $pcArgs.Cluster = $Cluster }
+        try { & (Join-Path $PSScriptRoot 'Invoke-PerfCheck.ps1') @pcArgs | Out-Null }
+        catch { $perfError = $_.Exception.Message; [Console]::Error.WriteLine("Rendimiento no disponible: $perfError") }
+    }
+
+    [Console]::Error.WriteLine('== 4/4 Controles de acceso ==')
     $perm = @(); $roles = @()
     Import-Module (Join-Path $PSScriptRoot 'lib/GovcBatch.psm1') -Force
     $acc = Invoke-GovcBatch -Env $Env -Commands @(
@@ -123,17 +144,23 @@ if ($FromRaw) {
     ConvertTo-Json -InputObject @{ permissions = $perm; roles = $roles; ok = ($perm.Count -gt 0) } -Depth 10 |
         Set-Content (Join-Path $outDir 'raw/vcenter-access.json') -Encoding utf8
 
-    @{ env = $Env; generated = $generated.ToString('o'); scope = $Scope; cluster = @($Cluster); user = "$env:USERDOMAIN\$env:USERNAME"; version = $Version } |
+    @{ env = $Env; generated = $generated.ToString('o'); scope = $Scope; cluster = @($Cluster); user = "$env:USERDOMAIN\$env:USERNAME"; version = $Version
+        perfWindow = $(if ($SkipPerf) { $null } else { $PerfWindow }); perfSkipped = [bool]$SkipPerf; perfError = $perfError } |
         ConvertTo-Json | Set-Content (Join-Path $outDir 'raw/meta-audit.json') -Encoding utf8
 }
 
 $meta = Read-Json (Join-Path $outDir 'raw/meta-audit.json') $null
 $scopeDomains = switch ($Scope) {
-    'security' { @('Seguridad', 'Configuración') }
-    'capacity' { @('Capacidad', 'Disponibilidad') }
-    default    { $domains }
+    'security'    { @('Seguridad', 'Configuración') }
+    'capacity'    { @('Capacidad', 'Disponibilidad') }
+    'performance' { @('Capacidad', 'Rendimiento') }
+    default       { $domains }
 }
-$scopeLabel = @{ full = 'Completa: disponibilidad, capacidad, configuración, seguridad e higiene'; security = 'Seguridad y configuración'; capacity = 'Capacidad y disponibilidad' }[$Scope]
+$scopeLabel = @{ full = 'Completa: disponibilidad, capacidad, rendimiento, configuración, seguridad e higiene'; security = 'Seguridad y configuración'; capacity = 'Capacidad y disponibilidad'; performance = 'Capacidad y rendimiento' }[$Scope]
+$perfMeta = Read-Json (Join-Path $outDir 'perf/raw/meta-perf.json') $null
+# Sin datos de rendimiento el dominio no se puntúa (un 100 sugeriría que se evaluó); queda como cobertura.
+$perfInScope = 'Rendimiento' -in $scopeDomains
+if (-not $perfMeta) { $scopeDomains = @($scopeDomains | Where-Object { $_ -ne 'Rendimiento' }) }
 
 # --- Controles de acceso: administradores en la raíz ------------------------------
 $access = Read-Json (Join-Path $outDir 'raw/vcenter-access.json') $null
@@ -157,11 +184,16 @@ if ($access -and $access.ok) {
 } else {
     Add-ReportFinding $extra 'Info' 'Cobertura' 'Controles de acceso' 'No se pudo leer permissions.ls en la raíz' 'Verificar privilegios de lectura de permisos de la cuenta de servicio.' -Rule 'coverage-access'
 }
+if (-not $perfMeta -and $perfInScope) {
+    $why = if (P $meta 'perfSkipped' $false) { 'Omitida en esta corrida (-SkipPerf)' } elseif (P $meta 'perfError' '') { "No disponible: $(P $meta 'perfError' '')" } else { 'Auditoría recolectada sin la fuente de rendimiento' }
+    Add-ReportFinding $extra 'Info' 'Cobertura' 'Métricas de rendimiento' $why 'Ejecutar la auditoría con la fuente de rendimiento (o ./scripts/Invoke-PerfCheck.ps1) para evaluar latencia y contención.' -Rule 'coverage-perf'
+}
 
 # --- Consolidación ------------------------------------------------------------------
 $sources = @(
     @{ name = 'Inventario y configuración'; dir = 'inventario'; report = 'inventario/reporte-all.html' }
     @{ name = 'Configuración de hosts';     dir = 'hosts';      report = 'hosts/hosts-check.html' }
+    if ($perfMeta) { @{ name = 'Rendimiento'; dir = 'perf'; report = 'perf/perf-check.html' } }
 )
 $all = New-Object System.Collections.Generic.List[object]
 foreach ($s in $sources) { foreach ($f in @(Read-Json (Join-Path $outDir "$($s.dir)/raw/findings.json"))) { $f | Add-Member source $s.name -Force; $all.Add($f) } }
@@ -203,11 +235,17 @@ $nHost = if ($invSum) { P $invSum 'Hosts' 0 } else { 0 }
 $nCl = if ($invSum) { P $invSum 'Clústeres' 0 } else { 0 }
 $worst = @($scores.GetEnumerator() | Sort-Object { $_.Value.score } | Select-Object -First 2 | ForEach-Object { "$($_.Key) ($($_.Value.score))" })
 $n = { param([int]$k, [string]$one, [string]$many) if ($k -eq 1) { "1 $one" } else { "$k $many" } }
-$scopeText = @{ full = 'disponibilidad, capacidad, configuración, seguridad e higiene'; security = 'seguridad y configuración'; capacity = 'capacidad y disponibilidad' }[$Scope]
+$scopeText = @{ full = 'disponibilidad, capacidad, rendimiento, configuración, seguridad e higiene'; security = 'seguridad y configuración'; capacity = 'capacidad y disponibilidad'; performance = 'capacidad y rendimiento' }[$Scope]
+$perfSum = Read-Json (Join-Path $outDir 'perf/raw/summary.json') $null
+$perfWin = if ($perfMeta) { "$(P $perfMeta 'window' '')" } else { '' }
+$perfLevel = if ($perfMeta) { P $perfMeta 'intervalLevel' } else { $null }
+$perfText = if ($perfMeta -and 'Rendimiento' -in $scopeDomains) {
+    " Las métricas de rendimiento cubren una ventana de $perfWin (intervalo de $(P $perfMeta 'interval' '?') s$(if ($null -ne $perfLevel) { ", nivel de estadísticas $perfLevel" })) sobre $(& $n ([int](P $perfSum 'Hosts' 0)) 'host' 'hosts') y $(& $n ([int](P $perfSum 'VMs evaluadas' 0)) 'VM encendida' 'VMs encendidas')."
+} else { '' }
 $nHostChecked = if ($hostSum) { [int](P $hostSum 'Hosts' 0) } else { 0 }
 $hostScope = if ($Cluster) { " La revisión de configuración de hosts se limitó a $(& $n $nHostChecked 'host' 'hosts') $(if ($Cluster.Count -eq 1) { 'del clúster' } else { 'de los clústeres' }) $(& $enc ($Cluster -join ', '))." } else { '' }
 $execText = @(
-    "Se evaluó el entorno <strong>$(& $enc $Env.ToUpper())</strong> el $stamp, en los dominios de $scopeText. El inventario comprendió $(& $n $nVm 'máquina virtual' 'máquinas virtuales'), $(& $n $nHost 'host' 'hosts') y $(& $n $nCl 'clúster o recurso de cómputo' 'clústeres o recursos de cómputo').$hostScope"
+    "Se evaluó el entorno <strong>$(& $enc $Env.ToUpper())</strong> el $stamp, en los dominios de $scopeText. El inventario comprendió $(& $n $nVm 'máquina virtual' 'máquinas virtuales'), $(& $n $nHost 'host' 'hosts') y $(& $n $nCl 'clúster o recurso de cómputo' 'clústeres o recursos de cómputo').$hostScope$perfText"
     "Se identificaron <strong>$(& $n $counts['Crítico'] 'hallazgo crítico' 'hallazgos críticos')</strong>, $(& $n $counts['Advertencia'] 'advertencia' 'advertencias') y $(& $n $counts['Info'] 'observación informativa' 'observaciones informativas'). Los dominios con menor indicador son: $(& $enc ($worst -join ' y '))."
     $(if ($counts['Crítico']) { 'Se recomienda atender los hallazgos críticos de forma prioritaria, conforme al plan de remediación de la sección 4.' } else { 'No se identificaron hallazgos críticos. Se recomienda planificar la atención de las advertencias conforme al plan de remediación.' })
     $(if ($coverage.Count) { "La evaluación presenta $(& $n $coverage.Count 'limitación de cobertura' 'limitaciones de cobertura'), detalladas en la sección 2." })
@@ -229,6 +267,7 @@ $methodHtml = @"
 <table class="t"><thead><tr><th>Fuente</th><th>Método</th><th>Elementos evaluados</th></tr></thead><tbody>
 <tr><td>Inventario y configuración</td><td>object.collect en bloque · about.cert · license.ls</td><td>VMs, hosts, clústeres (HA/DRS), datastores, alarmas, snapshots, configuración de VMs, certificado de vCenter, licencias</td></tr>
 <tr><td>Configuración de hosts</td><td>host.esxcli (solo list/get) · host.service.ls · host.cert.info</td><td>VIBs y drivers, NIC físicas, paths de storage, NTP, syslog, coredump, plataforma, servicios SSH/Shell, certificados de host</td></tr>
+$(if ($perfMeta) { "<tr><td>Rendimiento</td><td>metric.sample · metric.interval.info (ventana $(& $enc $perfWin), intervalo $(& $enc (P $perfMeta 'interval' '')) s$(if ($null -ne $perfLevel) { ", nivel de estadísticas $perfLevel" }))</td><td>CPU ready por vCPU, latencia de datastores por host, CPU de hosts, ballooning, swap y paquetes descartados (p95 y máximo en la ventana)</td></tr>" })
 <tr><td>Controles de acceso</td><td>permissions.ls · role.ls</td><td>Asignaciones con rol Administrador en la raíz del inventario</td></tr>
 </tbody></table>
 <h3>Cuenta y ventana</h3>
@@ -236,7 +275,8 @@ $methodHtml = @"
 <h3>Limitaciones</h3>
 <ul>
 <li>No se evalúan sistemas operativos invitados, aplicaciones, respaldos, red física fuera del host ni seguridad perimetral.</li>
-<li>La sobresuscripción se mide sobre recursos asignados, no sobre consumo histórico.</li>
+<li>La sobresuscripción y la holgura N+1 se miden sobre recursos asignados y el uso al momento de la recolección. $(if ($perfMeta) { "Las métricas de rendimiento cubren la ventana de $(& $enc $perfWin); lo que el nivel de estadísticas de vCenter no conserva se declara como cobertura." } else { 'No se evaluó el consumo en una ventana de tiempo.' })</li>
+<li>Los umbrales de rendimiento (CPU ready, latencia) son de práctica habitual, no normativos; deben validarse con Infraestructura.</li>
 <li>Las referencias a guías de seguridad son temáticas y orientativas; deben contrastarse con la versión vigente de cada documento.</li>
 </ul>
 <h3>Cobertura</h3>
@@ -270,10 +310,12 @@ function KpiTable($obj, $title) {
 $annexHtml = @(
     (KpiTable $invSum 'A. Resumen de inventario')
     (KpiTable $hostSum 'B. Resumen de la revisión de hosts')
-    $(if ($adminPrincipals.Count) { '<h3>C. Principales con rol Administrador en la raíz</h3><table class="t"><thead><tr><th>Principal</th><th>Tipo</th><th>Propaga</th></tr></thead><tbody>' + (($adminPrincipals | ForEach-Object { "<tr><td>$(& $enc $_.principal)</td><td>$(if ($_.group) { 'Grupo' } else { 'Usuario' })</td><td>$(if ($_.propagate) { 'Sí' } else { 'No' })</td></tr>" }) -join '') + '</tbody></table><p class="small muted">Información sensible: nombres de cuentas con privilegios elevados.</p>' })
-    '<h3>D. Reportes de detalle</h3><ul>' + (($sources | ForEach-Object { "<li><a href=""$($_.report)"">$(& $enc $_.name)</a> — <code>$(& $enc $_.report)</code></li>" }) -join '') + '</ul>'
-    '<h3>E. Comandos de recolección</h3><table class="t"><tbody>' + ((@(
-        'object.collect -json -type m|h|r|c|s / &lt;propiedades&gt;', 'object.collect -json / triggeredAlarmState', 'about.cert -json', 'license.ls -json',
+    (KpiTable $perfSum 'C. Resumen de rendimiento')
+    $(if ($adminPrincipals.Count) { '<h3>D. Principales con rol Administrador en la raíz</h3><table class="t"><thead><tr><th>Principal</th><th>Tipo</th><th>Propaga</th></tr></thead><tbody>' + (($adminPrincipals | ForEach-Object { "<tr><td>$(& $enc $_.principal)</td><td>$(if ($_.group) { 'Grupo' } else { 'Usuario' })</td><td>$(if ($_.propagate) { 'Sí' } else { 'No' })</td></tr>" }) -join '') + '</tbody></table><p class="small muted">Información sensible: nombres de cuentas con privilegios elevados.</p>' })
+    '<h3>E. Reportes de detalle</h3><ul>' + (($sources | ForEach-Object { "<li><a href=""$($_.report)"">$(& $enc $_.name)</a> — <code>$(& $enc $_.report)</code></li>" }) -join '') + '</ul>'
+    '<h3>F. Comandos de recolección</h3><table class="t"><tbody>' + ((@(
+        'object.collect -json -type m|h|r|c|s|p / &lt;propiedades&gt;', 'object.collect -json / triggeredAlarmState', 'about.cert -json', 'license.ls -json',
+        'metric.interval.info -json', 'metric.sample -json -i &lt;intervalo&gt; -n &lt;muestras&gt; -instance=&lt;…&gt; HostSystem:&lt;id&gt;|VirtualMachine:&lt;id&gt; … &lt;contadores&gt;',
         'host.esxcli -json -host &lt;h&gt; software vib list | network nic list | storage core path list | system ntp get | system syslog config get | system coredump network get | hardware platform get',
         'host.service.ls -json -host &lt;h&gt;', 'host.cert.info -json -host &lt;h&gt;', 'permissions.ls -json /', 'role.ls -json'
     ) | ForEach-Object { "<tr><td><code>$_</code></td></tr>" }) -join '') + '</tbody></table>'

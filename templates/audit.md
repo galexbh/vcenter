@@ -27,6 +27,7 @@ _Indicador interno de priorización: 100 − (15 × críticos + 5 × advertencia
 - Consultas de solo lectura vía govc; no se ejecutaron cambios.
 - No se evalúan sistemas operativos invitados, aplicaciones, respaldos ni red física fuera del host.
 - Las referencias a guías de seguridad son temáticas y orientativas.
+- Las métricas de rendimiento cubren la ventana indicada en el resumen; lo que el nivel de estadísticas de vCenter no conserva se declara como cobertura. Los umbrales de rendimiento son de práctica habitual y deben validarse con Infraestructura.
 
 **Cobertura**
 

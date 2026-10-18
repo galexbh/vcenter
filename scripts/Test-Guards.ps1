@@ -52,7 +52,12 @@ $classCases = @(
     @('host.esxcli -host h list', 'destructive'),
     @('host.esxcli -host h system settings encryption recovery list', 'secret'), @('host.esxcli -host h system account add -i u -p x', 'secret'),
     @('host.esxcli -debug -host h network nic list', 'secret'), @('host.service.ls -host h', 'read'),
-    @('env', 'secret'), @('about -debug', 'secret'), @('vm.info -password=x app', 'secret'), @('vm.console app01', 'secret')
+    @('env', 'secret'), @('about -debug', 'secret'), @('vm.info -password=x app', 'secret'), @('vm.console app01', 'secret'),
+    # Métricas (Invoke-PerfCheck.ps1): las consultas son lectura; cambiar intervalos o niveles no lo es.
+    @('metric.sample -json -i 300 -n 288 -instance= HostSystem:host-10 cpu.usage.average', 'read'), @('metric.interval.info -json', 'read'),
+    @('metric.info - cpu.ready.summation', 'read'), @('metric.ls HostSystem:host-10', 'read'),
+    @('metric.interval.change -i 300 -level 2', 'write'), @('metric.reset cpu.ready.summation', 'write'), @('metric.change -level 2 cpu.ready.summation', 'write'),
+    @('metric.sample -debug HostSystem:host-10 cpu.usage.average', 'secret')
 )
 foreach ($c in $classCases) { Check "class: $($c[0])" $c[1] (Get-GovcOpClass ($c[0] -split ' ')) }
 

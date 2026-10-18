@@ -141,16 +141,30 @@ tasks:
 
   # Sin SCOPE, el script usa full con ENV y conserva el alcance guardado con FROM.
   audit:
-    desc: Auditoría técnica con informe formal (ENV=prod o FROM=<carpeta>; SCOPE=full|security|capacity; CLUSTER solo con ENV)
+    desc: Auditoría técnica con informe formal (ENV=prod o FROM=<carpeta>; SCOPE=full|security|capacity|performance; WINDOW=1h|24h|7d y CLUSTER solo con ENV)
     vars:
       SRC: '{{if .FROM}}-FromRaw ''{{.FROM}}''{{else}}-Env ''{{.ENV}}''{{end}}'
     preconditions:
       - sh: '[ -n "{{.ENV}}{{.FROM}}" ]'
         msg: 'Indica ENV=<entorno> o FROM=<carpeta en reports/>'
-      - sh: 'case "{{.SCOPE}}" in ""|full|security|capacity) ;; *) exit 1;; esac'
-        msg: 'SCOPE admite full, security o capacity'
+      - sh: 'case "{{.SCOPE}}" in ""|full|security|capacity|performance) ;; *) exit 1;; esac'
+        msg: 'SCOPE admite full, security, capacity o performance'
+      - sh: 'case "{{.WINDOW}}" in ""|1h|24h|7d) ;; *) exit 1;; esac'
+        msg: 'WINDOW admite 1h, 24h o 7d'
     cmds:
-      - '{{.PS}} "./scripts/Invoke-Audit.ps1 {{.SRC}} {{if .SCOPE}}-Scope {{.SCOPE}}{{end}} {{if .CLUSTER}}-Cluster ''{{.CLUSTER}}''{{end}} {{.CLI_ARGS}}"'
+      - '{{.PS}} "./scripts/Invoke-Audit.ps1 {{.SRC}} {{if .SCOPE}}-Scope {{.SCOPE}}{{end}} {{if and .WINDOW (not .FROM)}}-PerfWindow {{.WINDOW}}{{end}} {{if .CLUSTER}}-Cluster ''{{.CLUSTER}}''{{end}} {{.CLI_ARGS}}"'
+
+  perf:
+    desc: Revisión de rendimiento (CPU ready, latencia, CPU de hosts, memoria) (ENV=prod o FROM=<carpeta>; WINDOW=1h|24h|7d, 24h por defecto; CLUSTER solo con ENV)
+    vars:
+      SRC: '{{if .FROM}}-FromRaw ''{{.FROM}}''{{else}}-Env ''{{.ENV}}''{{end}}'
+    preconditions:
+      - sh: '[ -n "{{.ENV}}{{.FROM}}" ]'
+        msg: 'Indica ENV=<entorno> o FROM=<carpeta en reports/>'
+      - sh: 'case "{{.WINDOW}}" in ""|1h|24h|7d) ;; *) exit 1;; esac'
+        msg: 'WINDOW admite 1h, 24h o 7d'
+    cmds:
+      - '{{.PS}} "./scripts/Invoke-PerfCheck.ps1 {{.SRC}} {{if and .WINDOW (not .FROM)}}-Window {{.WINDOW}}{{end}} {{if .CLUSTER}}-Cluster ''{{.CLUSTER}}''{{end}} {{.CLI_ARGS}}"'
 
   trend:
     desc: Tendencias entre las dos corridas más recientes (ENV=prod)
